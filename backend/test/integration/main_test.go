@@ -102,9 +102,21 @@ func bootHarness(dsn string) (*harness, func(), error) {
 		bootPool.Close()
 		return nil, nil, fmt.Errorf("create schema: %w", err)
 	}
+	// Pre-install extensions in `public` so every test-schema can see them
+	// (CREATE EXTENSION is per-database but lives in one schema; without
+	// this, an extension installed inside a previous test schema becomes
+	// invisible after that schema is dropped).
+	for _, ext := range []string{"pgcrypto", "citext"} {
+		if _, err := bootPool.Exec(ctx,
+			fmt.Sprintf(`CREATE EXTENSION IF NOT EXISTS %s WITH SCHEMA public`, ext)); err != nil {
+			bootPool.Close()
+			return nil, nil, fmt.Errorf("install extension %s: %w", ext, err)
+		}
+	}
 	bootPool.Close()
 
-	pool, err := db.Open(ctx, appendOpt(dsn, "search_path", schema))
+	// search_path includes public so the citext / pgcrypto types resolve.
+	pool, err := db.Open(ctx, appendOpt(dsn, "search_path", schema+",public"))
 	if err != nil {
 		return nil, nil, fmt.Errorf("reopen db: %w", err)
 	}

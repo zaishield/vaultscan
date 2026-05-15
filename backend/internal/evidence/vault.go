@@ -186,6 +186,52 @@ func (v *Vault) GetMeta(ctx context.Context, evidenceID uuid.UUID) (*models.Evid
 	return e, nil
 }
 
+// SweepExpired purges evidence whose retention window has passed but whose
+// immutable-until window has elapsed (or was never set). Blueprint §18.2
+// mandates "immutable retention option" — we honour both the soft expiry
+// (expires_at) and the hard immutability lock (immutable_until). Returns
+// the number of objects deleted.
+//
+// Intended to run periodically (e.g. once per hour) via a worker.
+func (v *Vault) SweepExpired(ctx context.Context) (int, error) {
+	rows, err := v.pool.Query(ctx, `
+		SELECT id, storage_url FROM finding_evidence
+		 WHERE expires_at IS NOT NULL
+		   AND expires_at < now()
+		   AND purged_at IS NULL
+		   AND (immutable_until IS NULL OR immutable_until < now())
+		 LIMIT 1000`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	type purge struct {
+		id  uuid.UUID
+		url string
+	}
+	var pending []purge
+	for rows.Next() {
+		var p purge
+		if err := rows.Scan(&p.id, &p.url); err != nil {
+			return 0, err
+		}
+		pending = append(pending, p)
+	}
+	purged := 0
+	for _, p := range pending {
+		objPath := vaultscanURLToPath(v.rootDir, p.url)
+		if objPath != "" {
+			_ = os.Remove(objPath) // missing file is OK — row state catches up
+		}
+		if _, err := v.pool.Exec(ctx,
+			`UPDATE finding_evidence SET purged_at = now() WHERE id=$1`, p.id); err != nil {
+			return purged, err
+		}
+		purged++
+	}
+	return purged, nil
+}
+
 // SignedDownloadURL produces a short-TTL signed reference (Blueprint §18.2).
 // In production this becomes an S3/Ceph presigned URL; here we mint a token.
 type SignedURL struct {

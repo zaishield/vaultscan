@@ -261,7 +261,15 @@ func matches(scopeType, scopeValue, targetType, target string) bool {
 	scopeValue = strings.ToLower(strings.TrimSpace(scopeValue))
 	switch scopeType {
 	case "domain":
-		return target == scopeValue || strings.HasSuffix(target, "."+scopeValue)
+		// A URL target like "https://api.example.com/x" is in-scope for the
+		// domain scope "example.com" — extract the host first.
+		t := target
+		if targetType == "url" {
+			if host := hostFromURL(t); host != "" {
+				t = host
+			}
+		}
+		return t == scopeValue || strings.HasSuffix(t, "."+scopeValue)
 	case "subdomain", "url", "api":
 		return target == scopeValue
 	case "ip":
@@ -286,6 +294,23 @@ func matches(scopeType, scopeValue, targetType, target string) bool {
 	default:
 		return target == scopeValue
 	}
+}
+
+// hostFromURL returns the host portion of a URL-like string. Strips the
+// scheme and any path / port / query / fragment. Returns "" if the input
+// doesn't look like a URL.
+func hostFromURL(s string) string {
+	if !strings.Contains(s, "://") {
+		return ""
+	}
+	rest := s[strings.Index(s, "://")+3:]
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		rest = rest[:i]
+	}
+	if i := strings.Index(rest, ":"); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
 }
 
 func (s *Service) log(ctx context.Context, in Inputs, d *Decision) {

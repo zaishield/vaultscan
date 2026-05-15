@@ -22,6 +22,9 @@ func TestMatches(t *testing.T) {
 		{"narrower cidr inside wider", "cidr", "10.0.0.0/8", "cidr", "10.1.0.0/16", true},
 		{"wider cidr not contained", "cidr", "10.1.0.0/16", "cidr", "10.0.0.0/8", false},
 		{"url exact", "url", "https://example.com/api", "url", "https://example.com/api", true},
+		{"url under approved domain scope", "domain", "example.com", "url", "https://api.example.com/x", true},
+		{"url with port under approved domain", "domain", "example.com", "url", "https://example.com:8443/admin", true},
+		{"url under unrelated domain rejected", "domain", "example.com", "url", "https://other.example.org/x", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -258,6 +258,131 @@ func (s *Service) ImportCSV(ctx context.Context, in CreateInput, body io.Reader)
 	return created, 0, nil
 }
 
+// BulkOp is one of the bulk mutations the API exposes on assets.
+type BulkOp struct {
+	IDs         []uuid.UUID
+	Action      string         // delete | retag | reassign | recriticality
+	Tags        []string       // for retag
+	Engagement  *uuid.UUID     // for reassign
+	Criticality string         // for recriticality
+	Actor       *uuid.UUID
+}
+
+// Bulk applies an operation to the given asset IDs in one transaction.
+// Returns the number of rows affected.
+func (s *Service) Bulk(ctx context.Context, tenantID uuid.UUID, op BulkOp) (int, error) {
+	if len(op.IDs) == 0 {
+		return 0, nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	var n int64
+	switch op.Action {
+	case "delete":
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM assets WHERE tenant_id=$1 AND id = ANY($2)`,
+			tenantID, op.IDs)
+		if err != nil {
+			return 0, err
+		}
+		n = tag.RowsAffected()
+	case "retag":
+		tagsJSON, _ := json.Marshal(op.Tags)
+		tag, err := tx.Exec(ctx, `
+			UPDATE assets SET tags=$3::jsonb, updated_at=now()
+			 WHERE tenant_id=$1 AND id = ANY($2)`,
+			tenantID, op.IDs, tagsJSON)
+		if err != nil {
+			return 0, err
+		}
+		n = tag.RowsAffected()
+	case "reassign":
+		if op.Engagement == nil {
+			return 0, errors.New("assets: bulk reassign requires engagement_id")
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE assets SET engagement_id=$3, updated_at=now()
+			 WHERE tenant_id=$1 AND id = ANY($2)`,
+			tenantID, op.IDs, *op.Engagement)
+		if err != nil {
+			return 0, err
+		}
+		n = tag.RowsAffected()
+	case "recriticality":
+		valid := false
+		for _, c := range models.CriticalityLevels {
+			if c == op.Criticality {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return 0, fmt.Errorf("assets: criticality %q not in allowed set", op.Criticality)
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE assets SET criticality=$3, updated_at=now()
+			 WHERE tenant_id=$1 AND id = ANY($2)`,
+			tenantID, op.IDs, op.Criticality)
+		if err != nil {
+			return 0, err
+		}
+		n = tag.RowsAffected()
+	default:
+		return 0, fmt.Errorf("assets: unknown bulk action %q", op.Action)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	_ = s.audit.Record(ctx, audit.Entry{
+		PlatformID: tenantID, TenantID: &tenantID, ActorID: op.Actor,
+		Event: "asset.bulk_" + op.Action, TargetType: "asset",
+		Payload: map[string]any{"count": n, "ids": len(op.IDs)},
+	})
+	return int(n), nil
+}
+
+// RecomputeRiskScore updates the asset's composite risk score. Formula:
+//   open-critical*10 + open-high*5 + open-medium*2 + open-low*1,
+// then weighted by asset criticality (critical=1.5, high=1.2, medium=1.0,
+// low=0.7, unknown=0.8). Capped at 100. Called on every finding ingest +
+// finding state transition.
+func (s *Service) RecomputeRiskScore(ctx context.Context, assetID uuid.UUID) error {
+	var counts struct {
+		critical, high, medium, low int
+		criticality                 string
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT
+		  COUNT(*) FILTER (WHERE severity='critical' AND status NOT IN ('closed','remediated','retest_passed','false_positive')),
+		  COUNT(*) FILTER (WHERE severity='high'     AND status NOT IN ('closed','remediated','retest_passed','false_positive')),
+		  COUNT(*) FILTER (WHERE severity='medium'   AND status NOT IN ('closed','remediated','retest_passed','false_positive')),
+		  COUNT(*) FILTER (WHERE severity='low'      AND status NOT IN ('closed','remediated','retest_passed','false_positive')),
+		  COALESCE((SELECT criticality FROM assets WHERE id = $1), 'unknown')
+		  FROM findings WHERE asset_id = $1`, assetID).
+		Scan(&counts.critical, &counts.high, &counts.medium, &counts.low, &counts.criticality); err != nil {
+		return err
+	}
+	raw := float64(counts.critical*10 + counts.high*5 + counts.medium*2 + counts.low)
+	weight := map[string]float64{
+		"critical": 1.5, "high": 1.2, "medium": 1.0, "low": 0.7, "unknown": 0.8,
+	}[counts.criticality]
+	if weight == 0 {
+		weight = 1.0
+	}
+	score := raw * weight
+	if score > 100 {
+		score = 100
+	}
+	_, err := s.pool.Exec(ctx,
+		`UPDATE assets SET risk_score=$2, updated_at=now() WHERE id=$1`,
+		assetID, score)
+	return err
+}
+
 func validType(t string) bool {
 	for _, v := range models.AssetTypes {
 		if v == t {

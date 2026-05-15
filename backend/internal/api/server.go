@@ -159,6 +159,8 @@ func Mount(s *Services) http.Handler {
 			r.Post("/", createAsset(s))
 			r.Get("/", listAssets(s))
 			r.Post("/import-csv", importAssetsCSV(s))
+			r.Post("/bulk", bulkAssets(s))
+			r.Get("/{asset_id}/risk-score", assetRiskScore(s))
 		})
 
 		// Scans
@@ -199,12 +201,21 @@ func Mount(s *Services) http.Handler {
 			r.Get("/{finding_id}", getFinding(s))
 			r.With(middleware.RequirePermission("edit_findings")).
 				Patch("/{finding_id}", patchFinding(s))
+			r.With(middleware.RequirePermission("edit_findings")).
+				Post("/bulk", bulkPatchFindings(s))
+			r.Get("/{finding_id}/comments", listFindingComments(s))
+			r.With(middleware.RequirePermission("edit_findings")).
+				Post("/{finding_id}/comments", addFindingComment(s))
+			r.With(middleware.RequirePermission("view_audit_logs")).
+				Get("/sla-breaches", findingSLABreaches(s))
 		})
 
 		// Evidence
 		r.Route("/api/v1/evidence", func(r chi.Router) {
 			r.With(middleware.RequirePermission("download_evidence"), middleware.RequireMFA()).
 				Get("/{evidence_id}", evidenceMeta(s))
+			r.With(middleware.RequirePermission("download_evidence")).
+				Post("/manual", manualEvidenceUpload(s))
 			r.With(middleware.RequirePermission("download_evidence"), middleware.RequireMFA()).
 				Get("/{evidence_id}/url", signedDownloadURL(s))
 			r.Get("/{evidence_id}/download", downloadEvidence(s))
@@ -215,8 +226,11 @@ func Mount(s *Services) http.Handler {
 			r.With(middleware.RequirePermission("request_retest")).
 				Post("/", requestRetest(s))
 			r.With(middleware.RequirePermission("execute_retest")).
+				Post("/{retest_id}/launch", launchRetestScan(s))
+			r.With(middleware.RequirePermission("execute_retest")).
 				Post("/{retest_id}/result", recordRetestResult(s))
 			r.Get("/findings/{finding_id}", listRetestsForFinding(s))
+			r.Get("/queue", retestQueueForUser(s))
 		})
 
 		// Reports

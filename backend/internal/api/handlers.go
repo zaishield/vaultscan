@@ -24,6 +24,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/authdocs"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
 	"github.com/zaishield/vaultscan/backend/internal/engagements"
+	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
 	"github.com/zaishield/vaultscan/backend/internal/integrations"
 	"github.com/zaishield/vaultscan/backend/internal/models"
@@ -1469,6 +1470,267 @@ func rotateAgentCert(s *Services) http.HandlerFunc {
 			"enrollment_token": tok,
 			"note":             "Cert revoked. Agent will re-enroll on next update poll.",
 		})
+	}
+}
+
+// ----- VS-04 bulk + risk score ---------------------------------------------
+
+type bulkAssetsReq struct {
+	TenantID     string   `json:"tenant_id"`
+	IDs          []string `json:"ids"`
+	Action       string   `json:"action"` // delete | retag | reassign | recriticality
+	Tags         []string `json:"tags,omitempty"`
+	EngagementID string   `json:"engagement_id,omitempty"`
+	Criticality  string   `json:"criticality,omitempty"`
+}
+
+func bulkAssets(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req bulkAssetsReq
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		tenantID, err := uuid.Parse(req.TenantID)
+		if err != nil {
+			badRequest(w, "tenant_id required")
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		ids := make([]uuid.UUID, 0, len(req.IDs))
+		for _, s := range req.IDs {
+			id, err := uuid.Parse(s)
+			if err != nil {
+				badRequest(w, "bad id: "+s)
+				return
+			}
+			ids = append(ids, id)
+		}
+		op := assets.BulkOp{IDs: ids, Action: req.Action, Tags: req.Tags,
+			Criticality: req.Criticality, Actor: &identity.UserID}
+		if req.EngagementID != "" {
+			eid, err := uuid.Parse(req.EngagementID)
+			if err == nil {
+				op.Engagement = &eid
+			}
+		}
+		n, err := s.Assets.Bulk(r.Context(), tenantID, op)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]int{"affected": n})
+	}
+}
+
+func assetRiskScore(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "asset_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		if err := s.Assets.RecomputeRiskScore(r.Context(), id); err != nil {
+			internalErr(w, err)
+			return
+		}
+		var score float64
+		_ = s.Pool.QueryRow(r.Context(),
+			`SELECT COALESCE(risk_score, 0) FROM assets WHERE id=$1`, id).Scan(&score)
+		writeJSON(w, http.StatusOK, map[string]any{"asset_id": id, "risk_score": score})
+	}
+}
+
+// ----- VS-07 bulk patch + comments + SLA -----------------------------------
+
+type bulkFindingsReq struct {
+	TenantID   string   `json:"tenant_id"`
+	IDs        []string `json:"ids"`
+	Action     string   `json:"action"` // status | assign | risk_accept
+	Status     string   `json:"status,omitempty"`
+	AssigneeID string   `json:"assignee_id,omitempty"`
+	Note       string   `json:"note,omitempty"`
+}
+
+func bulkPatchFindings(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req bulkFindingsReq
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		tenantID, err := uuid.Parse(req.TenantID)
+		if err != nil {
+			badRequest(w, "tenant_id required")
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		ids := make([]uuid.UUID, 0, len(req.IDs))
+		for _, sid := range req.IDs {
+			id, err := uuid.Parse(sid)
+			if err != nil {
+				badRequest(w, "bad id: "+sid)
+				return
+			}
+			ids = append(ids, id)
+		}
+		in := findings.BulkPatchInput{
+			TenantID: tenantID, IDs: ids, Action: req.Action,
+			Status: req.Status, Note: req.Note, Actor: &identity.UserID,
+		}
+		if req.AssigneeID != "" {
+			aid, _ := uuid.Parse(req.AssigneeID)
+			in.AssigneeID = &aid
+		}
+		n, err := s.Findings.BulkPatch(r.Context(), in)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]int{"affected": n})
+	}
+}
+
+func listFindingComments(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "finding_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		out, err := s.Findings.ListComments(r.Context(), id)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	}
+}
+
+func addFindingComment(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "finding_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var req struct {
+			Body string `json:"body"`
+		}
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		cid, err := s.Findings.AddComment(r.Context(), findings.CommentInput{
+			FindingID: id, AuthorID: &identity.UserID, Body: req.Body,
+		})
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]string{"id": cid.String()})
+	}
+}
+
+func findingSLABreaches(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		newBreaches, err := s.Findings.SweepSLABreaches(r.Context())
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		var totalBreached int
+		_ = s.Pool.QueryRow(r.Context(),
+			`SELECT COUNT(*) FROM findings WHERE sla_breached_at IS NOT NULL`).Scan(&totalBreached)
+		writeJSON(w, http.StatusOK, map[string]int{
+			"newly_breached": newBreaches,
+			"total_breached": totalBreached,
+		})
+	}
+}
+
+// ----- VS-08 manual evidence upload ----------------------------------------
+
+func manualEvidenceUpload(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Multipart-free: bytes in body, metadata in query params. Keeps
+		// the handler small; the portal posts with a JSON metadata header
+		// + raw body. Production switches to multipart for >50 MB blobs.
+		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		if err != nil {
+			badRequest(w, "tenant_id required")
+			return
+		}
+		partnerID, err := uuid.Parse(r.URL.Query().Get("partner_id"))
+		if err != nil {
+			badRequest(w, "partner_id required")
+			return
+		}
+		var findingID, engagementID *uuid.UUID
+		if v := r.URL.Query().Get("finding_id"); v != "" {
+			fid, _ := uuid.Parse(v)
+			findingID = &fid
+		}
+		if v := r.URL.Query().Get("engagement_id"); v != "" {
+			eid, _ := uuid.Parse(v)
+			engagementID = &eid
+		}
+		kind := r.URL.Query().Get("kind")
+		if kind == "" {
+			kind = "manual"
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024*1024)) // 64 MB cap
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		ev, err := s.Vault.Record(r.Context(), evidence.PutInput{
+			TenantID: tenantID, PartnerID: partnerID,
+			FindingID: findingID, EngagementID: engagementID,
+			Kind: kind, ContentType: r.Header.Get("Content-Type"),
+			Body: body, UploadedBy: &identity.UserID,
+		})
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, ev)
+	}
+}
+
+// ----- VS-09 retest launch + queue -----------------------------------------
+
+func launchRetestScan(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "retest_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		jobID, err := s.Retests.LaunchScan(r.Context(), id, &identity.UserID)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"retest_id":   id,
+			"scan_job_id": jobID,
+		})
+	}
+}
+
+func retestQueueForUser(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		identity, _ := auth.FromContext(r.Context())
+		out, err := s.Retests.PendingForUser(r.Context(), identity.UserID)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
 	}
 }
 

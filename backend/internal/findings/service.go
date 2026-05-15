@@ -144,6 +144,17 @@ func (s *Service) Upsert(ctx context.Context, in IngestInput) (*models.Finding, 
 		_, _ = tx.Exec(ctx, `
 			INSERT INTO finding_status_history(finding_id, from_status, to_status, note)
 			VALUES ($1, NULL, 'open', 'initial ingest')`, newID)
+		// SLA: due_at = first_seen + tenant_settings.default_severity_sla[severity] days.
+		// Falls back to 30 days when the tenant has no override.
+		if _, err := tx.Exec(ctx, `
+			UPDATE findings f SET due_at = f.first_seen +
+			    make_interval(days => COALESCE(
+			      ((SELECT default_severity_sla FROM tenant_settings WHERE tenant_id = f.tenant_id)
+			          ->> f.severity)::int,
+			      30))
+			 WHERE f.id = $1`, newID); err != nil {
+			return nil, false, fmt.Errorf("findings: compute due_at: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, err
@@ -328,6 +339,116 @@ func (s *Service) Assign(ctx context.Context, actor *uuid.UUID, id, assignee uui
 		})
 	}
 	return nil
+}
+
+// BulkPatch applies one of the supported bulk operations to the given
+// finding IDs. Currently supported: status (any valid transition),
+// assignee, and risk_accepted (sets status + records a justification).
+type BulkPatchInput struct {
+	TenantID    uuid.UUID
+	IDs         []uuid.UUID
+	Action      string     // status | assign | risk_accept
+	Status      string     // for status
+	AssigneeID  *uuid.UUID // for assign
+	Note        string
+	Actor       *uuid.UUID
+}
+
+func (s *Service) BulkPatch(ctx context.Context, in BulkPatchInput) (int, error) {
+	if len(in.IDs) == 0 {
+		return 0, nil
+	}
+	var changed int
+	for _, id := range in.IDs {
+		switch in.Action {
+		case "status":
+			if err := s.Transition(ctx, in.Actor, id, in.Status, in.Note); err == nil {
+				changed++
+			}
+		case "assign":
+			if in.AssigneeID == nil {
+				return changed, errors.New("findings: bulk assign requires assignee_id")
+			}
+			if err := s.Assign(ctx, in.Actor, id, *in.AssigneeID); err == nil {
+				changed++
+			}
+		case "risk_accept":
+			if err := s.Transition(ctx, in.Actor, id, "risk_accepted", in.Note); err == nil {
+				changed++
+			}
+		default:
+			return 0, fmt.Errorf("findings: unknown bulk action %q", in.Action)
+		}
+	}
+	return changed, nil
+}
+
+// AddComment appends a free-form comment to a finding. Comments thread off
+// the finding detail page (Blueprint §33.2 "Comments" section).
+type CommentInput struct {
+	FindingID uuid.UUID
+	AuthorID  *uuid.UUID
+	Body      string
+}
+
+func (s *Service) AddComment(ctx context.Context, in CommentInput) (uuid.UUID, error) {
+	if in.Body == "" {
+		return uuid.Nil, errors.New("findings: comment body required")
+	}
+	id := uuid.New()
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO finding_comments(id, finding_id, author_id, body)
+		VALUES ($1, $2, $3, $4)`,
+		id, in.FindingID, in.AuthorID, in.Body); err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
+}
+
+// Comment is one entry in a finding's comment thread.
+type Comment struct {
+	ID        uuid.UUID  `json:"id"`
+	FindingID uuid.UUID  `json:"finding_id"`
+	AuthorID  *uuid.UUID `json:"author_id,omitempty"`
+	Body      string     `json:"body"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+func (s *Service) ListComments(ctx context.Context, findingID uuid.UUID) ([]Comment, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, finding_id, author_id, body, created_at
+		  FROM finding_comments WHERE finding_id=$1 ORDER BY created_at`, findingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Comment{}
+	for rows.Next() {
+		var c Comment
+		if err := rows.Scan(&c.ID, &c.FindingID, &c.AuthorID, &c.Body, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SweepSLABreaches stamps sla_breached_at on findings that have passed
+// their due_at without being remediated. Returns the number freshly marked.
+// Intended to be called by a periodic worker (e.g. every minute) or on
+// demand by the audit page.
+func (s *Service) SweepSLABreaches(ctx context.Context) (int, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE findings
+		   SET sla_breached_at = now()
+		 WHERE due_at IS NOT NULL
+		   AND due_at < now()
+		   AND sla_breached_at IS NULL
+		   AND status NOT IN ('closed','remediated','retest_passed','false_positive','risk_accepted')`)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func dedupFingerprint(in IngestInput) string {

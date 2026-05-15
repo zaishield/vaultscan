@@ -78,7 +78,7 @@ func main() {
 	orch := scanorch.New(pool.Pool, scope, auditSvc, bus, signer)
 	agentSvc := agents.New(pool.Pool, auditSvc, bus)
 	findSvc := findings.New(pool.Pool, auditSvc, bus)
-	retestSvc := retesting.New(pool.Pool, auditSvc, bus, findSvc)
+	retestSvc := retesting.New(pool.Pool, auditSvc, bus, findSvc, orch)
 	reportSvc := reporting.New(pool.Pool, brand, vault, auditSvc, bus)
 	intSvc := integrations.New(pool.Pool, bus, auditSvc)
 	intSvc.Wire(bus)
