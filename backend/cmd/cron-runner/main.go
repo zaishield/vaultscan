@@ -35,6 +35,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
+	"github.com/zaishield/vaultscan/backend/internal/compliance"
 	"github.com/zaishield/vaultscan/backend/internal/config"
 	"github.com/zaishield/vaultscan/backend/internal/db"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
@@ -202,6 +203,9 @@ func main() {
 			}
 			arch := audit.NewArchiver(pool.Pool, nil, audit.NewTSAClient(tsaURL))
 			return arch.AnchorOnce(ctx)
+		}},
+		{name: "compliance_evaluate", interval: 6 * time.Hour, fn: func(ctx context.Context) error {
+			return compliance.NewEvaluator(pool.Pool).EvaluateAll(ctx)
 		}},
 	}
 
