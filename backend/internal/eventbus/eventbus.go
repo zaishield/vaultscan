@@ -65,6 +65,10 @@ type Bus struct {
 	pool       *pgxpool.Pool
 	mu         sync.RWMutex
 	handlers   map[string][]Handler
+
+	// External sinks (NATS / Kafka / etc.) — see external.go.
+	extMu sync.RWMutex
+	ext   []ExternalSink
 }
 
 func New(pool *pgxpool.Pool) *Bus {
@@ -102,5 +106,9 @@ func (b *Bus) Publish(ctx context.Context, ev Event) error {
 	for _, h := range wild {
 		go h(ctx, ev)
 	}
+	// External sinks fire after in-process fan-out. Failures here
+	// don't affect bus_events durability — Publish has already
+	// committed the row.
+	b.publishExternal(ev)
 	return nil
 }
