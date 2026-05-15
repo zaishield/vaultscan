@@ -40,6 +40,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
 	"github.com/zaishield/vaultscan/backend/internal/integrations"
+	"github.com/zaishield/vaultscan/backend/internal/leader"
 	"github.com/zaishield/vaultscan/backend/internal/logging"
 	"github.com/zaishield/vaultscan/backend/internal/observability"
 	"github.com/zaishield/vaultscan/backend/internal/reporting"
@@ -178,7 +179,7 @@ func main() {
 	var wg sync.WaitGroup
 	for _, j := range jobs {
 		wg.Add(1)
-		go runJob(ctx, log, &wg, j)
+		go runJob(ctx, log, &wg, j, pool.Pool)
 	}
 	log.Info().Int("jobs", len(jobs)).Msg("cron-runner started")
 	_ = intSvc // unused warning silencer; intSvc.Wire would attach bus subscribers in production
@@ -200,15 +201,24 @@ type job struct {
 // runJob fires the job once on boot, then every `interval`. Each tick
 // is wrapped in a per-tick timeout so a stuck task can't pin the
 // goroutine forever, and metrics record duration + outcome.
-func runJob(ctx context.Context, log zerolog.Logger, wg *sync.WaitGroup, j job) {
+//
+// Leader election: every tick takes a Postgres advisory lock keyed on
+// the job name. Only the pod that acquires the lock executes the
+// work; other replicas record an outcome of "follower" and move on.
+// The lock is held for the duration of one tick and released
+// immediately so the role can fail over between ticks if the leader
+// dies.
+func runJob(ctx context.Context, log zerolog.Logger, wg *sync.WaitGroup, j job, pool *pgxpool.Pool) {
 	defer wg.Done()
 	tick := func() {
 		start := time.Now()
 		tctx, cancel := context.WithTimeout(ctx, j.interval*4)
-		err := j.fn(tctx)
-		cancel()
+		defer cancel()
+		wasLeader, err := leader.Run(tctx, pool, j.name, j.fn)
 		outcome := "ok"
-		if err != nil {
+		if !wasLeader {
+			outcome = "follower"
+		} else if err != nil {
 			outcome = "error"
 			log.Warn().Err(err).Str("job", j.name).Msg("cron tick failed")
 		}
