@@ -2,7 +2,9 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -11,11 +13,56 @@ import (
 // Runner executes a scanner tool. The production runner is a Kubernetes Job
 // in a regional scanner-* namespace with strict NetworkPolicy + ResourceQuota
 // (Blueprint §12). The dev runner shells out to the host's binary if
-// installed and otherwise returns a synthetic payload so the rest of the
-// pipeline can be exercised end-to-end without every tool present.
-type Runner struct{}
+// installed and otherwise — IF allowed — returns a synthetic payload so the
+// rest of the pipeline can be exercised end-to-end without every tool present.
+//
+// Production guard: when AllowSynthetic is false, a missing host binary
+// returns ErrSyntheticForbidden instead of fabricated output. The default
+// is determined by VAULTSCAN_ENV at construction time:
+//
+//   VAULTSCAN_ENV=production | prod  → AllowSynthetic = false
+//   anything else (or unset)         → AllowSynthetic = true
+//
+// Tests can construct NewRunnerForTest() to opt in explicitly.
+type Runner struct {
+	// AllowSynthetic decides whether a missing host binary triggers
+	// fabricated output. Production must keep this false to avoid
+	// fabricated findings entering the data plane. Default value is
+	// driven by NewRunner() — see file-level comment.
+	AllowSynthetic bool
+}
 
-func NewRunner() *Runner { return &Runner{} }
+// ErrSyntheticForbidden is returned when AllowSynthetic is false and
+// the host binary is not on PATH. The worker treats this as a hard
+// failure for the scan task — better to mark the task failed than to
+// ingest fake findings into the data plane.
+var ErrSyntheticForbidden = errors.New("scanner: host binary not found and synthetic output disabled")
+
+// NewRunner returns a runner whose AllowSynthetic flag is set according
+// to VAULTSCAN_ENV. Production deployments boot with synthetics OFF.
+func NewRunner() *Runner {
+	allow := !isProductionEnv()
+	return &Runner{AllowSynthetic: allow}
+}
+
+// NewRunnerForTest returns a runner that always allows synthetic output.
+// Use this from test harnesses that intentionally exercise the parser
+// pipeline without real binaries.
+func NewRunnerForTest() *Runner {
+	return &Runner{AllowSynthetic: true}
+}
+
+// NewRunnerStrict returns a runner that always refuses synthetic output.
+// Use this from environments that should fail loudly when binaries are
+// missing — staging, CI smoke against real images.
+func NewRunnerStrict() *Runner {
+	return &Runner{AllowSynthetic: false}
+}
+
+func isProductionEnv() bool {
+	e := strings.ToLower(strings.TrimSpace(os.Getenv("VAULTSCAN_ENV")))
+	return e == "production" || e == "prod"
+}
 
 // Result is what the runner returns for one tool invocation.
 type Result struct {
@@ -28,7 +75,7 @@ type Result struct {
 
 // Run executes `tool` against the given targets with a runtime cap. Any
 // process that exceeds the runtime cap is killed by ctx cancellation.
-func (Runner) Run(ctx context.Context, tool string, targets []string, runtime time.Duration) (*Result, error) {
+func (r Runner) Run(ctx context.Context, tool string, targets []string, runtime time.Duration) (*Result, error) {
 	if runtime <= 0 {
 		runtime = 30 * time.Minute
 	}
@@ -38,6 +85,9 @@ func (Runner) Run(ctx context.Context, tool string, targets []string, runtime ti
 	args := buildArgs(tool, targets)
 	bin, lookupErr := exec.LookPath(tool)
 	if lookupErr != nil {
+		if !r.AllowSynthetic {
+			return nil, fmt.Errorf("%w: tool=%s", ErrSyntheticForbidden, tool)
+		}
 		return &Result{
 			Tool:       tool,
 			Output:     []byte(synth(tool, targets)),
@@ -116,6 +166,9 @@ func buildArgs(tool string, targets []string) []string {
 
 // synth produces minimal valid output for parsers when the host doesn't have
 // the binary installed. Keeps the dev pipeline running end-to-end.
+//
+// NEVER called when AllowSynthetic=false. Production deployments get
+// ErrSyntheticForbidden up the stack instead.
 func synth(tool string, targets []string) string {
 	t := firstOr(targets, "127.0.0.1")
 	switch tool {

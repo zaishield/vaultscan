@@ -223,8 +223,27 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 
 		res, err := w.runner.Run(ctx, tool, j.Targets, 30*time.Minute)
 		if err != nil {
+			// Distinguish "binary missing in production" from a generic
+			// run failure. ErrSyntheticForbidden is structural — fail the
+			// whole job, don't continue silently.
+			if errors.Is(err, ErrSyntheticForbidden) {
+				w.log.Error().Err(err).Str("tool", tool).
+					Msg("scanner binary missing and synthetic output forbidden — failing job")
+				w.failJob(ctx, j, "scanner binary missing: "+tool)
+				return
+			}
 			w.log.Warn().Err(err).Str("tool", tool).Msg("tool run failed; continuing")
 			continue
+		}
+		// Defense in depth: even if AllowSynthetic was true at runner
+		// init, refuse to ingest synthetic output unless explicitly
+		// permitted by env. Belt-and-braces against a misconfigured
+		// scanner image that ships without the tools.
+		if res.Synthetic && !w.runner.AllowSynthetic {
+			w.log.Error().Str("tool", tool).
+				Msg("runner returned synthetic output but synthetics disabled; refusing")
+			w.failJob(ctx, j, "synthetic scanner output rejected")
+			return
 		}
 		anyToolRan = true
 
