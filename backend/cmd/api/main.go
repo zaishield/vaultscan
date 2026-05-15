@@ -38,6 +38,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/retesting"
 	"github.com/zaishield/vaultscan/backend/internal/scanorch"
 	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
+	"github.com/zaishield/vaultscan/backend/internal/searchindex"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
 )
 
@@ -190,6 +191,31 @@ func main() {
 				idx.Wire(bus)
 				go idx.Run(ctx)
 				log.Info().Msg("in-process analytics indexer active")
+			}
+		}
+	}
+
+	// Findings + audit search indexer. Separate from analytics — this
+	// is per-document search, not aggregated dashboards.
+	if cfg.OpenSearchURL != "" {
+		searchClient, err := searchindex.New(searchindex.Config{
+			URL:      cfg.OpenSearchURL,
+			Username: os.Getenv("VAULTSCAN_OPENSEARCH_USER"),
+			Password: os.Getenv("VAULTSCAN_OPENSEARCH_PASSWORD"),
+		})
+		if err != nil {
+			log.Warn().Err(err).Msg("searchindex client init failed")
+		} else {
+			if _, err := searchClient.Health(ctx); err != nil {
+				log.Warn().Err(err).Msg("opensearch unreachable; search index disabled")
+			} else {
+				_ = searchClient.EnsureIndex(ctx, searchindex.FindingsIndexName,
+					searchindex.FindingsIndexMapping())
+				_ = searchClient.EnsureIndex(ctx, searchindex.AuditIndexName,
+					searchindex.AuditIndexMapping())
+				findingsIdx := searchindex.NewFindingsIndexer(searchClient)
+				bus.Subscribe(eventbus.FindingNormalized, findingsIdx.HandleEvent)
+				log.Info().Msg("findings search index active")
 			}
 		}
 	}
