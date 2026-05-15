@@ -38,6 +38,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
+	"github.com/zaishield/vaultscan/backend/internal/reporting"
 	"github.com/zaishield/vaultscan/backend/internal/scanorch"
 	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
@@ -65,6 +66,7 @@ type harness struct {
 	signer      *scanorch.Signer
 	agents      *agents.Service
 	findings    *findings.Service
+	reports     *reporting.Service
 	vault       *evidence.Vault
 }
 
@@ -164,13 +166,14 @@ func bootHarness(dsn string) (*harness, func(), error) {
 	orch := scanorch.New(pool.Pool, scope, auditSvc, bus, signer).WithNodeOps(nodeOps)
 	agentSvc := agents.New(pool.Pool, auditSvc, bus)
 	findSvc := findings.New(pool.Pool, auditSvc, bus)
+	reportSvc := reporting.New(pool.Pool, brand, vault, auditSvc, bus)
 	_ = log
 
 	h := &harness{
 		pool: pool.Pool, audit: auditSvc, bus: bus, branding: brand,
 		tenants: tenSvc, engagements: engSvc, authdocs: docSvc, assets: assetSvc,
 		scope: scope, scanorch: orch, nodes: nodeOps, signer: signer,
-		agents: agentSvc, findings: findSvc, vault: vault,
+		agents: agentSvc, findings: findSvc, reports: reportSvc, vault: vault,
 	}
 	cleanup := func() {
 		dropCtx, dropCancel := context.WithTimeout(context.Background(), 30*time.Second)

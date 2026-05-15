@@ -66,11 +66,12 @@ func AllFormats() []string {
 }
 
 type Service struct {
-	pool     *pgxpool.Pool
-	branding *branding.Service
-	store    *evidence.Vault
-	audit    *audit.Service
-	bus      *eventbus.Bus
+	pool        *pgxpool.Pool
+	branding    *branding.Service
+	store       *evidence.Vault
+	audit       *audit.Service
+	bus         *eventbus.Bus
+	pdfRenderer PDFRenderer
 }
 
 func New(pool *pgxpool.Pool, b *branding.Service, st *evidence.Vault, a *audit.Service, bus *eventbus.Bus) *Service {
@@ -171,9 +172,13 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*Report, erro
 	if requiresApproval {
 		finalStatus = "pending_approval"
 	}
+	rendererName := "html-fallback"
+	if s.pdfRenderer != nil {
+		rendererName = s.pdfRenderer.Name()
+	}
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE reports SET status=$2, generated_at=now() WHERE id=$1`,
-		id, finalStatus); err != nil {
+		`UPDATE reports SET status=$2, generated_at=now(), pdf_renderer=$3 WHERE id=$1`,
+		id, finalStatus, rendererName); err != nil {
 		return nil, err
 	}
 	r.Status = finalStatus
@@ -365,13 +370,21 @@ func (s *Service) render(format, reportType string, d *Dataset) ([]byte, string,
 	case FormatHTML:
 		return renderHTML(d)
 	case FormatPDF:
-		// Production: headless chromium. Dev: tag the HTML with a sentinel header
-		// so consumers can pipe it through wkhtmltopdf / chromium themselves.
-		body, _, err := renderHTML(d)
+		// Production: headless chromium. Dev: tag the HTML with a sentinel
+		// header so consumers can pipe it through wkhtmltopdf / chromium
+		// themselves. VS-10 wires a real PDFRenderer when configured.
+		html, _, err := renderHTML(d)
 		if err != nil {
 			return nil, "", err
 		}
-		return body, "application/pdf", nil
+		if s.pdfRenderer != nil {
+			pdf, err := s.pdfRenderer.Render(context.Background(), html)
+			if err != nil {
+				return nil, "", err
+			}
+			return pdf, "application/pdf", nil
+		}
+		return html, "application/pdf", nil
 	case FormatDOCX:
 		body, _, err := renderHTML(d)
 		if err != nil {
