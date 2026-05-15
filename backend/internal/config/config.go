@@ -76,6 +76,16 @@ type Config struct {
 
 	RateLimitRPS       int
 	EmergencyStopMaxLatencySeconds int
+
+	// RateLimit backend selection. "" or "memory" → in-process token
+	// bucket (single-pod only). "redis" → Redis sliding window.
+	RateLimitBackend       string
+	RateLimitRedisAddr     string
+	RateLimitRedisPassword string
+	RateLimitRedisDB       int
+	// RateLimitWindowSec is the rolling window for the Redis sliding-
+	// window backend. Memory backend always treats limit as RPS.
+	RateLimitWindowSec     int
 }
 
 func Load() (*Config, error) {
@@ -120,6 +130,11 @@ func Load() (*Config, error) {
 			"http://localhost:5173,http://localhost:3000")),
 		RateLimitRPS:                   parseInt("VAULTSCAN_RATE_LIMIT_RPS", 100),
 		EmergencyStopMaxLatencySeconds: parseInt("VAULTSCAN_EMERGENCY_STOP_MAX_LATENCY", 30),
+		RateLimitBackend:       getenv("VAULTSCAN_RATE_LIMIT_BACKEND", "memory"),
+		RateLimitRedisAddr:     os.Getenv("VAULTSCAN_RATE_LIMIT_REDIS_ADDR"),
+		RateLimitRedisPassword: os.Getenv("VAULTSCAN_RATE_LIMIT_REDIS_PASSWORD"),
+		RateLimitRedisDB:       parseInt("VAULTSCAN_RATE_LIMIT_REDIS_DB", 0),
+		RateLimitWindowSec:     parseInt("VAULTSCAN_RATE_LIMIT_WINDOW_SEC", 60),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("VAULTSCAN_DATABASE_URL is required")

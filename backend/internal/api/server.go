@@ -149,8 +149,34 @@ func Mount(s *Services) http.Handler {
 		// for the lifetime of this request. Must come AFTER Auth and
 		// TenantScope so the identity is resolved before we bind.
 		r.Use(middleware.TenantBinding(s.Pool))
-		rl := middleware.NewRateLimit(s.Cfg.RateLimitRPS)
-		r.Use(rl.Middleware())
+		// Rate limiting: pluggable backend selected by config.
+		//   memory → single-pod sync.Map token bucket
+		//   redis  → cross-pod sliding-window counter (atomic Lua EVAL)
+		// Production guard refuses to boot with backend=memory.
+		var limiter middleware.Limiter
+		switch s.Cfg.RateLimitBackend {
+		case "redis":
+			rl, err := middleware.NewRedisLimiter(
+				s.Cfg.RateLimitRedisAddr,
+				s.Cfg.RateLimitRedisPassword,
+				s.Cfg.RateLimitRedisDB,
+			)
+			if err == nil {
+				limiter = rl
+			} else {
+				limiter = middleware.NewInMemoryLimiter()
+			}
+		default:
+			limiter = middleware.NewInMemoryLimiter()
+		}
+		windowSec := s.Cfg.RateLimitWindowSec
+		if windowSec <= 0 {
+			windowSec = 60
+		}
+		// Convert RPS-style config into limit-over-window: configured
+		// RPS × window = total requests allowed in the rolling window.
+		mid := middleware.NewRateLimitMiddleware(limiter, s.Cfg.RateLimitRPS*windowSec, windowSec)
+		r.Use(mid.Wrap)
 
 		// Tenants
 		r.Route("/api/v1/tenants", func(r chi.Router) {

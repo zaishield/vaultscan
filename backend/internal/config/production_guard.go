@@ -129,6 +129,14 @@ func (c *Config) validateProduction() error {
 		v = append(v, "VAULTSCAN_SECRETS_BACKEND=env is insecure for production — use 'openbao', 'infisical', or 'awskms'")
 	}
 
+	// --- Rate limiter must be Redis-backed in prod (multi-pod) ---
+	if c.RateLimitBackend != "redis" {
+		v = append(v, "VAULTSCAN_RATE_LIMIT_BACKEND must be 'redis' in production (in-memory limits don't span replicas)")
+	}
+	if c.RateLimitBackend == "redis" && c.RateLimitRedisAddr == "" {
+		v = append(v, "VAULTSCAN_RATE_LIMIT_REDIS_ADDR required when backend=redis")
+	}
+
 	// --- CORS must be locked down (no localhost origins, no wildcards) ---
 	for _, origin := range c.CORSAllowedOrigins {
 		if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") ||

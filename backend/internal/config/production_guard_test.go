@@ -57,6 +57,7 @@ func TestValidateProduction_rejectsAllDevDefaults(t *testing.T) {
 		"SECRETS_BACKEND",
 		"CORS_ALLOWED_ORIGINS",
 		"AGENT_GW_CERT",
+		"RATE_LIMIT_BACKEND",
 	}
 	joined := strings.Join(pe.Violations, "|")
 	for _, w := range want {
@@ -85,6 +86,8 @@ func TestValidateProduction_acceptsHardenedConfig(t *testing.T) {
 		AgentGatewayKeyPath:  "/run/secrets/agent-gw.key",
 		SecretsBackend:    "openbao",
 		CORSAllowedOrigins: []string{"https://portal.vaultscan.zaishield.com"},
+		RateLimitBackend:   "redis",
+		RateLimitRedisAddr: "redis.prod.internal:6379",
 	}
 	if err := c.validateProduction(); err != nil {
 		t.Fatalf("hardened config rejected: %v", err)
@@ -190,6 +193,8 @@ func newProdConfig() *Config {
 		AgentGatewayKeyPath:  "/run/secrets/agent-gw.key",
 		SecretsBackend:    "openbao",
 		CORSAllowedOrigins: []string{"https://portal.vaultscan.zaishield.com"},
+		RateLimitBackend:   "redis",
+		RateLimitRedisAddr: "redis.prod.internal:6379",
 	}
 }
 
