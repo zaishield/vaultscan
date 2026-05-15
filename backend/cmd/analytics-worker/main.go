@@ -6,9 +6,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+
+	"github.com/nats-io/nats.go"
 
 	"github.com/zaishield/vaultscan/backend/internal/analytics"
 	"github.com/zaishield/vaultscan/backend/internal/config"
@@ -46,6 +50,29 @@ func main() {
 	bus := eventbus.New(pool.Pool)
 	indexer := analytics.NewIndexer(client, pool.Pool, log)
 	indexer.Wire(bus)
+
+	// Cross-process events arrive via NATS — the API binary attaches a
+	// NATSAdapter to its bus so every Publish lands on
+	// vaultscan.<event-type>. Subscribe with the wildcard so we pick
+	// up every type the indexer knows how to handle.
+	if cfg.EventBusURL != "" && strings.HasPrefix(cfg.EventBusURL, "nats://") {
+		nc, err := nats.Connect(cfg.EventBusURL,
+			nats.Name("vaultscan-analytics-worker"),
+			nats.MaxReconnects(-1))
+		if err != nil {
+			log.Warn().Err(err).Msg("nats connect failed — running in-process-only mode")
+		} else {
+			_, _ = nc.Subscribe("vaultscan.>", func(m *nats.Msg) {
+				var ev eventbus.Event
+				if err := json.Unmarshal(m.Data, &ev); err != nil {
+					return
+				}
+				indexer.Handle(context.Background(), ev)
+			})
+			defer nc.Drain()
+			log.Info().Str("nats", cfg.EventBusURL).Msg("subscribed to NATS event bus")
+		}
+	}
 
 	go indexer.Run(ctx)
 

@@ -52,9 +52,7 @@ func (i *Indexer) Wire(bus *eventbus.Bus) {
 		eventbus.RetestFailed,
 	} {
 		etCopy := et
-		bus.Subscribe(etCopy, func(ctx context.Context, ev eventbus.Event) {
-			i.handle(ctx, ev)
-		})
+		bus.Subscribe(etCopy, i.Handle)
 	}
 }
 
@@ -73,7 +71,10 @@ func (i *Indexer) Run(ctx context.Context) {
 	}
 }
 
-func (i *Indexer) handle(ctx context.Context, ev eventbus.Event) {
+// Handle is the public entry point. Both the in-process bus
+// subscription and the NATS-driven cross-process subscriber call
+// this so the dispatch logic stays in one place.
+func (i *Indexer) Handle(ctx context.Context, ev eventbus.Event) {
 	switch ev.Type {
 	case eventbus.FindingNormalized,
 		eventbus.FindingDeduplicated,

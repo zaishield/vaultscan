@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -76,6 +77,21 @@ func main() {
 
 	auditSvc := audit.New(pool.Pool)
 	bus := eventbus.New(pool.Pool)
+
+	// §22: attach the external NATS adapter so cross-process consumers
+	// (analytics-worker, scanner-worker telemetry) see the same events
+	// as the in-process subscribers. Failure to connect is non-fatal —
+	// the API keeps running on the in-process bus alone, and bus_events
+	// stays the durability record for replay.
+	if cfg.EventBusURL != "" && strings.HasPrefix(cfg.EventBusURL, "nats://") {
+		if natsSink, err := eventbus.NewNATSAdapter(cfg.EventBusURL); err != nil {
+			log.Warn().Err(err).Str("url", cfg.EventBusURL).
+				Msg("nats adapter not wired — events stay in-process only")
+		} else {
+			bus.AttachExternal(natsSink)
+			log.Info().Str("nats", cfg.EventBusURL).Msg("event bus fanning out via NATS")
+		}
+	}
 
 	signer, err := scanorch.NewSigner(cfg.JobSigningKeyID, cfg.JobSigningKeyPEM)
 	if err != nil {
