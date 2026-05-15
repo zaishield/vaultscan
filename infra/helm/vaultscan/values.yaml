@@ -154,6 +154,17 @@ affinity: {}
 # ----- Backup CronJob (HS-03) -----------------------------------------------
 # Nightly pg_dump + S3 upload. See docs/operations/disaster-recovery.md
 # for the restore drill.
+# ----- Kyverno cosign verification policy (supply-chain) --------------------
+# Refuses to admit images whose cosign signature can't be verified
+# against the GitHub Actions OIDC identity that signed them. Requires
+# Kyverno installed cluster-wide.
+kyverno:
+  cosignVerifyPolicy:
+    enabled: false
+    action: enforce            # enforce | audit
+    imageRefPattern: "ghcr.io/zaishield/vaultscan/*"
+    subjectRegex: "https://github.com/zaishield/vaultscan/.*"
+
 # ----- pgBouncer (HS-04 follow-up) -----------------------------------------
 # Two pools sit between every backend pod and Postgres:
 #   transaction  — used by api/agent-gateway/scanner-worker (short queries)

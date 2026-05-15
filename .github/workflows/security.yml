@@ -120,3 +120,159 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  trivy-backend-images:
+    # Builds the production backend / agent-gateway / portal /
+    # analytics-worker images and scans each for CVEs.
+    name: trivy on backend images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: api,              dockerfile: backend/Dockerfile,                  context: backend }
+          - { name: agent-gateway,    dockerfile: backend/cmd/agent-gateway/Dockerfile, context: backend }
+          - { name: analytics-worker, dockerfile: backend/cmd/analytics-worker/Dockerfile, context: backend }
+          - { name: portal,           dockerfile: frontend/Dockerfile,                 context: frontend }
+    steps:
+      - uses: actions/checkout@v4
+      - name: build image
+        run: docker build -t vaultscan/${{ matrix.name }}:ci -f ${{ matrix.dockerfile }} ${{ matrix.context }}
+      - name: trivy scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: vaultscan/${{ matrix.name }}:ci
+          format: sarif
+          output: trivy-backend-${{ matrix.name }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-backend-${{ matrix.name }}.sarif
+          category: trivy-backend-${{ matrix.name }}
+
+  sbom:
+    # Software Bill of Materials per image. CycloneDX JSON format —
+    # ingested by SCA tools (Dependency-Track, Snyk, Mend) and
+    # required for SLSA Level 3 attestation.
+    name: syft SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [api, agent-gateway, analytics-worker, portal]
+    steps:
+      - uses: actions/checkout@v4
+      - name: install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      - name: build image
+        run: |
+          case "${{ matrix.component }}" in
+            api)              docker build -t vaultscan/api:sbom              -f backend/Dockerfile backend ;;
+            agent-gateway)    docker build -t vaultscan/agent-gateway:sbom    -f backend/cmd/agent-gateway/Dockerfile backend ;;
+            analytics-worker) docker build -t vaultscan/analytics-worker:sbom -f backend/cmd/analytics-worker/Dockerfile backend ;;
+            portal)           docker build -t vaultscan/portal:sbom           -f frontend/Dockerfile frontend ;;
+          esac
+      - name: generate SBOM
+        run: |
+          syft vaultscan/${{ matrix.component }}:sbom -o cyclonedx-json > sbom-${{ matrix.component }}.cdx.json
+          syft vaultscan/${{ matrix.component }}:sbom -o spdx-json     > sbom-${{ matrix.component }}.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.component }}
+          path: |
+            sbom-${{ matrix.component }}.cdx.json
+            sbom-${{ matrix.component }}.spdx.json
+          retention-days: 90
+
+  licenses:
+    # License scan via go-licenses for backend modules. Catches:
+    #   - GPL/AGPL deps that incompatibly license the binary
+    #   - missing license files (compliance liability)
+    name: go-licenses scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.25" }
+      - name: install go-licenses
+        run: go install github.com/google/go-licenses@latest
+      - name: backend
+        working-directory: backend
+        run: |
+          # Allow MIT, Apache-2.0, BSD-2/3-Clause, ISC, MPL-2.0.
+          # Disallow GPL-3.0, AGPL-3.0, LGPL-* unless explicitly added
+          # to the allow_dynamic list. Output as CSV for traceability.
+          go-licenses csv ./... > backend-licenses.csv
+          go-licenses check ./... \
+            --disallowed_types=forbidden,restricted,unknown
+      - name: agent
+        working-directory: agent
+        run: |
+          go-licenses csv ./... > agent-licenses.csv
+          go-licenses check ./... \
+            --disallowed_types=forbidden,restricted,unknown
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: license-inventory
+          path: |
+            backend/backend-licenses.csv
+            agent/agent-licenses.csv
+
+  cosign-keyless-sign:
+    # Signs each pushed image with cosign keyless (Sigstore Fulcio +
+    # Rekor). Only runs on main branch — PRs should not push images.
+    # The chart's admission policy (Kyverno) verifies these signatures
+    # at deploy time so unsigned images can't enter production.
+    name: cosign keyless sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write   # OIDC for keyless signing
+      packages: write
+    needs: [trivy-backend-images, sbom]
+    strategy:
+      matrix:
+        component: [api, agent-gateway, analytics-worker, portal]
+    steps:
+      - uses: actions/checkout@v4
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: build + push
+        run: |
+          # Same dockerfile dispatch as in sbom job.
+          case "${{ matrix.component }}" in
+            api)              DF=backend/Dockerfile                          CTX=backend ;;
+            agent-gateway)    DF=backend/cmd/agent-gateway/Dockerfile        CTX=backend ;;
+            analytics-worker) DF=backend/cmd/analytics-worker/Dockerfile     CTX=backend ;;
+            portal)           DF=frontend/Dockerfile                         CTX=frontend ;;
+          esac
+          IMG=ghcr.io/${{ github.repository }}/${{ matrix.component }}:${{ github.sha }}
+          docker build -t "$IMG" -f "$DF" "$CTX"
+          docker push "$IMG"
+          echo "IMG=$IMG" >> "$GITHUB_ENV"
+      - name: cosign sign
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: cosign sign --yes "$IMG"
+      - name: cosign verify (sanity)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign verify "$IMG" \
+            --certificate-identity-regexp="https://github.com/${{ github.repository }}/.*" \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com

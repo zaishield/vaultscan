@@ -1,0 +1,44 @@
+{{- if .Values.kyverno.cosignVerifyPolicy.enabled }}
+{{/*
+Kyverno ClusterPolicy: refuse to admit any vaultscan/* image whose
+cosign signature can't be verified against the GitHub Actions OIDC
+issuer used by .github/workflows/security.yml's cosign-keyless-sign
+job.
+
+Effect: even if an attacker pushes a malicious image to the registry,
+Kubernetes won't run it because the admission webhook rejects it.
+
+Requires Kyverno installed in the cluster (kyverno.io). Disable this
+policy block by setting kyverno.cosignVerifyPolicy.enabled=false if
+you're using a different policy engine (Gatekeeper, OPA, Polaris).
+*/}}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-cosign-verify
+  annotations:
+    policies.kyverno.io/title: VAULTSCAN cosign signature verification
+    policies.kyverno.io/category: Software Supply Chain Security
+spec:
+  validationFailureAction: {{ .Values.kyverno.cosignVerifyPolicy.action | quote }}
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail
+  background: false
+  rules:
+    - name: verify-vaultscan-images
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [{{ .Release.Namespace | quote }}]
+      verifyImages:
+        - imageReferences:
+            - "{{ .Values.kyverno.cosignVerifyPolicy.imageRefPattern }}"
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subject: "{{ .Values.kyverno.cosignVerifyPolicy.subjectRegex }}"
+                    rekor:
+                      url: https://rekor.sigstore.dev
+{{- end }}
