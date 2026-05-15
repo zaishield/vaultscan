@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/zaishield/vaultscan/backend/internal/agents"
+	"github.com/zaishield/vaultscan/backend/internal/analytics"
 	"github.com/zaishield/vaultscan/backend/internal/api"
 	"github.com/zaishield/vaultscan/backend/internal/assets"
 	"github.com/zaishield/vaultscan/backend/internal/audit"
@@ -83,6 +84,25 @@ func main() {
 	intSvc.Wire(bus)
 	dashSvc := dashboards.New(pool.Pool)
 	verifier := auth.NewVerifier(cfg.JWTSharedSecret, pool.Pool)
+
+	// Optional in-process analytics indexer. The standalone analytics-worker
+	// is preferred for production; set VAULTSCAN_ANALYTICS_INPROC=false to
+	// disable this when running the worker separately.
+	if os.Getenv("VAULTSCAN_ANALYTICS_INPROC") != "false" {
+		if asClient, err := analytics.NewClient(cfg.OpenSearchURL, "", ""); err == nil {
+			if err := asClient.Ping(ctx); err != nil {
+				log.Warn().Err(err).Msg("opensearch unreachable; analytics indexer disabled")
+			} else {
+				if err := analytics.EnsureTemplates(ctx, asClient); err != nil {
+					log.Warn().Err(err).Msg("ensure analytics templates")
+				}
+				idx := analytics.NewIndexer(asClient, pool.Pool, log)
+				idx.Wire(bus)
+				go idx.Run(ctx)
+				log.Info().Msg("in-process analytics indexer active")
+			}
+		}
+	}
 
 	router := api.Mount(&api.Services{
 		Pool: pool.Pool, Cfg: cfg, Log: log, Verifier: verifier,

@@ -173,6 +173,24 @@ services:
     ports: ["5173:80"]
     depends_on: [api]
 
+  # OpenSearch indexer that mirrors authoritative Postgres records into the
+  # analytics index family (Blueprint §26.4). Runs separately from the API so
+  # OpenSearch backpressure can't affect the user-facing path.
+  analytics-worker:
+    build:
+      context: ../..
+      dockerfile: infra/compose/analytics-worker.Dockerfile
+    image: vaultscan-analytics-worker:dev
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+      VAULTSCAN_ANALYTICS_INPROC: "false"   # API skips its in-proc indexer
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+
 volumes:
   vaultscan-pg: {}
   vaultscan-os: {}
