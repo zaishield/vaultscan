@@ -3,19 +3,56 @@
 // CPU/memory limits and an emergency-stop hook. The dev build executes the
 // host binary if available; otherwise it returns a synthetic record so the
 // rest of the upload pipeline can be exercised end-to-end.
+//
+// Hardening (HS-01 collaboration): the runner only ever exec()s binaries
+// from a hardcoded allow-list. Even if a misconfigured local policy claims
+// to allow `bash`, the runner refuses.
 package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 )
 
-type Runner struct{}
+// allowedTools is the immutable allow-list. Adding a tool here is a
+// deliberate code change; the agent will refuse to run anything else
+// regardless of what the cloud policy says.
+var allowedTools = map[string]bool{
+	"nmap": true, "nuclei": true, "zap": true, "openvas": true,
+	"testssl": true, "sslyze": true, "trivy": true, "lynis": true,
+	"bloodhound": true, "netexec": true, "prowler": true,
+	"kube-bench": true, "kube-hunter": true,
+	"amass": true, "subfinder": true, "dnsx": true, "httpx": true,
+	"naabu": true, "ffuf": true, "katana": true, "mobsf": true,
+}
+
+// PolicyGate is the tiny contract the runner needs to consult before
+// exec. Both policy.Local and a stub implement it.
+type PolicyGate interface {
+	AllowsTool(tool string) bool
+}
+
+type Runner struct {
+	policy PolicyGate
+}
 
 func New() *Runner { return &Runner{} }
+
+// WithPolicy returns a Runner that defers to the supplied policy gate
+// in addition to the hardcoded allow-list. AllowsTool=false on either
+// side blocks execution.
+func (r *Runner) WithPolicy(p PolicyGate) *Runner {
+	r.policy = p
+	return r
+}
+
+// ErrToolNotAllowed signals a refusal at the runner level. Callers
+// translate it into a job-status=failed with the same message.
+var ErrToolNotAllowed = errors.New("runner: tool not in agent allow-list")
 
 // Output is the raw payload (typically tool stdout/stderr or the artifact
 // path the tool writes to).
@@ -32,6 +69,12 @@ type Output struct {
 // implementation respects the contract but will produce a synthetic stub if
 // the tool isn't installed locally.
 func (r *Runner) Execute(ctx context.Context, tool string, targets []string, maxCPU, maxMem int) (*Output, error) {
+	if !allowedTools[tool] {
+		return nil, fmt.Errorf("%w: %q", ErrToolNotAllowed, tool)
+	}
+	if r.policy != nil && !r.policy.AllowsTool(tool) {
+		return nil, fmt.Errorf("%w: %q (denied by policy)", ErrToolNotAllowed, tool)
+	}
 	args := buildArgs(tool, targets)
 	bin := tool
 	if path, err := exec.LookPath(tool); err == nil {

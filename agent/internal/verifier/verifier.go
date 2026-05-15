@@ -71,6 +71,15 @@ func (v *Verifier) Loaded() bool {
 	return v.pub != nil
 }
 
+// PublicKey returns the loaded key for callers that need to verify
+// signatures of their own (the updater, for example, signs manifests
+// with the same key the job verifier uses).
+func (v *Verifier) PublicKey() *rsa.PublicKey {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.pub
+}
+
 // FetchAndPersist fetches the orchestrator's RSA public key from the API and
 // caches it under <dataDir>/cloud-public.pem. Subsequent runs load it from
 // New() once the file exists at that path (the caller is responsible for

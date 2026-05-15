@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -33,10 +34,17 @@ import (
 	"github.com/zaishield/vaultscan/agent/internal/heartbeat"
 	"github.com/zaishield/vaultscan/agent/internal/packager"
 	"github.com/zaishield/vaultscan/agent/internal/policy"
+	"github.com/zaishield/vaultscan/agent/internal/rotation"
 	"github.com/zaishield/vaultscan/agent/internal/runner"
+	"github.com/zaishield/vaultscan/agent/internal/updater"
 	"github.com/zaishield/vaultscan/agent/internal/uploader"
 	"github.com/zaishield/vaultscan/agent/internal/verifier"
 )
+
+// AgentVersion is the build-time agent version reported in heartbeats
+// and used by the updater to compute whether an offered bundle is
+// applicable. Override with `-ldflags "-X main.AgentVersion=x.y.z"`.
+var AgentVersion = "1.0.0"
 
 func main() {
 	gateway := flag.String("gateway", os.Getenv("VAULTSCAN_GATEWAY"), "agent-gateway base URL")
@@ -65,6 +73,7 @@ func main() {
 		log.Fatal().Err(err).Msg("init encrypted cache")
 	}
 
+	localPolicy := policy.NewLocal()
 	ag := &Agent{
 		log:        log,
 		gateway:    *gateway,
@@ -72,12 +81,13 @@ func main() {
 		dataDir:    *dataDir,
 		client:     &http.Client{Timeout: 60 * time.Second},
 		cache:      cstore,
-		policy:     policy.NewLocal(),
-		runner:     runner.New(),
+		policy:     localPolicy,
+		runner:     runner.New().WithPolicy(localPolicy),
 		packager:   packager.New(),
 		uploader:   uploader.New(),
 		verifier:   verifier.New(),
 		emergency:  emergency.New(),
+		counters:   &heartbeat.Counters{},
 	}
 
 	if *enrollToken != "" {
@@ -108,15 +118,50 @@ func main() {
 		}
 	}
 
+	// Cert rotation goroutine — refreshes the cert within RotateBefore
+	// of expiry, atomic on-disk swap, surfaces the new fingerprint to
+	// the rest of the agent via a dynamic getter.
+	ag.rotator = rotation.New(ag.client, *gateway, agentID, *dataDir, ag.fingerprint)
+	ag.rotator.RotateBefore = 30 * 24 * time.Hour
+	ag.rotator.CheckEvery = 12 * time.Hour
+
+	// Signed update-bundle installer. Uses the same cloud public key that
+	// verifies job signatures (loaded into ag.verifier).
+	updaterInst := updater.New(ag.client, *gateway, agentID, *dataDir,
+		ag.verifier.PublicKey(), AgentVersion)
+	updaterInst.OnInstalled = func(target string) {
+		log.Info().Str("bundle", target).
+			Msg("update bundle installed; supervisor will restart the agent on next interval")
+	}
+
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
-		heartbeat.Run(ctx, log, *gateway, agentID, ag.fingerprint, *hbInterval)
+		heartbeat.Run(ctx, log, heartbeat.Config{
+			Gateway:        *gateway,
+			AgentID:        agentID,
+			Fingerprint:    ag.rotator.Fingerprint,
+			ScannerVersion: AgentVersion,
+			Every:          *hbInterval,
+			Counters:       ag.counters,
+			Emergency:      ag.emergency,
+		})
 	}()
 	go func() {
 		defer wg.Done()
 		ag.runJobLoop(ctx, *pollInterval)
+	}()
+	go func() {
+		defer wg.Done()
+		ag.rotator.Run(ctx, func(newFp string) {
+			ag.fingerprint = newFp
+			log.Info().Str("fingerprint", newFp[:16]+"…").Msg("cert rotated; new fingerprint live")
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		updaterInst.Run(ctx)
 	}()
 
 	stop := make(chan os.Signal, 1)
@@ -141,6 +186,8 @@ type Agent struct {
 	uploader    *uploader.Uploader
 	verifier    *verifier.Verifier
 	emergency   *emergency.Listener
+	counters    *heartbeat.Counters
+	rotator     *rotation.Rotator
 }
 
 type job struct {
@@ -191,6 +238,8 @@ func (a *Agent) pollAndRun(ctx context.Context) {
 
 func (a *Agent) execute(ctx context.Context, j job) {
 	a.log.Info().Str("job", j.ID.String()).Str("profile", j.ProfileCode).Msg("dispatching job")
+	a.counters.BumpRunning(1)
+	defer a.counters.BumpRunning(-1)
 
 	// Verify the cloud-issued signature before doing anything.
 	manifest, _ := json.Marshal(map[string]any{
@@ -226,6 +275,9 @@ func (a *Agent) execute(ctx context.Context, j job) {
 		out, err := a.runner.Execute(ctx, tool, j.Targets, a.policy.MaxCPUPercent(), a.policy.MaxMemoryPercent())
 		if err != nil {
 			a.log.Warn().Err(err).Str("tool", tool).Msg("tool failed")
+			if errors.Is(err, runner.ErrToolNotAllowed) {
+				a.counters.BumpImagePullsFailed()
+			}
 			continue
 		}
 		pkg, err := a.packager.Package(out)
