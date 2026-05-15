@@ -83,27 +83,30 @@ Default credentials are documented in `docs/operations/local-dev.md`.
 
 ## Blueprint Reference
 
-This codebase is structured to map 1:1 with the Master Blueprint:
+This codebase is structured to map 1:1 with the Master Blueprint. Each row
+below points at a path that exists in this repository.
 
-- §5 External VA/PT Plane → `backend/internal/scanorch`, `infra/k8s/scanner-farm`
-- §6 Internal VA/PT Plane → `backend/internal/agentgw`, `agent/`
-- §7 Cloud Portal UI → `frontend/`
-- §8 White-Label Engine → `backend/internal/branding`, `backend/internal/partners`
-- §9 Multi-Tenant Hierarchy → `backend/internal/tenants`, `backend/internal/middleware/tenant.go`
-- §11 Control Plane Services → `backend/internal/*` packages, `backend/cmd/api`
-- §13 Internal Agent → `agent/`
-- §14 Scope Guard → `backend/internal/scopeguard`
-- §15 Tool-Domain Mapping → `tools/scanner-images/`, `backend/internal/parsers`
-- §17 Findings Engine → `backend/internal/findings`
-- §18 Evidence Vault → `backend/internal/evidence`
-- §19 Reporting Engine → `backend/internal/reporting`
-- §20 Database → `backend/migrations/`
-- §21 API → `backend/internal/api/`
-- §22 Event Bus → `backend/internal/eventbus`
-- §23 RBAC → `backend/internal/auth`, `backend/internal/roles`
-- §24 Security → see HS-01 ledger
-- §29 SSO/MFA → `infra/keycloak`, `backend/internal/auth`
-- §30 Secrets → `backend/internal/secrets`
-- §32 Compliance & Audit → `backend/internal/audit`
-- §36 Guardrails → see HS-05 ledger
-- §37 Acceptance Checklist → see HS-06 ledger
+| Blueprint section          | Implementation                                                                       |
+|----------------------------|--------------------------------------------------------------------------------------|
+| §5 External VA/PT Plane    | `backend/internal/scanorch/`, `infra/k8s/scanner-farm/`                              |
+| §6 Internal VA/PT Plane    | `backend/cmd/agent-gateway/`, `agent/`                                               |
+| §7 Cloud Portal UI         | `frontend/`                                                                          |
+| §8 White-Label Engine      | `backend/internal/branding/`, `backend/internal/partners/`                           |
+| §9 Multi-Tenant Hierarchy  | `backend/internal/tenants/`, `backend/internal/middleware/middleware.go` (`TenantScope`) |
+| §11 Control Plane Services | `backend/internal/*` service packages, `backend/cmd/api/`                            |
+| §13 Internal Agent         | `agent/`                                                                             |
+| §14 Scope Guard            | `backend/internal/scopeguard/`                                                       |
+| §15 Tool-Domain Mapping    | `tools/scanner-images/`, `backend/internal/parsers/`                                 |
+| §17 Findings Engine        | `backend/internal/findings/`                                                         |
+| §18 Evidence Vault         | `backend/internal/evidence/`                                                         |
+| §19 Reporting Engine       | `backend/internal/reporting/`                                                        |
+| §20 Database               | `backend/migrations/`                                                                |
+| §21 API                    | `backend/internal/api/`                                                              |
+| §22 Event Bus              | `backend/internal/eventbus/`                                                         |
+| §23 RBAC                   | `backend/internal/auth/`, roles + permissions seeded in `backend/migrations/0001_platform_foundation.up.sql` |
+| §24 Security               | see [HS-01 ledger](docs/slices/hs-01-security-hardening.md)                          |
+| §29 SSO/MFA                | `infra/keycloak/`, `backend/internal/auth/`, `backend/internal/middleware/middleware.go` (`RequireMFA`) |
+| §30 Secrets                | `backend/internal/secrets/`                                                          |
+| §32 Compliance & Audit     | `backend/internal/audit/`, see [HS-02 ledger](docs/slices/hs-02-audit-compliance.md) |
+| §36 Guardrails             | see [HS-05 ledger](docs/slices/hs-05-guardrails.md)                                  |
+| §37 Acceptance Checklist   | see [HS-06 ledger](docs/slices/hs-06-acceptance.md)                                  |
