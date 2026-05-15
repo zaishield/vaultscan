@@ -1,0 +1,8 @@
+-- Reverses 0033_hs01_rls_enable.up.sql.
+DROP FUNCTION IF EXISTS vaultscan_set_tenant_id(uuid);
+ALTER TABLE finding_evidence NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE assets           NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE findings         NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE finding_evidence DISABLE ROW LEVEL SECURITY;
+ALTER TABLE assets           DISABLE ROW LEVEL SECURITY;
+ALTER TABLE findings         DISABLE ROW LEVEL SECURITY;

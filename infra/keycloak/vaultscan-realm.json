@@ -1,51 +1,284 @@
 {
+  "_comment": "VAULTSCAN Keycloak realm export. Import via: kc.sh import --file vaultscan-realm.json --override true. The client secret on vaultscan-api is a placeholder — rotate at first boot and store in the secrets backend.",
   "realm": "vaultscan",
   "enabled": true,
   "displayName": "ZAISHIELD VAULTSCAN",
+  "displayNameHtml": "<strong>ZAISHIELD</strong> VAULTSCAN",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
-  "passwordPolicy": "length(12) and upperCase(1) and digits(1) and specialChars(1)",
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+
+  "passwordPolicy": "length(12) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername and notEmail and passwordHistory(5) and forceExpiredPasswordChange(90)",
   "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA256",
+  "otpPolicyDigits": 6,
+  "otpPolicyLookAheadWindow": 1,
+  "otpPolicyPeriod": 30,
+  "otpSupportedApplications": ["FreeOTP", "Google Authenticator", "1Password", "Authy"],
+
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 28800,
+  "offlineSessionIdleTimeout": 2592000,
+  "accessTokenLifespan": 900,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "actionTokenGeneratedByAdminLifespan": 43200,
+  "actionTokenGeneratedByUserLifespan": 300,
+
   "browserSecurityHeaders": {
-    "contentSecurityPolicy": "default-src 'self'",
-    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains",
+    "xContentTypeOptions": "nosniff",
+    "xFrameOptions": "DENY",
+    "xRobotsTag": "none",
+    "xXSSProtection": "1; mode=block",
+    "referrerPolicy": "no-referrer"
   },
+
+  "eventsEnabled": true,
+  "eventsExpiration": 0,
+  "eventsListeners": ["jboss-logging"],
+  "enabledEventTypes": [
+    "LOGIN", "LOGIN_ERROR", "LOGOUT", "REGISTER", "REGISTER_ERROR",
+    "REMOVE_TOTP", "UPDATE_PASSWORD", "UPDATE_TOTP",
+    "VERIFY_EMAIL", "SEND_RESET_PASSWORD", "IMPERSONATE",
+    "GRANT_CONSENT", "REVOKE_GRANT", "CLIENT_LOGIN", "CLIENT_LOGIN_ERROR",
+    "REFRESH_TOKEN", "REFRESH_TOKEN_ERROR"
+  ],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+
+  "requiredActions": [
+    {"alias": "VERIFY_PROFILE", "name": "Verify Profile", "enabled": true, "defaultAction": false, "priority": 90},
+    {"alias": "CONFIGURE_TOTP", "name": "Configure OTP", "enabled": true, "defaultAction": false, "priority": 10},
+    {"alias": "UPDATE_PASSWORD", "name": "Update Password", "enabled": true, "defaultAction": false, "priority": 30}
+  ],
+
   "clients": [
     {
       "clientId": "vaultscan-portal",
       "name": "VAULTSCAN Portal",
+      "description": "Browser-side SPA. Public client, PKCE-only.",
+      "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
-      "redirectUris": ["http://localhost:5173/*", "https://vaultscan.zaishield.com/*"],
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "rootUrl": "https://vaultscan.zaishield.com",
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://localhost:3000/*",
+        "https://vaultscan.zaishield.com/*",
+        "https://*.vaultscan.zaishield.com/*"
+      ],
       "webOrigins": ["+"],
-      "attributes": { "pkce.code.challenge.method": "S256" }
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+",
+        "access.token.lifespan": "900",
+        "use.refresh.tokens": "true"
+      },
+      "fullScopeAllowed": false,
+      "defaultClientScopes": ["web-origins", "profile", "roles", "email", "vaultscan-claims"],
+      "optionalClientScopes": ["offline_access", "microprofile-jwt"]
     },
     {
       "clientId": "vaultscan-api",
       "name": "VAULTSCAN API",
+      "description": "Backend confidential client. Service accounts for scanner-worker, analytics-worker, agent-gateway.",
+      "enabled": true,
       "publicClient": false,
       "secret": "REPLACE_ME_AT_FIRST_BOOT",
       "serviceAccountsEnabled": true,
-      "standardFlowEnabled": false
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "attributes": {
+        "access.token.lifespan": "1800",
+        "client.secret.creation.time": "0"
+      },
+      "fullScopeAllowed": false,
+      "defaultClientScopes": ["roles", "vaultscan-claims"]
+    },
+    {
+      "clientId": "vaultscan-mobile",
+      "name": "VAULTSCAN Mobile",
+      "description": "Mobile portal (iOS/Android). Public client, PKCE + refresh tokens.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "rootUrl": "vaultscan://callback",
+      "redirectUris": ["vaultscan://*"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "use.refresh.tokens": "true",
+        "access.token.lifespan": "900"
+      },
+      "fullScopeAllowed": false,
+      "defaultClientScopes": ["profile", "roles", "email", "vaultscan-claims"],
+      "optionalClientScopes": ["offline_access"]
     }
   ],
+
+  "clientScopes": [
+    {
+      "name": "vaultscan-claims",
+      "description": "Maps user attributes (platform_id / partner_id / tenant_id) into the access token so the API can authorise without an extra round-trip.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "platform_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "platform_id",
+            "claim.name": "platform_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "partner_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "partner_id",
+            "claim.name": "partner_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "mfa",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "config": {
+            "claim.name": "mfa",
+            "claim.value": "true",
+            "jsonType.label": "boolean",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "multivalued": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+
   "roles": {
     "realm": [
-      {"name": "zaishield_super_admin"},
-      {"name": "platform_security_admin"},
-      {"name": "distributor_admin"},
-      {"name": "reseller_admin"},
-      {"name": "mssp_manager"},
-      {"name": "mssp_analyst"},
-      {"name": "tenant_admin"},
-      {"name": "engagement_manager"},
-      {"name": "pentester"},
-      {"name": "analyst"},
-      {"name": "remediation_owner"},
-      {"name": "client_viewer"},
-      {"name": "auditor"},
-      {"name": "agent_installer"}
+      {"name": "zaishield_super_admin", "description": "Platform owner. Bypasses every permission check.",
+        "composite": true, "composites": {"realm": [
+          "platform_security_admin","distributor_admin","reseller_admin","mssp_manager",
+          "mssp_analyst","tenant_admin","engagement_manager","pentester","analyst",
+          "remediation_owner","client_viewer","auditor"
+        ]}},
+      {"name": "platform_security_admin", "description": "Manages platform-wide config, partners, branding."},
+      {"name": "distributor_admin",        "description": "Manages resellers, MSSPs, tenants under one distributor."},
+      {"name": "reseller_admin",           "description": "Manages MSSPs + tenants under one reseller."},
+      {"name": "mssp_manager",             "description": "MSSP operator: manage multiple tenants."},
+      {"name": "mssp_analyst",             "description": "MSSP analyst: triage findings, request retests."},
+      {"name": "tenant_admin",             "description": "Tenant owner: manage engagements, scope, integrations."},
+      {"name": "engagement_manager",       "description": "Lead engagement lifecycle: scope, approvals, reports."},
+      {"name": "pentester",                "description": "Active testing: create scans, edit findings, execute retests."},
+      {"name": "analyst",                  "description": "Read-only on findings; can add comments."},
+      {"name": "remediation_owner",        "description": "Customer-side fixer: receives assignments, marks remediated."},
+      {"name": "client_viewer",            "description": "Read-only stakeholder."},
+      {"name": "auditor",                  "description": "Read audit trail, compliance reports, scope decisions."},
+      {"name": "agent_installer",          "description": "Service account: enrolls agents only."}
     ]
-  }
+  },
+
+  "users": [
+    {
+      "_comment": "Bootstrap superadmin — change the password at first login.",
+      "username": "vaultscan-bootstrap",
+      "email": "ops@zaishield.com",
+      "firstName": "VAULTSCAN",
+      "lastName": "Bootstrap",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["UPDATE_PASSWORD", "CONFIGURE_TOTP"],
+      "attributes": {
+        "platform_id": ["00000000-0000-0000-0000-0000000000a1"],
+        "partner_id":  ["00000000-0000-0000-0000-0000000000b1"]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ChangeMe!Bootstrap1",
+          "temporary": true
+        }
+      ],
+      "realmRoles": ["zaishield_super_admin"],
+      "clientRoles": {
+        "account": ["view-profile", "manage-account"]
+      }
+    }
+  ],
+
+  "smtpServer": {
+    "host": "smtp.zaishield.com",
+    "port": "587",
+    "fromDisplayName": "ZAISHIELD VAULTSCAN",
+    "from": "no-reply@zaishield.com",
+    "replyToDisplayName": "ZAISHIELD Security",
+    "replyTo": "security@zaishield.com",
+    "ssl": "false",
+    "starttls": "true",
+    "auth": "true",
+    "user": "REPLACE_ME_SMTP_USER",
+    "password": "REPLACE_ME_SMTP_PASSWORD"
+  },
+
+  "internationalizationEnabled": true,
+  "supportedLocales": ["en", "ar", "fr"],
+  "defaultLocale": "en",
+
+  "authenticationFlows": [],
+  "identityProviders": [],
+  "components": {}
 }

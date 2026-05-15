@@ -50,6 +50,77 @@ func loadMigrations(dir string) ([]migration, error) {
 	return ms, nil
 }
 
+// loadDownMigration looks up <version>.down.sql in dir. Returns the
+// SQL or an error if the file is missing (rollback refuses to proceed
+// when a down script isn't available so the operator can't silently
+// half-revert).
+func loadDownMigration(dir, version string) (string, error) {
+	path := filepath.Join(dir, version+".down.sql")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("rollback: missing down migration %s: %w", version, err)
+	}
+	return string(body), nil
+}
+
+// Rollback reverts the most recently applied migration:
+//   1. pick the highest version in schema_migrations
+//   2. apply <version>.down.sql in a transaction
+//   3. delete the schema_migrations row on success
+func (d *DB) Rollback(ctx context.Context, dir string) (string, error) {
+	var version, filename string
+	err := d.QueryRow(ctx, `
+		SELECT version, filename FROM schema_migrations
+		 ORDER BY version DESC LIMIT 1`).Scan(&version, &filename)
+	if err != nil {
+		return "", fmt.Errorf("rollback: no applied migrations: %w", err)
+	}
+	body, err := loadDownMigration(dir, version)
+	if err != nil {
+		return "", err
+	}
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	if _, err := tx.Exec(ctx, body); err != nil {
+		_ = tx.Rollback(ctx)
+		return "", fmt.Errorf("rollback apply %s: %w", version, err)
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM schema_migrations WHERE version=$1`, version); err != nil {
+		_ = tx.Rollback(ctx)
+		return "", fmt.Errorf("rollback dequeue %s: %w", version, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return version, nil
+}
+
+// RollbackTo rolls back migrations one by one until schema_migrations
+// no longer contains anything strictly greater than `targetVersion`.
+// Empty target = unwind everything.
+func (d *DB) RollbackTo(ctx context.Context, dir, targetVersion string) ([]string, error) {
+	var unrolled []string
+	for {
+		var top string
+		err := d.QueryRow(ctx,
+			`SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1`).Scan(&top)
+		if err != nil {
+			return unrolled, nil
+		}
+		if top <= targetVersion {
+			return unrolled, nil
+		}
+		v, err := d.Rollback(ctx, dir)
+		if err != nil {
+			return unrolled, err
+		}
+		unrolled = append(unrolled, v)
+	}
+}
+
 // Migrate applies any new versioned migrations from dir.
 func (d *DB) Migrate(ctx context.Context, dir string) (applied []string, err error) {
 	if _, err := d.Exec(ctx, `
