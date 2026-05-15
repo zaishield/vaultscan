@@ -64,6 +64,7 @@ type Services struct {
 	Users        *users.Service
 	Email        *email.Service
 	Cosign       *cosign.Service
+	BrandAssets  *branding.AssetService
 }
 
 // Mount returns a fully wired HTTP router.
@@ -295,6 +296,16 @@ func Mount(s *Services) http.Handler {
 			r.With(middleware.RequirePermission("manage_branding")).
 				Post("/{code}/send-test", sendTestEmail(s))
 		})
+
+		// VS-02 deepening: brand asset upload + DNS posture + preview
+		r.Route("/api/v1/partners/{partner_id}/brand-assets", func(r chi.Router) {
+			r.Get("/", listBrandAssets(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Post("/{asset_type}", uploadBrandAsset(s))
+		})
+		r.With(middleware.RequirePermission("manage_branding")).
+			Post("/api/v1/partners/{partner_id}/sender-dns/check", checkSenderDNS(s))
+		r.Get("/api/v1/partners/{partner_id}/preview", brandingPreview(s))
 
 		// Rules of engagement + blackouts (VS-03)
 		r.Route("/api/v1/engagements/{engagement_id}/roe", func(r chi.Router) {

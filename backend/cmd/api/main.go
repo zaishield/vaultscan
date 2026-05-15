@@ -89,6 +89,7 @@ func main() {
 	userSvc := users.New(pool.Pool, auditSvc)
 	emailSvc := email.New(pool.Pool, nil) // production wires SMTP/SES; dev uses MemoryTransport
 	cosignSvc := cosign.New(pool.Pool)
+	brandAssets := branding.NewAssetService(pool.Pool, vault, auditSvc)
 	verifier := auth.NewVerifier(cfg.JWTSharedSecret, pool.Pool)
 
 	// Optional in-process analytics indexer. The standalone analytics-worker
@@ -117,7 +118,7 @@ func main() {
 		Assets: assetSvc, Scope: scope, ScanOrch: orch, Signer: signer, Agents: agentSvc,
 		Findings: findSvc, Vault: vault, Retests: retestSvc, Reports: reportSvc,
 		Integrations: intSvc, Dashboards: dashSvc, Users: userSvc, Email: emailSvc,
-		Cosign: cosignSvc,
+		Cosign: cosignSvc, BrandAssets: brandAssets,
 	})
 
 	srv := &http.Server{

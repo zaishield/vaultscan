@@ -2125,6 +2125,108 @@ func drillRecentScans(s *Services) http.HandlerFunc {
 	}
 }
 
+// ----- VS-02 deepening: brand assets, DNS check, preview -------------------
+
+func listBrandAssets(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pid, err := uuidParam(r, "partner_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		out, err := s.BrandAssets.ListAssets(r.Context(), pid)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	}
+}
+
+func uploadBrandAsset(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pid, err := uuidParam(r, "partner_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		assetType := chi.URLParam(r, "asset_type")
+		body, err := io.ReadAll(io.LimitReader(r.Body, branding.MaxAssetSize+1))
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		if int64(len(body)) > branding.MaxAssetSize {
+			badRequest(w, "asset exceeds size cap")
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		id, err := s.BrandAssets.Upload(r.Context(), branding.UploadInput{
+			PartnerID: pid, AssetType: assetType,
+			ContentType: r.Header.Get("Content-Type"),
+			Body: body, UploadedBy: &identity.UserID,
+		})
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]string{"id": id.String()})
+	}
+}
+
+func checkSenderDNS(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pid, err := uuidParam(r, "partner_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var req struct {
+			Domain       string `json:"domain"`
+			DKIMSelector string `json:"dkim_selector"`
+		}
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		out, err := s.BrandAssets.CheckSenderDomain(r.Context(), pid, req.Domain, req.DKIMSelector)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+// brandingPreview returns the same Bundle the portal would render — used by
+// the partner-onboarding flow before the admin has a session.
+func brandingPreview(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pid, err := uuidParam(r, "partner_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		bundle, err := s.Branding.LoadBundle(r.Context(), pid)
+		if err != nil {
+			notFound(w)
+			return
+		}
+		// Set ETag so a portal can `If-None-Match` to skip the re-render.
+		var etag string
+		_ = s.Pool.QueryRow(r.Context(),
+			`SELECT COALESCE(bundle_etag,'') FROM partner_branding WHERE partner_id=$1`, pid).Scan(&etag)
+		if etag != "" {
+			w.Header().Set("ETag", `"`+etag+`"`)
+			if match := r.Header.Get("If-None-Match"); match == `"`+etag+`"` {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, bundle)
+	}
+}
+
 // ----- VS-01 deepening: /me, suspend, revoke, unlock -----------------------
 
 func whoAmI(s *Services) http.HandlerFunc {
