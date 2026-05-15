@@ -97,6 +97,7 @@ func (a *GCPAdapter) Scan(ctx context.Context, account CloudAccount) ([]ControlR
 	results = append(results, a.checkDefaultComputeSA(ctx, creds, tok)...)
 	results = append(results, a.checkFirewallSSH(ctx, creds, tok)...)
 	results = append(results, a.checkLoggingSinks(ctx, creds, tok))
+	results = append(results, a.extendedScans(ctx, creds, tok)...)
 	return results, nil
 }
 

@@ -90,6 +90,7 @@ func (a *AzureAdapter) Scan(ctx context.Context, account CloudAccount) ([]Contro
 	results = append(results, a.checkNSGOpenSSH(ctx, creds, tok)...)
 	results = append(results, a.checkKeyVaultSoftDelete(ctx, creds, tok)...)
 	results = append(results, a.checkASCStandardTier(ctx, creds, tok))
+	results = append(results, a.extendedScans(ctx, creds, tok)...)
 	return results, nil
 }
 

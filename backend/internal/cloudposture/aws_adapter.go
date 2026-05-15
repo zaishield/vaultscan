@@ -76,6 +76,7 @@ func (a *AWSAdapter) Scan(ctx context.Context, account CloudAccount) ([]ControlR
 	results = append(results, a.checkS3PublicAccessBlock(ctx, account, creds)...)
 	results = append(results, a.checkCloudTrail(ctx, account, creds, account.Regions)...)
 	results = append(results, a.checkEBSEncryptionByDefault(ctx, account, creds, account.Regions)...)
+	results = append(results, a.extendedScans(ctx, account, creds)...)
 	return results, nil
 }
 
@@ -322,7 +323,12 @@ func (a *AWSAdapter) checkEBSEncryptionByDefault(ctx context.Context, _ CloudAcc
 
 // iamCall issues a global IAM query-protocol call.
 func (a *AWSAdapter) iamCall(ctx context.Context, creds AWSCredentials, action string) ([]byte, error) {
-	form := strings.NewReader("Action=" + action + "&Version=2010-05-08")
+	return a.iamCallRaw(ctx, creds, strings.NewReader("Action="+action+"&Version=2010-05-08"))
+}
+
+// iamCallRaw is the underlying helper that takes an arbitrary form
+// reader (used by iamCallWithParam in the extended controls file).
+func (a *AWSAdapter) iamCallRaw(ctx context.Context, creds AWSCredentials, form *strings.Reader) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://iam.amazonaws.com/", form)
 	if err != nil {
 		return nil, err
