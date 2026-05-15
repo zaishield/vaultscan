@@ -526,6 +526,16 @@ func Mount(s *Services) http.Handler {
 			Get("/api/v1/feedback", listFeedback(s))
 		r.With(middleware.RequirePermission("view_audit_logs")).
 			Patch("/api/v1/feedback/{feedback_id}", triageFeedback(s))
+
+		// §34 Partner integration marketplace.
+		r.Get("/api/v1/marketplace/listings", listMarketplaceListings(s))
+		r.With(middleware.RequirePermission("manage_branding")).
+			Post("/api/v1/marketplace/installs", installFromMarketplace(s))
+		r.With(middleware.RequirePermission("manage_branding")).
+			Patch("/api/v1/marketplace/installs/{install_id}", configureMarketplaceInstall(s))
+		r.With(middleware.RequirePermission("manage_branding")).
+			Delete("/api/v1/marketplace/installs/{install_id}", uninstallMarketplaceInstall(s))
+		r.Get("/api/v1/marketplace/installs", listMarketplaceInstalls(s))
 	})
 
 	return r
