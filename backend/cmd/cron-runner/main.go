@@ -178,6 +178,31 @@ func main() {
 		{name: "partition_maintenance", interval: 6 * time.Hour, fn: func(ctx context.Context) error {
 			return ensureNextMonthPartitions(ctx, pool.Pool)
 		}},
+		{name: "audit_archive_sweep", interval: 6 * time.Hour, fn: func(ctx context.Context) error {
+			// Archival is opt-in via env. Default off — many deployments
+			// keep audit_logs in-place and rely on Postgres partitioning.
+			if os.Getenv("VAULTSCAN_AUDIT_ARCHIVE_ENABLED") != "true" {
+				return nil
+			}
+			dir := os.Getenv("VAULTSCAN_AUDIT_ARCHIVE_DIR")
+			if dir == "" {
+				dir = "/var/lib/vaultscan/audit-archive"
+			}
+			storage := audit.NewFilesystemArchive(dir)
+			tsa := audit.NewTSAClient(os.Getenv("VAULTSCAN_AUDIT_TSA_URL"))
+			arch := audit.NewArchiver(pool.Pool, storage, tsa)
+			arch.PurgeAfterArchive = os.Getenv("VAULTSCAN_AUDIT_ARCHIVE_PURGE") == "true"
+			_, err := arch.RunOnce(ctx, nil)
+			return err
+		}},
+		{name: "audit_tsa_daily_anchor", interval: 24 * time.Hour, fn: func(ctx context.Context) error {
+			tsaURL := os.Getenv("VAULTSCAN_AUDIT_TSA_URL")
+			if tsaURL == "" {
+				return nil // anchoring disabled
+			}
+			arch := audit.NewArchiver(pool.Pool, nil, audit.NewTSAClient(tsaURL))
+			return arch.AnchorOnce(ctx)
+		}},
 	}
 
 	var wg sync.WaitGroup
