@@ -415,6 +415,18 @@ func getEngagement(s *Services) http.HandlerFunc {
 			notFound(w)
 			return
 		}
+		// Tenant isolation — the caller's tenant context (resolved
+		// from the X-Tenant-Id header + JWT) must match the
+		// engagement's tenant_id. Even super_admins must explicitly
+		// switch tenants via the X-Tenant-Id header — they don't
+		// silently see another tenant's data on a direct GET. 404
+		// (not 403) so we don't leak engagement existence to a
+		// cross-tenant prober.
+		identity, ierr := auth.FromContext(r.Context())
+		if ierr == nil && identity.TenantID != nil && *identity.TenantID != e.TenantID {
+			notFound(w)
+			return
+		}
 		writeJSON(w, http.StatusOK, e)
 	}
 }

@@ -1,0 +1,365 @@
+openapi: 3.1.0
+info:
+  title: VAULTSCAN Platform API
+  description: |
+    Contract spec for the §37 acceptance-flow surface + the security-
+    critical endpoints. Used by `backend/test/integration/contract_test.go`
+    to validate that every response shape stays stable.
+
+    This is NOT a full inventory of the ~135 mounted routes — it
+    covers the surface a customer integration MUST be able to depend
+    on without churn.
+  version: "1.0.0"
+servers:
+  - url: https://api.vaultscan.zaishield.com
+    description: Production
+  - url: http://localhost:8080
+    description: Dev / test
+
+security:
+  - bearerAuth: []
+  - tenantHeader: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    tenantHeader:
+      type: apiKey
+      in: header
+      name: X-Tenant-Id
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+    JWKS:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            required: [kty, kid, alg, use, n, e]
+            properties:
+              kty: { type: string, enum: [RSA] }
+              kid: { type: string }
+              alg: { type: string, enum: [RS256] }
+              use: { type: string, enum: [sig] }
+              n:   { type: string }
+              e:   { type: string }
+    Tenant:
+      type: object
+      required: [id, name, slug, status]
+      properties:
+        id:     { type: string, format: uuid }
+        name:   { type: string }
+        slug:   { type: string }
+        status: { type: string, enum: [active, suspended, archived] }
+        created_at: { type: string, format: date-time }
+    Engagement:
+      type: object
+      required: [id, code, name, status]
+      properties:
+        id:         { type: string, format: uuid }
+        tenant_id:  { type: string, format: uuid }
+        code:       { type: string }
+        name:       { type: string }
+        status:     { type: string, enum: [draft, active, paused, closed] }
+        starts_at:  { type: string, format: date-time }
+        ends_at:    { type: string, format: date-time }
+    Branding:
+      type: object
+      required: [branding]
+      properties:
+        branding:
+          type: object
+          required: [product_name]
+          properties:
+            product_name: { type: string }
+            primary_color: { type: string }
+            logo_url:      { type: string }
+    AuditVerifyDeep:
+      type: object
+      required: [total_rows, first_bad_id, last_good_id]
+      properties:
+        total_rows:    { type: integer }
+        first_bad_id:  { type: integer }
+        last_good_id:  { type: integer }
+        detected_at:   { type: string, format: date-time }
+        expected_hash: { type: string }
+        stored_hash:   { type: string }
+        detail:        { type: string }
+    MaintenanceState:
+      type: object
+      required: [enabled, last_changed_at]
+      properties:
+        enabled: { type: boolean }
+        reason:  { type: string }
+        started_at:      { type: string, format: date-time }
+        expected_end_at: { type: string, format: date-time }
+        last_changed_by: { type: string, format: uuid }
+        last_changed_at: { type: string, format: date-time }
+    PolicyRule:
+      type: object
+      required: [id, name, rule_class, subject, verdict]
+      properties:
+        id:          { type: string, format: uuid }
+        name:        { type: string }
+        description: { type: string }
+        rule_class:  { type: string, enum: [never_allow, always_require] }
+        subject:     { type: string }
+        condition:   { type: object, additionalProperties: true }
+        verdict:     { type: string }
+    PolicyRulesEnvelope:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/PolicyRule' }
+    Healthz:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok] }
+    GeoNode:
+      type: object
+      required: [node_id, region, status]
+      properties:
+        node_id:   { type: string, format: uuid }
+        region:    { type: string }
+        hostname:  { type: string }
+        latitude:  { type: number }
+        longitude: { type: number }
+        city:      { type: string }
+        country:   { type: string }
+        status:    { type: string }
+        inflight:  { type: integer }
+    GeoNodesEnvelope:
+      type: object
+      required: [nodes]
+      properties:
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/GeoNode' }
+    RegionQuota:
+      type: object
+      required: [region, at_quota, inflight, max]
+      properties:
+        region:                 { type: string }
+        at_quota:               { type: boolean }
+        inflight:               { type: integer }
+        max:                    { type: integer }
+        reserved_for_platform:  { type: integer }
+    JWTRotateResponse:
+      type: object
+      required: [status, new_kid]
+      properties:
+        status:  { type: string, enum: [rotated] }
+        new_kid: { type: string }
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Healthz' }
+
+  /.well-known/jwks.json:
+    get:
+      summary: Public RSA signing keys (RFC 7517)
+      security: []
+      responses:
+        '200':
+          description: Active + verify-only keys
+          content:
+            application/jwk-set+json:
+              schema: { $ref: '#/components/schemas/JWKS' }
+            application/json:
+              schema: { $ref: '#/components/schemas/JWKS' }
+
+  /api/v1/.well-known/jwks.json:
+    get:
+      summary: Alias for /.well-known/jwks.json
+      security: []
+      responses:
+        '200':
+          description: JWKS document
+          content:
+            application/jwk-set+json:
+              schema: { $ref: '#/components/schemas/JWKS' }
+            application/json:
+              schema: { $ref: '#/components/schemas/JWKS' }
+
+  /api/v1/branding:
+    get:
+      summary: Branding bundle resolved by host header
+      security: []
+      responses:
+        '200':
+          description: Branding bundle
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Branding' }
+
+  /api/v1/orchestrator/public-key:
+    get:
+      summary: Cloud signer's public key (PEM)
+      security: []
+      responses:
+        '200':
+          description: PEM-encoded RSA public key
+          content:
+            application/x-pem-file:
+              schema: { type: string }
+            text/plain:
+              schema: { type: string }
+
+  /api/v1/tenants:
+    post:
+      summary: Create a tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug]
+              properties:
+                platform_id: { type: string, format: uuid }
+                partner_id:  { type: string, format: uuid }
+                name:        { type: string }
+                slug:        { type: string }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tenant' }
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/audit/verify:
+    get:
+      summary: Hash-chain verifier (fast)
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chain_valid, broken_at_id]
+                properties:
+                  chain_valid:  { type: boolean }
+                  broken_at_id: { type: integer }
+
+  /api/v1/audit/verify-deep:
+    get:
+      summary: Hash-chain forensic verifier
+      responses:
+        '200':
+          description: Deep verification report
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditVerifyDeep' }
+
+  /api/v1/platform/maintenance:
+    get:
+      summary: Current maintenance state
+      responses:
+        '200':
+          description: Maintenance state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaintenanceState' }
+
+  /api/v1/platform/policy-rules:
+    get:
+      summary: Active platform policy rules (§36)
+      parameters:
+        - in: query
+          name: subject
+          schema: { type: string }
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PolicyRulesEnvelope' }
+
+  /api/v1/dashboards/geo:
+    get:
+      summary: Geo-mapped scanner nodes
+      responses:
+        '200':
+          description: Geo nodes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeoNodesEnvelope' }
+
+  /api/v1/scanner/regions/{region}/quota:
+    get:
+      summary: Region quota status
+      parameters:
+        - in: path
+          name: region
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Quota state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegionQuota' }
+
+  /api/v1/auth/jwt-keys/rotate:
+    post:
+      summary: Rotate the active RSA signing key
+      responses:
+        '200':
+          description: New active key id
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JWTRotateResponse' }
+        '403':
+          description: Forbidden / MFA required
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      security: []
+      responses:
+        '200':
+          description: Prometheus exposition format
+          content:
+            text/plain:
+              schema: { type: string }
+            application/openmetrics-text:
+              schema: { type: string }
