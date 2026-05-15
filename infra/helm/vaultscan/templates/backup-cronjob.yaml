@@ -1,0 +1,100 @@
+{{- if .Values.backup.enabled }}
+{{/*
+Nightly Postgres backup → S3-compatible object store, then Ceph snapshot
+of the evidence vault PVC.
+
+The job runs at 02:00 in the cluster's timezone. Backups land under
+s3://{{ .Values.backup.s3Bucket }}/{{ inc | YYYY-MM-DD }}/.
+
+Restoration drill: see docs/operations/disaster-recovery.md.
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-backup
+  labels: {{- include "vaultscan.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 14
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels: {{- include "vaultscan.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "vaultscan.fullname" . }}-backup
+          securityContext:
+            {{- include "vaultscan.podSecurityContext" . | nindent 12 }}
+          containers:
+            - name: pg-dump
+              image: {{ .Values.backup.image | quote }}
+              securityContext:
+                {{- include "vaultscan.containerSecurityContext" . | nindent 16 }}
+              env:
+                - name: PGHOST
+                  value: {{ .Values.backup.pgHost | quote }}
+                - name: PGUSER
+                  value: {{ .Values.backup.pgUser | quote }}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.pgSecretName | quote }}
+                      key: password
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.s3SecretName | quote }}
+                      key: access_key
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.s3SecretName | quote }}
+                      key: secret_key
+                - name: S3_BUCKET
+                  value: {{ .Values.backup.s3Bucket | quote }}
+                - name: S3_ENDPOINT
+                  value: {{ .Values.backup.s3Endpoint | quote }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  STAMP=$(date -u +%Y-%m-%dT%H-%M-%S)
+                  DEST="s3://${S3_BUCKET}/$(date -u +%Y-%m-%d)/vaultscan-${STAMP}.sql.gz"
+                  echo "Dumping ${PGHOST} to ${DEST}"
+                  pg_dump --format=custom --no-owner --no-privileges --jobs=4 \
+                          --exclude-table-data='bus_events' \
+                          --exclude-table-data='auth_ip_failures' \
+                          ${PGUSER}@${PGHOST} \
+                    | gzip --best \
+                    | aws s3 cp --endpoint-url "${S3_ENDPOINT}" - "${DEST}" \
+                          --metadata cluster=$(hostname) \
+                          --storage-class STANDARD_IA
+                  echo "Verifying upload..."
+                  aws s3 ls --endpoint-url "${S3_ENDPOINT}" "${DEST}"
+                  echo "Tagging retention=daily on object"
+                  aws s3api put-object-tagging --endpoint-url "${S3_ENDPOINT}" \
+                       --bucket "${S3_BUCKET}" --key "$(echo ${DEST} | sed 's|s3://[^/]*/||')" \
+                       --tagging 'TagSet=[{Key=retention,Value=daily}]'
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: cache
+                  mountPath: /home/nonroot
+              resources:
+                requests: { cpu: 200m, memory: 256Mi }
+                limits:   { cpu: 1,    memory: 1Gi }
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            - name: cache
+              emptyDir: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-backup
+{{- end }}

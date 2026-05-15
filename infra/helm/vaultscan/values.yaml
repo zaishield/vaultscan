@@ -150,3 +150,39 @@ serviceMonitor:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# ----- Backup CronJob (HS-03) -----------------------------------------------
+# Nightly pg_dump + S3 upload. See docs/operations/disaster-recovery.md
+# for the restore drill.
+backup:
+  enabled: false
+  schedule: "0 2 * * *"      # 02:00 cluster TZ
+  image: ghcr.io/zaishield/vaultscan-backup:0.1.0
+  pgHost: postgres.vaultscan-data
+  pgUser: vaultscan
+  pgSecretName: vaultscan-postgres-credentials
+  s3Bucket: vaultscan-backups
+  s3Endpoint: https://s3.amazonaws.com
+  s3SecretName: vaultscan-backup-s3-credentials
+  retention:
+    daily: 14
+    weekly: 8
+    monthly: 24
+
+# ----- Pod Security profile (HS-03) -----------------------------------------
+# Defaults applied via the shared _security.tpl helpers. Overriding any
+# field here lets an operator relax the posture intentionally.
+security:
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities:
+      drop: [ALL]
