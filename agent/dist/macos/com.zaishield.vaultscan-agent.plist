@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+launchd plist for macOS. Installed by the .pkg into
+/Library/LaunchDaemons/com.zaishield.vaultscan-agent.plist
+with mode 0644 owned by root:wheel (productbuild postinstall script
+sets this).
+
+The daemon runs as a dedicated _vaultscan user (created by the
+postinstall script). It does NOT have any com.apple.security
+entitlements that would require code-signing for entitlements — only
+notarized binary signing is required.
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.zaishield.vaultscan-agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/local/bin/vaultscan-agent</string>
+      <string>--config</string>
+      <string>/Library/Application Support/vaultscan-agent/agent.yaml</string>
+    </array>
+
+    <key>UserName</key>
+    <string>_vaultscan</string>
+    <key>GroupName</key>
+    <string>_vaultscan</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+      <key>SuccessfulExit</key>
+      <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/vaultscan-agent/agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/vaultscan-agent/agent.err.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/var/lib/vaultscan-agent</string>
+
+    <!-- Resource caps via launchd LimitLoadToHardware etc. could go here. -->
+    <key>SoftResourceLimits</key>
+    <dict>
+      <key>NumberOfFiles</key>
+      <integer>8192</integer>
+    </dict>
+
+    <!-- Prevent the process from spawning into a different session. -->
+    <key>EnableTransactions</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+  </dict>
+</plist>

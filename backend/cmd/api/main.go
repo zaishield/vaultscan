@@ -128,6 +128,17 @@ func main() {
 	assetSvc := assets.New(pool.Pool, auditSvc)
 	scope := scopeguard.New(pool.Pool)
 	orch := scanorch.New(pool.Pool, scope, auditSvc, bus, signer)
+	if reg, err := scanorch.NewImageDigestRegistry(
+		getenvOr("VAULTSCAN_SCANNER_DIGESTS_PATH", "tools/scanner-images/digests.json"),
+	); err == nil {
+		orch = orch.WithDigests(reg)
+		if v := reg.Version(); v != "" {
+			log.Info().Str("digests_version", v).
+				Int("tools_pinned", len(reg.All())).Msg("scanner image digests loaded")
+		}
+	} else {
+		log.Warn().Err(err).Msg("scanner image digests not loaded; falling back to :latest")
+	}
 	agentSvc := agents.New(pool.Pool, auditSvc, bus)
 	findSvc := findings.New(pool.Pool, auditSvc, bus)
 	retestSvc := retesting.New(pool.Pool, auditSvc, bus, findSvc, orch)
@@ -264,4 +275,11 @@ func main() {
 	}
 	// Drain in-flight external bus sinks (NATS Forward goroutines).
 	bus.DrainExternal(5 * time.Second)
+}
+
+func getenvOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

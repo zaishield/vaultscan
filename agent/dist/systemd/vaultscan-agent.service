@@ -1,0 +1,55 @@
+[Unit]
+Description=ZAISHIELD VAULTSCAN internal scanner agent
+Documentation=https://docs.vaultscan.zaishield.com/agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vaultscan
+Group=vaultscan
+ExecStart=/usr/bin/vaultscan-agent --config /etc/vaultscan-agent/agent.yaml
+Restart=on-failure
+RestartSec=10s
+
+# --- hardening (defense-in-depth alongside the agent's own runner sandbox) -
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @debug
+
+# State (TLS cert, cache, fingerprint) lives here. systemd creates +
+# chowns this dir to vaultscan:vaultscan on first start.
+StateDirectory=vaultscan-agent
+StateDirectoryMode=0700
+
+# Resource caps — overridable via /etc/systemd/system/vaultscan-agent.service.d/
+CPUWeight=50
+MemoryHigh=2G
+MemoryMax=4G
+TasksMax=1024
+LimitNOFILE=8192
+
+# Allow only outbound TCP — the agent never accepts inbound connections.
+# IPAccounting helps ops correlate firewall metrics with this service.
+IPAccounting=true
+
+# Capabilities: drop everything; agent doesn't need any.
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

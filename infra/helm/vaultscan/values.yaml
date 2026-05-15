@@ -98,6 +98,39 @@ analyticsWorker:
     requests: { cpu: "200m", memory: "256Mi" }
     limits:   { cpu: "2",    memory: "2Gi" }
 
+# ----- Scanner Worker (Blueprint §12) --------------------------------------
+# One Deployment per region. Each pod claims dispatched external-plane
+# scan_jobs and dispatches per-tool execution via the configured
+# `runner` (k8s: batch/v1 Jobs in scanner-<region> namespace, or local:
+# exec.CommandContext for dev).
+scannerWorker:
+  enabled: false             # opt-in; operators wire regions explicitly
+  runner: k8s                # k8s | local
+  defaultReplicaCount: 2
+  namespacePrefix: scanner   # namespaces: <prefix>-<region>
+  imageRegistry: registry.zaishield.com/vaultscan/scanners
+  requireSignedImages: "true"
+  image:
+    repository: scanner-worker
+    tag: ""
+  resources:
+    requests: { cpu: "200m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi" }
+  # Per-region list. Each region gets its own Deployment + namespace +
+  # RBAC + NetworkPolicy. Override per-region resources if you need.
+  regions: []
+    # - name: us-east-1
+    #   replicaCount: 3
+    # - name: eu-west-1
+    #   replicaCount: 2
+  # Egress allowlist for tool pods. Empty = no extra egress beyond
+  # cluster DNS (which the template always permits). Production
+  # external-plane regions typically allow internet egress here;
+  # internal-plane setups restrict to tenant VPC CIDRs.
+  networkPolicyEgress: []
+    # - to:
+    #     - ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] }
+
 # ----- Migrations (one-shot Job, runs pre-install / pre-upgrade) ------------
 migrations:
   enabled: true

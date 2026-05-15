@@ -1,0 +1,51 @@
+# VAULTSCAN agent — production-ready configuration template.
+#
+# Permission: 0640 owned by root:vaultscan (Linux) or root:_vaultscan
+# (macOS). The agent reads this once at boot.
+
+# ---- identity ----
+# The tenant + agent UUIDs the gateway issued at provisioning time.
+# Operator obtains both from the desktop portal's "Provision agent"
+# flow; replace these placeholders before `systemctl enable --now
+# vaultscan-agent` (postinstall script refuses to auto-start if it
+# sees REPLACE-ME).
+tenant_id: "REPLACE-ME-TENANT-ID"
+agent_id:  "REPLACE-ME-AGENT-ID"
+
+# Outbound-only TLS endpoint. Production: https + mTLS; agent's client
+# cert is rotated automatically via CSR every 30 days.
+gateway_url: "https://agent-gateway.vaultscan.zaishield.com"
+
+# One-time enrolment token from the provisioning flow. Consumed at
+# first run; thereafter the agent uses the mTLS cert it bootstrapped.
+enrolment_token: "REPLACE-ME-ENROLMENT-TOKEN"
+
+# ---- state ----
+# Where the agent keeps its mTLS cert, encrypted result cache, and
+# fingerprint. systemd / launchd / Windows SCM create + chown this
+# at first start (StateDirectory= on Linux; ProgramData on Windows).
+data_dir: "/var/lib/vaultscan-agent"
+
+# ---- runtime ----
+# Tools the agent is permitted to invoke. Overrides the cloud-pushed
+# policy when present; empty list means "trust the cloud's policy".
+allowed_tools: []
+
+# Hard caps applied in addition to systemd's MemoryHigh/MemoryMax.
+max_concurrent_jobs: 2
+max_cpu_percent:     70
+max_memory_percent:  75
+
+# ---- cloud trust ----
+# Path to the cloud orchestrator's RSA public key (PEM). Built-in to
+# the binary by default — operators who rotate the cloud signer
+# point this at a file containing the new key.
+cloud_public_key_pem: ""    # empty → use the embedded key (preferred)
+
+# ---- telemetry ----
+# How often the agent heartbeats. Lower = faster emergency-stop ack
+# but more chatter. 30s is the §11.6 SLO sweet spot.
+heartbeat_interval: 30s
+
+# ---- log level ----
+log_level: info   # trace | debug | info | warn | error

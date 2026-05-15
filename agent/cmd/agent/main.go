@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -97,7 +98,7 @@ func main() {
 		runner:     runner.New().WithPolicy(localPolicy),
 		packager:   packager.New(),
 		uploader:   uploader.New(),
-		verifier:   verifier.New(),
+		verifier:   verifierWithEmbedded(),
 		emergency:  emergency.New(),
 		counters:   &heartbeat.Counters{},
 	}
@@ -361,6 +362,40 @@ func profileTools(code string) []string {
 	default:
 		return []string{"nmap"}
 	}
+}
+
+// ldflags-populated build metadata.
+//
+//   version, commit, builtAt — populated by goreleaser via -X
+//   embeddedCloudPubKeyB64   — populated from the
+//                              VAULTSCAN_CLOUD_PUBLIC_KEY_B64 secret
+//                              at release time. Base64-encoded PEM.
+//
+// Operators rotating the cloud signer re-build the agent (already
+// required for crypto-agility) so the embedded key is replaced
+// atomically with the binary.
+var (
+	version                  = "dev"
+	commit                   = ""
+	builtAt                  = ""
+	embeddedCloudPubKeyB64   = ""
+)
+
+// verifierWithEmbedded constructs a verifier.Verifier and seeds it
+// with the cloud public key embedded at build time. Falls back to
+// the legacy /etc/vaultscan-agent/cloud-public.pem path + env-var
+// flow if no key was embedded (dev builds).
+func verifierWithEmbedded() *verifier.Verifier {
+	v := verifier.New()
+	if embeddedCloudPubKeyB64 == "" {
+		return v
+	}
+	pemBytes, err := base64.StdEncoding.DecodeString(embeddedCloudPubKeyB64)
+	if err != nil {
+		return v
+	}
+	_ = v.LoadFromPEM(pemBytes)
+	return v
 }
 
 // --- the following stub helpers keep imports referenced ------

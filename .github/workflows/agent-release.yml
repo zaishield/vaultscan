@@ -1,0 +1,184 @@
+name: agent-release
+
+# Builds signed VAULTSCAN agent installers on every release tag.
+#
+# Linux (deb + rpm + tar.gz) and Darwin/Windows binaries are built
+# in a single goreleaser invocation. The macOS .pkg and Windows MSI
+# are produced in platform-native follow-up jobs.
+#
+# Required secrets:
+#   VAULTSCAN_CLOUD_PUBLIC_KEY_B64  — RSA public key, base64-encoded,
+#                                    embedded into every binary
+#   APPLE_API_KEY_ID                — for notarytool (macOS pkg)
+#   APPLE_API_ISSUER_ID
+#   APPLE_API_KEY_P8                — base64-encoded .p8 file
+#   APPLE_DEVELOPER_ID_APP_CERT_P12 — base64 PKCS12 of signing cert
+#   APPLE_DEVELOPER_ID_APP_CERT_PASS
+#   WINDOWS_SIGNTOOL_CERT_PFX        — base64 PKCS12 of code-signing cert
+#   WINDOWS_SIGNTOOL_CERT_PASS
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write       # release assets + cosign keyless
+  id-token: write       # OIDC for keyless signing
+  packages: write
+
+jobs:
+  goreleaser:
+    name: goreleaser (linux deb/rpm + binaries)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.25" }
+      - uses: sigstore/cosign-installer@v3
+      - name: install syft (for SBOMs)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+          workdir: agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COSIGN_EXPERIMENTAL: "1"
+          VAULTSCAN_CLOUD_PUBLIC_KEY_B64: ${{ secrets.VAULTSCAN_CLOUD_PUBLIC_KEY_B64 }}
+
+  windows-msi:
+    name: windows MSI (signed)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    needs: goreleaser
+    steps:
+      - uses: actions/checkout@v4
+      - name: download agent.exe from release
+        shell: pwsh
+        run: |
+          $ver = "${{ needs.goreleaser.outputs.version }}"
+          $asset = "vaultscan-agent_${ver}_windows_x86_64.zip"
+          gh release download "v${ver}" -p $asset
+          Expand-Archive -Force -Path $asset -DestinationPath dist\unpacked
+          Copy-Item dist\unpacked\vaultscan-agent.exe dist\vaultscan-agent.exe
+        env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
+      - name: install WixToolset
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.*
+      - name: build MSI
+        shell: pwsh
+        run: |
+          wix build agent\dist\wix\Product.wxs `
+              -d AgentBinary="$PWD\dist\vaultscan-agent.exe" `
+              -d Version="${{ needs.goreleaser.outputs.version }}" `
+              -arch x64 `
+              -out vaultscan-agent.msi
+      - name: import signing cert
+        shell: pwsh
+        run: |
+          $bytes = [Convert]::FromBase64String("${{ secrets.WINDOWS_SIGNTOOL_CERT_PFX }}")
+          $tmp = New-TemporaryFile
+          [IO.File]::WriteAllBytes($tmp.FullName, $bytes)
+          $secure = ConvertTo-SecureString "${{ secrets.WINDOWS_SIGNTOOL_CERT_PASS }}" -AsPlainText -Force
+          Import-PfxCertificate -FilePath $tmp.FullName -Password $secure -CertStoreLocation Cert:\CurrentUser\My
+          Remove-Item $tmp.FullName
+      - name: sign MSI
+        shell: pwsh
+        run: |
+          $signtool = Get-Item "$(Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Select-Object -Last 1).FullName"
+          & $signtool sign /fd SHA256 /a `
+              /tr http://timestamp.digicert.com /td SHA256 `
+              vaultscan-agent.msi
+      - name: cosign sign + upload
+        env: { COSIGN_EXPERIMENTAL: "1" }
+        shell: pwsh
+        run: |
+          cosign sign-blob --yes --bundle vaultscan-agent.msi.cosign.bundle vaultscan-agent.msi
+          gh release upload "v${{ needs.goreleaser.outputs.version }}" `
+              vaultscan-agent.msi vaultscan-agent.msi.cosign.bundle --clobber
+        env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
+
+  macos-pkg:
+    name: macOS .pkg (notarized)
+    runs-on: macos-14
+    timeout-minutes: 30
+    needs: goreleaser
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: install cosign
+        run: brew install cosign
+      - name: download arch tar from release
+        run: |
+          ver=${{ needs.goreleaser.outputs.version }}
+          case "${{ matrix.arch }}" in
+            amd64) tag=x86_64 ;;
+            arm64) tag=aarch64 ;;
+          esac
+          asset="vaultscan-agent_${ver}_darwin_${tag}.tar.gz"
+          gh release download "v${ver}" -p "$asset"
+          mkdir -p pkg-root/usr/local/bin
+          tar -xzf "$asset" -C pkg-root/usr/local/bin vaultscan-agent
+          mkdir -p "pkg-root/Library/LaunchDaemons"
+          cp agent/dist/macos/com.zaishield.vaultscan-agent.plist \
+             "pkg-root/Library/LaunchDaemons/"
+        env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
+      - name: import Developer ID cert
+        run: |
+          echo "${{ secrets.APPLE_DEVELOPER_ID_APP_CERT_P12 }}" | base64 -d > cert.p12
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import cert.p12 -k build.keychain \
+              -P "${{ secrets.APPLE_DEVELOPER_ID_APP_CERT_PASS }}" \
+              -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+              -s -k "" build.keychain
+          rm cert.p12
+      - name: codesign binary
+        run: |
+          codesign --sign "Developer ID Application" --options runtime \
+                   --timestamp pkg-root/usr/local/bin/vaultscan-agent
+      - name: productbuild
+        run: |
+          pkgbuild --root pkg-root \
+                   --identifier com.zaishield.vaultscan-agent \
+                   --version ${{ needs.goreleaser.outputs.version }} \
+                   --install-location / \
+                   vaultscan-agent-${{ matrix.arch }}.pkg
+          productsign --sign "Developer ID Installer" \
+                      vaultscan-agent-${{ matrix.arch }}.pkg \
+                      vaultscan-agent-${{ matrix.arch }}-signed.pkg
+          mv vaultscan-agent-${{ matrix.arch }}-signed.pkg vaultscan-agent-${{ matrix.arch }}.pkg
+      - name: notarize
+        run: |
+          echo "${{ secrets.APPLE_API_KEY_P8 }}" | base64 -d > AuthKey.p8
+          xcrun notarytool submit vaultscan-agent-${{ matrix.arch }}.pkg \
+              --key AuthKey.p8 \
+              --key-id "${{ secrets.APPLE_API_KEY_ID }}" \
+              --issuer "${{ secrets.APPLE_API_ISSUER_ID }}" \
+              --wait
+          xcrun stapler staple vaultscan-agent-${{ matrix.arch }}.pkg
+          rm AuthKey.p8
+      - name: cosign sign + upload to release
+        env: { COSIGN_EXPERIMENTAL: "1" }
+        run: |
+          cosign sign-blob --yes \
+              --bundle vaultscan-agent-${{ matrix.arch }}.pkg.cosign.bundle \
+              vaultscan-agent-${{ matrix.arch }}.pkg
+          gh release upload "v${{ needs.goreleaser.outputs.version }}" \
+              vaultscan-agent-${{ matrix.arch }}.pkg \
+              vaultscan-agent-${{ matrix.arch }}.pkg.cosign.bundle --clobber
+        env: { GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }

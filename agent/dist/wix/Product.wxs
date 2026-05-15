@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WiX configuration for the VAULTSCAN agent Windows installer.
+
+  Built in CI by candle.exe + light.exe (WixToolset v4); the workflow
+  passes the agent binary path + version on the command line:
+
+    candle.exe -arch x64 \
+      -dAgentBinary="%CD%\dist\vaultscan-agent.exe" \
+      -dVersion="1.2.3" \
+      dist\wix\Product.wxs -out Product.wixobj
+    light.exe -ext WixUtilExtension Product.wixobj -out vaultscan-agent.msi
+    signtool.exe sign /fd SHA256 /a /tr http://timestamp.digicert.com /td SHA256 vaultscan-agent.msi
+
+  The installer:
+   - Drops vaultscan-agent.exe into %ProgramFiles%\VAULTSCAN\agent\
+   - Registers a Windows service "VAULTSCAN Agent" running as
+     LocalSystem (downgraded to a managed service account at first
+     start via the postinstall hook).
+   - Creates %ProgramData%\VAULTSCAN\agent.yaml with placeholder values.
+   - On uninstall: stops + deletes the service, removes program files,
+     leaves %ProgramData% behind for the operator to purge if they want.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Id="*"
+           Name="ZAISHIELD VAULTSCAN Agent"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="ZAISHIELD"
+           UpgradeCode="A3F4E2C1-7E2B-4D3F-9A6E-8B1F2D9C3A5E"
+           InstallerVersion="500"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of VAULTSCAN Agent is already installed."/>
+    <MediaTemplate EmbedCab="yes"/>
+
+    <Feature Id="Complete" Title="VAULTSCAN Agent" Level="1">
+      <ComponentGroupRef Id="AgentBinaries"/>
+      <ComponentGroupRef Id="AgentConfig"/>
+      <ComponentRef Id="ServiceComponent"/>
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="VAULTSCANROOT" Name="VAULTSCAN">
+        <Directory Id="AGENTDIR" Name="agent"/>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="VAULTSCANDATA" Name="VAULTSCAN">
+        <Directory Id="AGENTDATA" Name="agent"/>
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="AgentBinaries" Directory="AGENTDIR">
+      <Component Id="AgentExe" Guid="*">
+        <File Id="AgentExeFile"
+              Source="$(var.AgentBinary)"
+              KeyPath="yes"/>
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="AgentConfig" Directory="AGENTDATA">
+      <Component Id="AgentConfigYaml" Guid="*" NeverOverwrite="yes" Permanent="yes">
+        <File Id="AgentConfigYamlFile"
+              Source="dist\config\agent.example.yaml"
+              Name="agent.yaml"
+              KeyPath="yes"/>
+      </Component>
+    </ComponentGroup>
+
+    <Component Id="ServiceComponent" Directory="AGENTDIR" Guid="*">
+      <File Id="ServiceExe" Source="$(var.AgentBinary)" KeyPath="yes"/>
+      <ServiceInstall
+        Id="VaultscanAgentService"
+        Type="ownProcess"
+        Vital="yes"
+        Name="VAULTSCAN Agent"
+        DisplayName="ZAISHIELD VAULTSCAN Agent"
+        Description="Silent outbound-only scanner agent for ZAISHIELD VAULTSCAN."
+        Start="auto"
+        Account="LocalSystem"
+        ErrorControl="normal"
+        Arguments="--config &quot;[AGENTDATA]agent.yaml&quot;"
+        Interactive="no">
+        <ServiceDependency Id="Tcpip"/>
+      </ServiceInstall>
+      <ServiceControl
+        Id="StartVaultscanAgentService"
+        Name="VAULTSCAN Agent"
+        Start="install"
+        Stop="both"
+        Remove="uninstall"
+        Wait="yes"/>
+    </Component>
+  </Package>
+</Wix>

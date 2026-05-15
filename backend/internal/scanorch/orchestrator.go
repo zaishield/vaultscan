@@ -38,6 +38,34 @@ type Orchestrator struct {
 	// auto-failover. nil falls back to the legacy "any online node" behaviour
 	// for callers that haven't wired the VS-05 op surface yet.
 	Nodes *NodeOps
+	// Digests is an optional pinned-image registry. When non-nil the
+	// task materialiser writes <registry>/<tool>@sha256:<digest>
+	// references into scan_tasks.image_ref so the worker pulls an
+	// immutable + cosign-signed image. nil → mutable :latest fallback.
+	Digests *ImageDigestRegistry
+	// FallbackRegistry is the registry hostname used when Digests is
+	// nil OR a tool isn't pinned. Defaults to the production registry.
+	FallbackRegistry string
+}
+
+// WithDigests attaches an ImageDigestRegistry. main.go calls this
+// after loading tools/scanner-images/digests.json.
+func (o *Orchestrator) WithDigests(d *ImageDigestRegistry) *Orchestrator {
+	o.Digests = d
+	return o
+}
+
+// imageRefFor returns the scan_tasks.image_ref value: pinned digest
+// reference when available, mutable :latest fallback otherwise.
+func (o *Orchestrator) imageRefFor(tool string) string {
+	fallback := o.FallbackRegistry
+	if fallback == "" {
+		fallback = "registry.zaishield.com/vaultscan/scanners"
+	}
+	if o.Digests != nil {
+		return o.Digests.ImageRefFor(tool, fallback)
+	}
+	return fallback + "/" + tool + ":latest"
 }
 
 func New(pool *pgxpool.Pool, g *scopeguard.Service, a *audit.Service, b *eventbus.Bus, s *Signer) *Orchestrator {
@@ -155,11 +183,12 @@ func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.Scan
 	// Materialize per-tool tasks.
 	for _, tool := range prof.Tools {
 		taskID := uuid.New()
+		imageRef := o.imageRefFor(tool)
 		_, err := o.pool.Exec(ctx, `
 			INSERT INTO scan_tasks(id, scan_job_id, tool, image_ref, status,
 			    cpu_limit, memory_limit, runtime_limit_s)
 			VALUES ($1,$2,$3,$4,'queued','2','4Gi',1800)`,
-			taskID, job.ID, tool, "registry.zaishield.com/vaultscan/scanners/"+tool+":latest")
+			taskID, job.ID, tool, imageRef)
 		if err != nil {
 			return nil, nil, err
 		}

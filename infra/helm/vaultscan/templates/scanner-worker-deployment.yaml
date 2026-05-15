@@ -1,0 +1,101 @@
+{{- if .Values.scannerWorker.enabled }}
+{{/*
+Scanner worker (Blueprint §12.1–§12.2).
+
+One Deployment per region. Each pod claims dispatched scan_jobs for
+its region (FOR UPDATE SKIP LOCKED), verifies the RSA-PSS job
+signature against the orchestrator's public key, validates each
+scanner image's cosign signature + digest, then dispatches the tool
+execution.
+
+Two execution modes selected via VAULTSCAN_SCANNER_RUNNER:
+  k8s   (default in chart) — submits per-tool batch/v1 Job into
+          scanner-<region> namespace. Strict pod security context
+          (non-root, readOnlyRootFilesystem, drop ALL caps),
+          activeDeadlineSeconds, backoffLimit=0, NetworkPolicy
+          applied at the namespace level.
+  local — exec.CommandContext against the worker pod's PATH. Only
+          appropriate for single-tool dev clusters.
+
+RBAC scope:
+  Reads/writes audit_logs + scan_jobs + scan_tasks via the standard
+  Postgres credentials. ServiceAccount additionally needs K8s API
+  permissions in the scanner-<region> namespace — issued via the
+  scanner-worker-rbac.yaml template (Role + RoleBinding) below.
+
+Production deployments enable per-region pods via a values map:
+
+  scannerWorker:
+    enabled: true
+    regions:
+      - name: us-east-1
+        replicaCount: 3
+      - name: eu-west-1
+        replicaCount: 2
+*/}}
+{{- range $i, $region := .Values.scannerWorker.regions }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vaultscan.fullname" $ }}-scanner-worker-{{ $region.name }}
+  labels:
+    {{- include "vaultscan.componentLabels" (dict "component" "scanner-worker" "Chart" $.Chart "Release" $.Release) | nindent 4 }}
+    vaultscan.io/region: {{ $region.name | quote }}
+spec:
+  replicas: {{ $region.replicaCount | default $.Values.scannerWorker.defaultReplicaCount }}
+  selector:
+    matchLabels:
+      {{- include "vaultscan.componentSelector" (dict "root" $ "component" "scanner-worker") | nindent 6 }}
+      vaultscan.io/region: {{ $region.name | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "vaultscan.componentSelector" (dict "root" $ "component" "scanner-worker") | nindent 8 }}
+        vaultscan.io/region: {{ $region.name | quote }}
+    spec:
+      serviceAccountName: {{ include "vaultscan.fullname" $ }}-scanner-worker
+      securityContext:
+        {{- include "vaultscan.podSecurityContext" $ | nindent 8 }}
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: scanner-worker
+          image: {{ include "vaultscan.image" (dict "root" $ "repository" $.Values.scannerWorker.image.repository "tag" $.Values.scannerWorker.image.tag) }}
+          securityContext:
+            {{- include "vaultscan.containerSecurityContext" $ | nindent 12 }}
+          envFrom:
+            {{- include "vaultscan.envFrom" (dict "root" $) | nindent 12 }}
+          env:
+            - { name: VAULTSCAN_SCANNER_REGION,   value: {{ $region.name | quote }} }
+            - { name: VAULTSCAN_SCANNER_RUNNER,   value: {{ $.Values.scannerWorker.runner | default "k8s" | quote }} }
+            - { name: VAULTSCAN_SCANNER_NAMESPACE,
+                value: "{{ $.Values.scannerWorker.namespacePrefix | default "scanner" }}-{{ $region.name }}" }
+            - { name: VAULTSCAN_SCANNER_IMAGE_REGISTRY,
+                value: {{ $.Values.scannerWorker.imageRegistry | quote }} }
+            - { name: VAULTSCAN_REQUIRE_SIGNED_IMAGES,
+                value: {{ $.Values.scannerWorker.requireSignedImages | default "true" | quote }} }
+          resources:
+            {{- toYaml ($region.resources | default $.Values.scannerWorker.resources) | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ["/app/scanner-worker", "--ready"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["/app/scanner-worker", "--live"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 6
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
+{{- end }}
+{{- end }}

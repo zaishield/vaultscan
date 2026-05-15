@@ -141,6 +141,17 @@ func (v *Verifier) Verify(manifest []byte, sigB64, _ string) error {
 	return rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], sig)
 }
 
+// LoadFromPEM is the exported counterpart to tryLoad: callers (like
+// the goreleaser-built agent main with an embedded key) hand us PEM
+// bytes; on success the active key is swapped. Returns an error
+// instead of a bool so callers get a clearer diagnostic.
+func (v *Verifier) LoadFromPEM(pemBytes []byte) error {
+	if v.tryLoad(pemBytes) {
+		return nil
+	}
+	return errors.New("verifier: PEM did not contain a valid RSA public key")
+}
+
 // tryLoad parses pemBytes and, on success, swaps it in as the active key.
 func (v *Verifier) tryLoad(pemBytes []byte) bool {
 	block, _ := pem.Decode(pemBytes)

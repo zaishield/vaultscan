@@ -33,7 +33,7 @@ type Worker struct {
 	region       string
 	nodeID       *uuid.UUID
 	registry     *Registry
-	runner       *Runner
+	runner       ExecRunner
 	vault        *evidence.Vault
 	findings     *findings.Service
 	audit        *audit.Service
@@ -69,7 +69,7 @@ func NewWorker(log zerolog.Logger, pool *pgxpool.Pool, cfg Config,
 		region:        cfg.Region,
 		nodeID:        cfg.NodeID,
 		registry:      reg,
-		runner:        NewRunner(),
+		runner:        mustRunnerFromEnv(log),
 		vault:         vault,
 		findings:      findSvc,
 		audit:         auditSvc,
@@ -239,7 +239,7 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 		// init, refuse to ingest synthetic output unless explicitly
 		// permitted by env. Belt-and-braces against a misconfigured
 		// scanner image that ships without the tools.
-		if res.Synthetic && !w.runner.AllowSynthetic {
+		if res.Synthetic && !w.runner.AllowsSynthetic() {
 			w.log.Error().Str("tool", tool).
 				Msg("runner returned synthetic output but synthetics disabled; refusing")
 			w.failJob(ctx, j, "synthetic scanner output rejected")

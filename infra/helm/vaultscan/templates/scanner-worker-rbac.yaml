@@ -1,0 +1,106 @@
+{{- if .Values.scannerWorker.enabled }}
+{{/*
+RBAC for the scanner-worker.
+
+Why namespace-scoped (Role, not ClusterRole): the worker only needs
+to manipulate batch/Jobs + read pods/log in the scanner-<region>
+namespaces it operates. ClusterRole would over-permission.
+
+Permissions:
+  batch/jobs: create, get, list, watch, delete
+  pods:       get, list, watch (to find the Job's Pod)
+  pods/log:   get             (to read tool output)
+
+The pre-created scanner-<region> namespaces must already exist; the
+chart's scanner-namespaces.yaml template creates them. Each namespace
+gets its own RoleBinding to the same ServiceAccount.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-scanner-worker
+  namespace: {{ .Release.Namespace }}
+{{- range $region := .Values.scannerWorker.regions }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $.Values.scannerWorker.namespacePrefix | default "scanner" }}-{{ $region.name }}
+  labels:
+    vaultscan.io/region: {{ $region.name | quote }}
+    vaultscan.io/component: scanner-namespace
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit:   restricted
+    pod-security.kubernetes.io/warn:    restricted
+---
+# scanner-tool ServiceAccount — every spawned Job runs under this
+# SA. The SA has NO permissions; tool pods never call the K8s API
+# (the worker sets automountServiceAccountToken: false in the Job
+# manifest, but defense in depth means we make this SA powerless too).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scanner-tool
+  namespace: {{ $.Values.scannerWorker.namespacePrefix | default "scanner" }}-{{ $region.name }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vaultscan.fullname" $ }}-scanner-worker
+  namespace: {{ $.Values.scannerWorker.namespacePrefix | default "scanner" }}-{{ $region.name }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vaultscan.fullname" $ }}-scanner-worker
+  namespace: {{ $.Values.scannerWorker.namespacePrefix | default "scanner" }}-{{ $region.name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vaultscan.fullname" $ }}-scanner-worker
+    namespace: {{ $.Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "vaultscan.fullname" $ }}-scanner-worker
+---
+# NetworkPolicy: scanner Jobs may egress to anything the policy allows
+# (operator overrides via scannerWorker.networkPolicyEgress) but only
+# the scanner-worker SA in the control-plane namespace can ingress
+# to the API server-side. This blocks accidental cross-tool talk.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scanner-tools-default
+  namespace: {{ $.Values.scannerWorker.namespacePrefix | default "scanner" }}-{{ $region.name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: scanner-tool
+  policyTypes: [Ingress, Egress]
+  ingress: []   # tool pods accept NO inbound traffic
+  egress:
+    # DNS to the cluster's CoreDNS — required for tool target resolution.
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Operator-defined egress (typically internet for external plane,
+    # tenant VPC CIDRs for internal plane).
+    {{- with $.Values.scannerWorker.networkPolicyEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- end }}

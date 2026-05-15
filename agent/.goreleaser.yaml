@@ -1,0 +1,171 @@
+# .goreleaser.yaml — produces signed agent installers for every
+# platform operators deploy on:
+#
+#   linux  (amd64 + arm64): static binary + tar.gz + deb + rpm
+#   macos  (amd64 + arm64): static binary + tar.gz + .pkg (notarised)
+#   windows  (amd64):       static binary + zip + MSI
+#
+# Each artifact is signed with cosign keyless (Sigstore Fulcio +
+# Rekor) using the GitHub Actions OIDC token. Operators verify with:
+#
+#   cosign verify-blob \
+#     --certificate-identity-regexp='https://github.com/zaishield/vaultscan/.*' \
+#     --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+#     --bundle vaultscan-agent_<version>_linux_amd64.deb.cosign.bundle \
+#     vaultscan-agent_<version>_linux_amd64.deb
+#
+# The cloud's RSA public key is embedded at build time via -ldflags
+# -X so the agent boots with the trust anchor already pinned — no
+# out-of-band PEM distribution required.
+
+version: 2
+
+project_name: vaultscan-agent
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: agent
+    main: ./cmd/agent
+    binary: vaultscan-agent
+    env:
+      - CGO_ENABLED=0
+    goos:    [linux, darwin, windows]
+    goarch:  [amd64, arm64]
+    ignore:
+      - { goos: windows, goarch: arm64 }
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.builtAt={{.Date}}
+      # Embedded cloud public key — operators rotating the cloud
+      # signer re-build + re-release the agent (already required for
+      # crypto-agility). The env var is set by CI from the release
+      # secret VAULTSCAN_CLOUD_PUBLIC_KEY_B64.
+      - -X main.embeddedCloudPubKeyB64={{.Env.VAULTSCAN_CLOUD_PUBLIC_KEY_B64}}
+
+archives:
+  - id: default
+    builds: [agent]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}aarch64
+      {{- else }}{{ .Arch }}{{ end }}
+    format: tar.gz
+    format_overrides:
+      - { goos: windows, format: zip }
+    files:
+      - LICENSE*
+      - README*
+      - dist/systemd/vaultscan-agent.service
+      - dist/macos/com.zaishield.vaultscan-agent.plist
+      - dist/config/agent.example.yaml
+
+# ---- deb / rpm via nfpm ---------------------------------------------------
+nfpms:
+  - id: linux-packages
+    builds: [agent]
+    package_name: vaultscan-agent
+    file_name_template: '{{ .ConventionalFileName }}'
+    homepage: https://vaultscan.zaishield.com
+    description: |-
+      ZAISHIELD VAULTSCAN internal scanner agent.
+      Silent outbound-only TLS to the agent-gateway; runs RSA-signed
+      scan jobs against allow-listed targets with cgroup-style
+      resource caps.
+    maintainer: ZAISHIELD VAULTSCAN <ops@zaishield.com>
+    license: PROPRIETARY
+    vendor: ZAISHIELD
+    section: net
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    contents:
+      - { src: dist/systemd/vaultscan-agent.service,
+          dst: /lib/systemd/system/vaultscan-agent.service,
+          file_info: { mode: 0644 } }
+      - { src: dist/config/agent.example.yaml,
+          dst: /etc/vaultscan-agent/agent.yaml,
+          type: config|noreplace,
+          file_info: { mode: 0640 } }
+    scripts:
+      preinstall:  dist/scripts/preinstall.sh
+      postinstall: dist/scripts/postinstall.sh
+      preremove:   dist/scripts/preremove.sh
+      postremove:  dist/scripts/postremove.sh
+    deb:
+      lintian_overrides:
+        - non-standard-file-perm
+    rpm:
+      group: System Environment/Daemons
+      compression: zstd
+
+# ---- macOS .pkg via productbuild (handled in CI; goreleaser pkg in v2 is
+#      community-maintained; we drive it via a custom step in mobile.yml /
+#      installer.yml since productbuild + notarytool are macOS-only).
+
+# ---- Windows MSI via wix (CI step uses wixtoolset; goreleaser
+#      drops the wix XML next to the zip and the CI workflow runs
+#      candle + light. See dist/wix/Product.wxs.
+
+# ---- Checksums + cosign signatures ---------------------------------------
+checksum:
+  name_template: 'checksums.txt'
+
+signs:
+  - id: cosign-sign-all
+    cmd: cosign
+    args:
+      - sign-blob
+      - "--yes"
+      - "--bundle"
+      - "${artifact}.cosign.bundle"
+      - "${artifact}"
+    artifacts: all
+    env:
+      - COSIGN_EXPERIMENTAL=1
+
+# ---- Source archive + SBOM ------------------------------------------------
+source:
+  enabled: true
+  name_template: '{{ .ProjectName }}-{{ .Version }}-source'
+
+sboms:
+  - id: cyclonedx
+    artifacts: archive
+    documents: ['{{ .ArtifactName }}.cdx.json']
+
+release:
+  github:
+    owner: zaishield
+    name:  vaultscan
+  draft: false
+  prerelease: auto
+  name_template: '{{ .Tag }}'
+  header: |
+    ## VAULTSCAN Agent {{ .Tag }}
+
+    All artifacts in this release are signed with **cosign keyless**
+    (Sigstore Fulcio + Rekor) and published with a CycloneDX SBOM.
+    Verification:
+
+    ```
+    cosign verify-blob \
+      --certificate-identity-regexp='https://github.com/zaishield/vaultscan/.*' \
+      --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+      --bundle <artifact>.cosign.bundle <artifact>
+    ```
+
+    Linux installers: install via `apt install ./vaultscan-agent_*.deb`
+    or `rpm -ivh vaultscan-agent-*.rpm` — systemd unit auto-starts.
+
+    macOS: install the `.pkg`. The agent launches via `launchd` and
+    its plist lives at `/Library/LaunchDaemons/com.zaishield.vaultscan-agent.plist`.
+
+    Windows: run the MSI. The agent registers as a Windows service.
