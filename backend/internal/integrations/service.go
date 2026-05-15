@@ -29,10 +29,23 @@ type Service struct {
 	bus    *eventbus.Bus
 	audit  *audit.Service
 	client *http.Client
+
+	// MaxAttempts is the maximum total deliveries (incl. the initial one)
+	// before an event is parked in the DLQ. Production default 5; tests
+	// can lower it to keep the suite snappy.
+	MaxAttempts int
+	// InitialBackoff is the wait before the second attempt. Each
+	// subsequent attempt doubles the wait. Default 1s.
+	InitialBackoff time.Duration
 }
 
 func New(pool *pgxpool.Pool, bus *eventbus.Bus, a *audit.Service) *Service {
-	return &Service{pool: pool, bus: bus, audit: a, client: &http.Client{Timeout: 10 * time.Second}}
+	return &Service{
+		pool: pool, bus: bus, audit: a,
+		client:         &http.Client{Timeout: 10 * time.Second},
+		MaxAttempts:    5,
+		InitialBackoff: time.Second,
+	}
 }
 
 // SupportedTypes lists the integration kinds the platform can wire up.
@@ -310,8 +323,15 @@ func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, n
 		}
 	}
 	attempt := 0
-	delay := 1 * time.Second
-	for attempt < 5 {
+	delay := s.InitialBackoff
+	if delay <= 0 {
+		delay = time.Second
+	}
+	maxAttempts := s.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 5
+	}
+	for attempt < maxAttempts {
 		attempt++
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 		if err != nil {
@@ -339,12 +359,44 @@ func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, n
 		delay *= 2
 	}
 	s.recordDelivery(ctx, integrationID, ev, attempt, "failed", 0, "max attempts reached")
+	// VS-11: send the event to the dead-letter queue so an operator can
+	// inspect + replay later. We pull the last status row to capture the
+	// final HTTP code (if any).
+	var lastCode *int
+	var lastErr string
+	_ = s.pool.QueryRow(ctx, `
+		SELECT response_code, COALESCE(response_body,'')
+		  FROM integration_deliveries
+		 WHERE integration_id=$1 AND event_id=$2
+		 ORDER BY created_at DESC LIMIT 1`,
+		integrationID, ev.ID).Scan(&lastCode, &lastErr)
+	code := 0
+	if lastCode != nil {
+		code = *lastCode
+	}
+	_, _ = s.EnqueueDeadLetter(ctx, integrationID, ev, attempt, lastErr, code)
 }
 
 // buildPayload formats the event for the destination type. We keep payload
-// shape pragmatic: Slack/Teams use text; others receive a structured envelope.
+// shape pragmatic: Slack/Teams use text; SIEM uses CEF/LEEF; Jira/ServiceNow
+// produce typed tickets; others receive a structured envelope.
 func (s *Service) buildPayload(itype, name string, ev eventbus.Event) ([]byte, error) {
 	switch itype {
+	case "jira":
+		issueType, _ := s.integrationField(context.Background(), name, "issue_type")
+		config, _ := s.integrationConfig(context.Background(), name)
+		return BuildJiraIssue(ev, config, issueType)
+	case "servicenow":
+		config, _ := s.integrationConfig(context.Background(), name)
+		return BuildServiceNowIncident(ev, config)
+	case "siem":
+		format, _ := s.integrationField(context.Background(), name, "format")
+		switch strings.ToLower(format) {
+		case "cef":
+			return []byte(BuildCEF(ev)), nil
+		case "leef":
+			return []byte(BuildLEEF(ev)), nil
+		}
 	case "slack":
 		return json.Marshal(map[string]any{
 			"text": fmt.Sprintf("[%s] VAULTSCAN event %s", strings.ToUpper(ev.Type), ev.ID),
@@ -360,17 +412,16 @@ func (s *Service) buildPayload(itype, name string, ev eventbus.Event) ([]byte, e
 			"title": ev.Type,
 			"text":  jsonString(ev.Payload),
 		})
-	default:
-		return json.Marshal(map[string]any{
-			"event_id":   ev.ID,
-			"event_type": ev.Type,
-			"tenant_id":  ev.TenantID,
-			"partner_id": ev.PartnerID,
-			"actor_id":   ev.ActorID,
-			"payload":    ev.Payload,
-			"emitted_by": "vaultscan",
-		})
 	}
+	return json.Marshal(map[string]any{
+		"event_id":   ev.ID,
+		"event_type": ev.Type,
+		"tenant_id":  ev.TenantID,
+		"partner_id": ev.PartnerID,
+		"actor_id":   ev.ActorID,
+		"payload":    ev.Payload,
+		"emitted_by": "vaultscan",
+	})
 }
 
 func (s *Service) recordDelivery(ctx context.Context, integrationID uuid.UUID, ev eventbus.Event,
@@ -382,6 +433,30 @@ func (s *Service) recordDelivery(ctx context.Context, integrationID uuid.UUID, e
 		        CASE WHEN $5='delivered' THEN now() ELSE NULL END)`,
 		integrationID, ev.ID, ev.Type, attempt, status,
 		nullIfZero(code), nullIfEmpty(body))
+}
+
+// integrationField pulls a single string column off the integration row by name.
+func (s *Service) integrationField(ctx context.Context, name, field string) (string, error) {
+	var v *string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT `+field+` FROM integrations WHERE name=$1 LIMIT 1`, name).Scan(&v); err != nil {
+		return "", err
+	}
+	if v == nil {
+		return "", nil
+	}
+	return *v, nil
+}
+
+func (s *Service) integrationConfig(ctx context.Context, name string) (map[string]any, error) {
+	var raw []byte
+	if err := s.pool.QueryRow(ctx,
+		`SELECT config FROM integrations WHERE name=$1 LIMIT 1`, name).Scan(&raw); err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+	return out, nil
 }
 
 func validType(t string) bool {
