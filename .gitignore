@@ -1,0 +1,53 @@
+# Build artifacts
+/bin/
+/dist/
+**/build/
+**/*.exe
+**/*.test
+**/*.out
+**/coverage.*
+
+# Go
+backend/vendor/
+agent/vendor/
+
+# Node
+node_modules/
+.pnp
+.pnp.js
+.yarn-integrity
+
+# Frontend build
+frontend/dist/
+frontend/.vite/
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+secrets/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Database / storage
+postgres-data/
+opensearch-data/
+ceph-data/
+evidence-data/
+keycloak-data/
+
+# Test artifacts
+.pytest_cache/
+__pycache__/
+*.pyc
