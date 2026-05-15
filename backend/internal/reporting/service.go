@@ -340,59 +340,71 @@ func renderCSV(d *Dataset) ([]byte, string, error) {
 	return buf.Bytes(), "text/csv; charset=utf-8", w.Error()
 }
 
+// Reports use the ZAISHIELD VAULTSCAN brand: dark sci-fi ops aesthetic,
+// sharp corners, mono for data, orange accent only.
 const reportTemplate = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <title>{{.Title}}</title>
 <style>
-body { font-family: -apple-system, system-ui, sans-serif; color:#0F172A; margin:40px; }
-.cover { background: {{.Primary}}; color:white; padding: 60px 40px; border-radius:8px; }
-.cover h1 { font-size: 32px; margin: 0 0 8px 0; }
-.cover .meta { opacity:.85; }
-table { border-collapse: collapse; width: 100%; margin-top: 24px; }
-th, td { border-bottom: 1px solid #E2E8F0; padding: 8px 12px; text-align: left; font-size: 13px; }
-th { background:#F8FAFC; }
-.sev { display:inline-block; padding: 2px 6px; border-radius: 4px; font-weight:600; font-size: 11px; }
-.sev.critical { background:#7F1D1D; color:white; }
-.sev.high { background:#B91C1C; color:white; }
-.sev.medium { background:#D97706; color:white; }
-.sev.low { background:#059669; color:white; }
-.sev.info { background:#475569; color:white; }
-.footer { margin-top: 48px; font-size: 11px; color: #475569; border-top: 1px solid #E2E8F0; padding-top: 12px; }
-.watermark { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%) rotate(-30deg); font-size: 80px; color: rgba(15,23,42,0.06); pointer-events:none; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+body { font-family: 'Inter', -apple-system, system-ui, sans-serif; background:#0A0A0A; color:#F0F0F0; margin:0; padding:40px; }
+.cover { background:#111111; border:1px solid #2A2A2A; padding: 48px 40px; }
+.cover .accent { width:48px; height:2px; background:{{.Primary}}; margin-bottom:24px; }
+.cover .label { font-family:'JetBrains Mono', monospace; font-size:11px; letter-spacing:.4em; color:{{.Primary}}; text-transform:uppercase; margin-bottom:8px; }
+.cover h1 { font-size:36px; margin:0 0 16px 0; letter-spacing:.1em; text-transform:uppercase; }
+.cover h1 .underscore { color:{{.Primary}}; }
+.cover .meta { font-family:'JetBrains Mono', monospace; font-size:12px; color:#8A8A8A; margin:4px 0; }
+.cover .meta strong { color:#F0F0F0; }
+.cover .conf { margin-top:24px; font-family:'JetBrains Mono', monospace; font-size:10px; letter-spacing:.4em; color:{{.Primary}}; text-transform:uppercase; }
+h2 { margin-top:40px; font-size:14px; letter-spacing:.3em; text-transform:uppercase; color:{{.Primary}}; padding-bottom:6px; border-bottom:1px solid #2A2A2A; }
+h3 { margin-top:24px; font-size:12px; letter-spacing:.3em; text-transform:uppercase; color:#8A8A8A; }
+.summary-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-top:16px; }
+.summary-grid .cell { border:1px solid #2A2A2A; background:#111; padding:12px; }
+.summary-grid .label { font-family:'JetBrains Mono', monospace; font-size:9px; letter-spacing:.3em; color:#8A8A8A; text-transform:uppercase; }
+.summary-grid .value { font-family:'JetBrains Mono', monospace; font-size:24px; color:#F0F0F0; margin-top:4px; }
+table { border-collapse:collapse; width:100%; margin-top:12px; font-family:'JetBrains Mono', monospace; font-size:11px; }
+th, td { border-bottom:1px solid #2A2A2A; padding:8px 12px; text-align:left; }
+th { background:#1A1A1A; color:#8A8A8A; font-weight:600; letter-spacing:.2em; text-transform:uppercase; font-size:9px; }
+td { color:#F0F0F0; }
+.sev { display:inline-block; padding:2px 8px; font-weight:700; font-size:9px; letter-spacing:.2em; text-transform:uppercase; }
+.sev.critical { background:#FF2D2D; color:#fff; }
+.sev.high     { background:#FF6B00; color:#000; }
+.sev.medium   { background:#FFB800; color:#000; }
+.sev.low      { background:#00FF88; color:#000; }
+.sev.info     { background:#2A2A2A; color:#F0F0F0; }
+.footer { margin-top:48px; font-family:'JetBrains Mono', monospace; font-size:10px; color:#8A8A8A; letter-spacing:.2em; border-top:1px solid #2A2A2A; padding-top:12px; text-transform:uppercase; }
+.watermark { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) rotate(-30deg); font-size:80px; color:rgba(255,107,0,0.06); pointer-events:none; font-family:'Inter', sans-serif; font-weight:700; letter-spacing:.4em; }
 </style>
 </head>
 <body>
 <div class="watermark">{{.Watermark}}</div>
 <div class="cover">
-  {{if .LogoURL}}<img src="{{.LogoURL}}" style="max-height:48px;background:white;padding:6px 10px;border-radius:4px" />{{end}}
-  <h1>{{.Title}}</h1>
-  <div class="meta">
-    Engagement: <strong>{{.Engagement.Code}}</strong> &middot;
-    Tenant: <strong>{{.Tenant.Name}}</strong> &middot;
-    Partner: <strong>{{.Partner.Name}}</strong>
-  </div>
-  <div class="meta">Generated {{.GeneratedAt.Format "2006-01-02 15:04 MST"}}</div>
-  <div class="meta">{{.Confidentiality}}</div>
+  <div class="accent"></div>
+  <div class="label">Enterprise Hybrid VA/PT Platform</div>
+  <h1>ZAISHIELD<span class="underscore">_</span>VAULTSCAN</h1>
+  <div class="meta">{{.Title}}</div>
+  <div class="meta">Engagement: <strong>{{.Engagement.Code}}</strong> &middot; Tenant: <strong>{{.Tenant.Name}}</strong> &middot; Partner: <strong>{{.Partner.Name}}</strong></div>
+  <div class="meta">Window: <strong>{{.Engagement.StartsAt.Format "2006-01-02"}} → {{.Engagement.EndsAt.Format "2006-01-02"}}</strong></div>
+  <div class="meta">Generated <strong>{{.GeneratedAt.Format "2006-01-02 15:04 MST"}}</strong></div>
+  <div class="conf">{{.Confidentiality}}</div>
 </div>
 
 <h2>Executive Summary</h2>
-<p>This report covers engagement <strong>{{.Engagement.Code}} - {{.Engagement.Name}}</strong>
-running from {{.Engagement.StartsAt.Format "2006-01-02"}} to {{.Engagement.EndsAt.Format "2006-01-02"}}.
-{{len .Findings}} findings were identified.</p>
+<p style="font-size:13px;color:#F0F0F0;line-height:1.6;">
+Engagement <strong style="color:{{.Primary}}">{{.Engagement.Code}} · {{.Engagement.Name}}</strong> identified
+<strong style="color:{{.Primary}}">{{len .Findings}}</strong> findings during the assessment window.
+</p>
 
 <h3>Severity Breakdown</h3>
-<table>
-  <tr><th>Critical</th><th>High</th><th>Medium</th><th>Low</th><th>Info</th></tr>
-  <tr>
-    <td>{{index .Sev "critical"}}</td>
-    <td>{{index .Sev "high"}}</td>
-    <td>{{index .Sev "medium"}}</td>
-    <td>{{index .Sev "low"}}</td>
-    <td>{{index .Sev "info"}}</td>
-  </tr>
-</table>
+<div class="summary-grid">
+  <div class="cell"><div class="label">Critical</div><div class="value" style="color:#FF2D2D">{{index .Sev "critical"}}</div></div>
+  <div class="cell"><div class="label">High</div><div class="value" style="color:#FF6B00">{{index .Sev "high"}}</div></div>
+  <div class="cell"><div class="label">Medium</div><div class="value" style="color:#FFB800">{{index .Sev "medium"}}</div></div>
+  <div class="cell"><div class="label">Low</div><div class="value" style="color:#00FF88">{{index .Sev "low"}}</div></div>
+  <div class="cell"><div class="label">Info</div><div class="value">{{index .Sev "info"}}</div></div>
+</div>
 
 <h2>Findings</h2>
 <table>

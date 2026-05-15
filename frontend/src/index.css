@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-bg-void text-text-primary font-inter;
+    font-feature-settings: "ss01", "cv11";
+  }
+  /* sharp corners by default */
+  button, input, select, textarea {
+    @apply rounded-none;
+  }
+  ::selection {
+    background-color: rgba(255, 107, 0, 0.4);
+    color: #fff;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply px-6 py-2.5 text-sm font-semibold tracking-widest uppercase
+           bg-orange-primary text-bg-void hover:bg-orange-secondary
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply px-6 py-2.5 text-sm font-semibold tracking-widest uppercase
+           border border-orange-primary text-orange-primary
+           hover:bg-orange-primary/10 transition-colors;
+  }
+  .btn-muted {
+    @apply px-4 py-2 text-xs font-semibold tracking-widest uppercase
+           border border-border-subtle text-text-muted
+           hover:text-text-primary hover:border-text-muted transition-colors;
+  }
+  .input {
+    @apply w-full bg-bg-deep border border-border-subtle px-3 py-2 text-sm
+           text-text-primary placeholder-text-muted/60 font-mono
+           focus:outline-none focus:border-orange-primary;
+  }
+  .panel {
+    @apply bg-bg-deep border border-border-subtle;
+  }
+  .panel-elevated {
+    @apply bg-bg-surface border border-border-subtle;
+  }
+  .label {
+    @apply text-[9px] font-mono tracking-widest-4 uppercase text-text-muted;
+  }
+  .label-accent {
+    @apply text-[9px] font-mono tracking-widest-4 uppercase text-orange-primary;
+  }
+  .h-section {
+    @apply text-lg font-bold tracking-widest-2 uppercase text-text-primary font-inter;
+  }
+  .data {
+    @apply font-mono text-xs text-text-primary;
+  }
+  .data-muted {
+    @apply font-mono text-xs text-text-muted;
+  }
+  .row-divider {
+    @apply border-b border-border-subtle;
+  }
+  .sev {
+    @apply px-1.5 py-0.5 text-[9px] font-bold tracking-widest uppercase font-mono;
+  }
+  .sev-critical { @apply bg-status-critical text-white; }
+  .sev-high     { @apply bg-status-high text-bg-void; }
+  .sev-medium   { @apply bg-status-medium text-bg-void; }
+  .sev-low      { @apply bg-status-low text-bg-void; }
+  .sev-info     { @apply bg-border-subtle text-text-primary; }
+  .accent-line {
+    @apply h-px bg-gradient-to-r from-orange-primary/60 via-orange-primary/20 to-transparent;
+  }
+}
+
+/* Faint engineering grid overlay */
+.bg-grid {
+  background-image:
+    linear-gradient(#FF6B00 1px, transparent 1px),
+    linear-gradient(90deg, #FF6B00 1px, transparent 1px);
+  background-size: 40px 40px;
+  opacity: 0.03;
+  pointer-events: none;
+}
