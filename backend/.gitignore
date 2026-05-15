@@ -1,0 +1,15 @@
+# Compiled Go binaries that the smoke-test helpers occasionally drop here.
+# CI builds with `go build -o /tmp/...` so these names should never end up
+# committed; this is a belt-and-braces guard.
+/api
+/agent-gateway
+/cron-runner
+/scanner-worker
+/analytics-worker
+/migrate
+/seed
+/bench
+
+# Go test coverage output
+coverage.out
+*.test
