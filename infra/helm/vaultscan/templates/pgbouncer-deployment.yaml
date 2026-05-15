@@ -1,0 +1,136 @@
+{{- if .Values.pgbouncer.enabled }}
+{{/*
+PgBouncer in front of the upstream Postgres.
+
+Why: every API / agent-gateway / scanner-worker / analytics-worker /
+cron-runner pod opens up to MaxConns=32 (default). With 3 replicas of
+each → potentially 480 Postgres connections; production Postgres
+typically maxes around 200-500. PgBouncer in transaction-pool mode
+multiplexes hundreds of client conns onto a small server pool.
+
+Pool mode rationale:
+  - "transaction" (default below): safe for short-lived statements,
+    works with our pgxpool style. Some session-state features
+    (LISTEN/NOTIFY, prepared statements with non-default options,
+    advisory locks) DO NOT work safely in transaction mode. We use
+    advisory locks in internal/leader; THOSE clients must talk
+    directly to upstream Postgres OR use pgbouncer "session" mode
+    via a second pgbouncer instance.
+  - "session" mode: 1:1 client→server conn for the lifetime of the
+    client session. Use this for the cron-runner only (where leader
+    election holds an advisory lock across multiple statements).
+
+We deploy two pgbouncer instances:
+  - pgbouncer-tx       (transaction pool, used by api/agent-gateway)
+  - pgbouncer-session  (session pool, used by cron-runner)
+
+Each has its own Service so callers route by pool mode.
+*/}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-pgbouncer-tx
+  labels:
+    {{- include "vaultscan.componentLabels" (dict "root" . "component" "pgbouncer-tx") | nindent 4 }}
+spec:
+  replicas: {{ .Values.pgbouncer.transaction.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "vaultscan.componentSelector" (dict "root" . "component" "pgbouncer-tx") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vaultscan.componentLabels" (dict "root" . "component" "pgbouncer-tx") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "vaultscan.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: pgbouncer
+          image: {{ .Values.pgbouncer.image | quote }}
+          securityContext:
+            {{- include "vaultscan.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret | default (include "vaultscan.fullname" .) | quote }}
+                  key: VAULTSCAN_DATABASE_URL
+            - { name: POOL_MODE,         value: "transaction" }
+            - { name: MAX_CLIENT_CONN,   value: {{ .Values.pgbouncer.transaction.maxClientConn | quote }} }
+            - { name: DEFAULT_POOL_SIZE, value: {{ .Values.pgbouncer.transaction.defaultPoolSize | quote }} }
+            - { name: RESERVE_POOL_SIZE, value: {{ .Values.pgbouncer.transaction.reservePoolSize | quote }} }
+            - { name: SERVER_RESET_QUERY, value: "DISCARD ALL" }
+          ports:
+            - containerPort: 6432
+              name: pgbouncer
+          readinessProbe:
+            tcpSocket: { port: 6432 }
+            initialDelaySeconds: 5
+          livenessProbe:
+            tcpSocket: { port: 6432 }
+            initialDelaySeconds: 30
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 1,    memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-pgbouncer-tx
+spec:
+  selector:
+    {{- include "vaultscan.componentSelector" (dict "root" . "component" "pgbouncer-tx") | nindent 4 }}
+  ports:
+    - { port: 5432, targetPort: 6432, protocol: TCP }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-pgbouncer-session
+  labels:
+    {{- include "vaultscan.componentLabels" (dict "root" . "component" "pgbouncer-session") | nindent 4 }}
+spec:
+  replicas: {{ .Values.pgbouncer.session.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "vaultscan.componentSelector" (dict "root" . "component" "pgbouncer-session") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vaultscan.componentLabels" (dict "root" . "component" "pgbouncer-session") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "vaultscan.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: pgbouncer
+          image: {{ .Values.pgbouncer.image | quote }}
+          securityContext:
+            {{- include "vaultscan.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret | default (include "vaultscan.fullname" .) | quote }}
+                  key: VAULTSCAN_DATABASE_URL
+            - { name: POOL_MODE,         value: "session" }
+            - { name: MAX_CLIENT_CONN,   value: {{ .Values.pgbouncer.session.maxClientConn | quote }} }
+            - { name: DEFAULT_POOL_SIZE, value: {{ .Values.pgbouncer.session.defaultPoolSize | quote }} }
+          ports:
+            - containerPort: 6432
+          readinessProbe:
+            tcpSocket: { port: 6432 }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-pgbouncer-session
+spec:
+  selector:
+    {{- include "vaultscan.componentSelector" (dict "root" . "component" "pgbouncer-session") | nindent 4 }}
+  ports:
+    - { port: 5432, targetPort: 6432, protocol: TCP }
+{{- end }}

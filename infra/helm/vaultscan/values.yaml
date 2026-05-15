@@ -154,6 +154,25 @@ affinity: {}
 # ----- Backup CronJob (HS-03) -----------------------------------------------
 # Nightly pg_dump + S3 upload. See docs/operations/disaster-recovery.md
 # for the restore drill.
+# ----- pgBouncer (HS-04 follow-up) -----------------------------------------
+# Two pools sit between every backend pod and Postgres:
+#   transaction  — used by api/agent-gateway/scanner-worker (short queries)
+#   session      — used by cron-runner (advisory locks need session affinity)
+# Without pgBouncer, N replicas × MaxConns easily exceeds Postgres'
+# max_connections. Production deployments MUST enable this.
+pgbouncer:
+  enabled: false
+  image: bitnami/pgbouncer:1.22.1
+  transaction:
+    replicaCount: 2
+    maxClientConn: 500       # client conns the pooler accepts
+    defaultPoolSize: 25      # server conns per (db, user) pair
+    reservePoolSize: 5
+  session:
+    replicaCount: 1
+    maxClientConn: 50
+    defaultPoolSize: 8
+
 backup:
   enabled: false
   schedule: "0 2 * * *"      # 02:00 cluster TZ
