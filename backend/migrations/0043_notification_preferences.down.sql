@@ -1,0 +1,11 @@
+BEGIN;
+DROP POLICY IF EXISTS on_call_schedules_tenant_isolation ON on_call_schedules;
+DROP INDEX IF EXISTS on_call_shifts_window_idx;
+DROP TABLE IF EXISTS on_call_shifts;
+DROP TABLE IF EXISTS on_call_schedules;
+DROP INDEX IF EXISTS notification_digest_queue_pending_idx;
+DROP TABLE IF EXISTS notification_digest_queue;
+DROP INDEX IF EXISTS notification_preferences_event_idx;
+DROP INDEX IF EXISTS notification_preferences_user_idx;
+DROP TABLE IF EXISTS notification_preferences;
+COMMIT;
