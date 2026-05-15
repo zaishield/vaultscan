@@ -106,6 +106,9 @@ func Load() (*Config, error) {
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("VAULTSCAN_DATABASE_URL is required")
 	}
+	if err := c.validateProduction(); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 

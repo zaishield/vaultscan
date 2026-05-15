@@ -66,38 +66,99 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(chiware.Recoverer)
 
-	// Pick the agent-auth strategy: real mTLS (production) or the
-	// header path (dev / single-node compose). VAULTSCAN_AGENT_GW_TLS
-	// defaults to "auto" — mTLS if the server cert and at least one CA
-	// row are present, dev-headers otherwise.
-	tlsMode := strings.ToLower(os.Getenv("VAULTSCAN_AGENT_GW_TLS"))
-	useMTLS := tlsMode == "on" || tlsMode == "true" || tlsMode == "auto" || tlsMode == ""
+	// Pick the agent-auth strategy. VAULTSCAN_AGENT_GW_TLS:
+	//
+	//   on   / true  — Real mTLS REQUIRED. Trust pool must be populated.
+	//                  Cert+key must be supplied via VAULTSCAN_AGENT_GW_CERT
+	//                  + VAULTSCAN_AGENT_GW_KEY (no auto-mint). Any setup
+	//                  failure is fatal.
+	//
+	//   off  / false — Dev-header auth (X-Agent-Id). REFUSED in production
+	//                  mode (cfg.Env=production); ops must use 'on'.
+	//
+	//   auto         — DEV ONLY. mTLS if trust pool is populated and certs
+	//                  load; otherwise self-sign + dev-header auth. REFUSED
+	//                  in production mode.
+	//
+	//   (unset)      — Defaults to 'auto' for dev convenience, 'on' in
+	//                  production mode (fail-closed).
+	tlsMode := strings.ToLower(strings.TrimSpace(os.Getenv("VAULTSCAN_AGENT_GW_TLS")))
+	isProd := isProductionEnv(cfg.Env)
+	if tlsMode == "" {
+		if isProd {
+			tlsMode = "on"
+		} else {
+			tlsMode = "auto"
+		}
+	}
+
+	// Production guard: refuse any insecure mode.
+	if isProd && (tlsMode == "off" || tlsMode == "false" || tlsMode == "auto") {
+		log.Fatal().
+			Str("tls_mode", tlsMode).
+			Msg("agent-gateway refusing to start: VAULTSCAN_AGENT_GW_TLS must be 'on' in production")
+	}
 
 	var authMiddleware func(http.Handler) http.Handler
 	var tlsConfig *tls.Config
-	if useMTLS {
+	switch tlsMode {
+	case "on", "true":
+		// Strict mode: every failure is fatal. Never fall back to headers.
 		verifier, err := agentgw.NewCertVerifier(ctx, pool.Pool)
 		if err != nil {
-			if tlsMode == "on" || tlsMode == "true" {
-				log.Fatal().Err(err).Msg("mTLS mode forced but trust pool not configured")
-			}
-			log.Warn().Err(err).Msg("falling back to dev-header agent auth — populate agent_ca_certificates for mTLS")
-			authMiddleware = agentAuthMiddleware(pool.Pool)
-		} else {
-			authMiddleware = agentgw.IdentityFromTLSMiddleware(pool.Pool)
-			serverCert, serverKey, err := loadOrGenerateGatewayCert(cfg)
-			if err != nil {
-				log.Fatal().Err(err).Msg("gateway server cert")
-			}
-			tlsConfig, err = agentgw.BuildTLSConfig(serverCert, serverKey, verifier)
-			if err != nil {
-				log.Fatal().Err(err).Msg("build TLS config")
-			}
-			log.Info().Msg("agent-gateway running with real mTLS (RequireAndVerifyClientCert + fingerprint check)")
+			log.Fatal().Err(err).Msg("mTLS=on but trust pool unavailable — populate agent_ca_certificates")
 		}
-	} else {
+		if cfg.AgentGatewayCertPath == "" || cfg.AgentGatewayKeyPath == "" {
+			log.Fatal().Msg("mTLS=on requires VAULTSCAN_AGENT_GW_CERT + VAULTSCAN_AGENT_GW_KEY")
+		}
+		serverCert, serverKey, err := loadGatewayCertFromDisk(cfg)
+		if err != nil {
+			log.Fatal().Err(err).Msg("load gateway cert/key")
+		}
+		tlsConfig, err = agentgw.BuildTLSConfig(serverCert, serverKey, verifier)
+		if err != nil {
+			log.Fatal().Err(err).Msg("build TLS config")
+		}
+		authMiddleware = agentgw.IdentityFromTLSMiddleware(pool.Pool)
+		log.Info().
+			Str("cert", cfg.AgentGatewayCertPath).
+			Msg("agent-gateway running with real mTLS (RequireAndVerifyClientCert + fingerprint check)")
+
+	case "off", "false":
+		if isProd {
+			log.Fatal().Msg("dev-header mode is forbidden in production")
+		}
 		authMiddleware = agentAuthMiddleware(pool.Pool)
-		log.Warn().Msg("agent-gateway running in dev-header mode — production deployments MUST set VAULTSCAN_AGENT_GW_TLS=on")
+		log.Warn().Msg("agent-gateway in dev-header mode — production MUST set VAULTSCAN_AGENT_GW_TLS=on")
+
+	case "auto":
+		if isProd {
+			log.Fatal().Msg("auto mode is forbidden in production — set VAULTSCAN_AGENT_GW_TLS=on")
+		}
+		verifier, vErr := agentgw.NewCertVerifier(ctx, pool.Pool)
+		if vErr != nil {
+			log.Warn().Err(vErr).Msg("dev: trust pool not configured, using dev-header auth")
+			authMiddleware = agentAuthMiddleware(pool.Pool)
+			break
+		}
+		serverCert, serverKey, cErr := loadOrGenerateGatewayCert(cfg)
+		if cErr != nil {
+			log.Warn().Err(cErr).Msg("dev: cert load/mint failed, using dev-header auth")
+			authMiddleware = agentAuthMiddleware(pool.Pool)
+			break
+		}
+		tlsConfig, err = agentgw.BuildTLSConfig(serverCert, serverKey, verifier)
+		if err != nil {
+			log.Warn().Err(err).Msg("dev: TLS config build failed, using dev-header auth")
+			authMiddleware = agentAuthMiddleware(pool.Pool)
+			break
+		}
+		authMiddleware = agentgw.IdentityFromTLSMiddleware(pool.Pool)
+		log.Info().Msg("agent-gateway running with auto-mode mTLS")
+
+	default:
+		log.Fatal().Str("mode", tlsMode).
+			Msg("unknown VAULTSCAN_AGENT_GW_TLS mode (want: on|off|auto)")
 	}
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -386,6 +447,31 @@ func agentAuthMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 // point at PEM files, those win. Otherwise we mint an in-process self-
 // signed cert valid for 90 days — dev only; production must provide a
 // CA-signed cert via cert-manager / k8s Secret.
+// loadGatewayCertFromDisk loads the server cert+key from configured
+// paths. Used only in mTLS=on mode (production). Returns error if either
+// path is empty or unreadable — never auto-mints.
+func loadGatewayCertFromDisk(cfg *config.Config) ([]byte, []byte, error) {
+	if cfg.AgentGatewayCertPath == "" || cfg.AgentGatewayKeyPath == "" {
+		return nil, nil, errors.New("AgentGatewayCertPath and AgentGatewayKeyPath must be set")
+	}
+	certPEM, err := os.ReadFile(cfg.AgentGatewayCertPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyPEM, err := os.ReadFile(cfg.AgentGatewayKeyPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return certPEM, keyPEM, nil
+}
+
+// isProductionEnv mirrors config.Config.isProductionMode to avoid
+// circular dependency. Normalizes case + whitespace.
+func isProductionEnv(env string) bool {
+	e := strings.ToLower(strings.TrimSpace(env))
+	return e == "production" || e == "prod"
+}
+
 func loadOrGenerateGatewayCert(cfg *config.Config) ([]byte, []byte, error) {
 	if cfg.AgentGatewayCertPath != "" && cfg.AgentGatewayKeyPath != "" {
 		certPEM, err := os.ReadFile(cfg.AgentGatewayCertPath)
