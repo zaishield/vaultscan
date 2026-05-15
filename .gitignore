@@ -30,7 +30,7 @@ frontend/tsconfig.tsbuildinfo
 *.pem
 *.key
 *.crt
-secrets/
+/secrets/
 
 # Editor
 .idea/
