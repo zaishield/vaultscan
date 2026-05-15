@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-analytics-worker
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "analytics-worker" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  replicas: {{ .Values.analyticsWorker.replicaCount }}
+  selector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "analytics-worker") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "analytics-worker") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: analytics-worker
+          image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.analyticsWorker.image.repository "tag" .Values.analyticsWorker.image.tag) }}
+          envFrom: {{- include "vaultscan.envFrom" (dict "root" .) | nindent 12 }}
+          env:
+            - { name: VAULTSCAN_ANALYTICS_INPROC, value: "false" }
+          resources: {{- toYaml .Values.analyticsWorker.resources | nindent 12 }}

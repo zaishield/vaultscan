@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-config
+  labels: {{- include "vaultscan.labels" . | nindent 4 }}
+data:
+  VAULTSCAN_ENV: {{ .Values.global.env | quote }}
+  VAULTSCAN_API_ADDR: ":8080"
+  VAULTSCAN_AGENT_GATEWAY_ADDR: ":8443"
+  VAULTSCAN_BRANDING_DEFAULT: {{ .Values.global.brandingDefaultPartnerSlug | quote }}
+  VAULTSCAN_RATE_LIMIT_RPS: {{ .Values.api.rateLimitRPS | quote }}
+  VAULTSCAN_EMERGENCY_STOP_MAX_LATENCY: {{ .Values.api.emergencyStopMaxLatencySeconds | quote }}
+  {{- with .Values.databases.external.postgresURL }}
+  VAULTSCAN_DATABASE_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.databases.external.opensearchURL }}
+  VAULTSCAN_OPENSEARCH_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.databases.external.objectStoreURL }}
+  VAULTSCAN_OBJECT_STORE_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.databases.external.objectStoreBucket }}
+  VAULTSCAN_OBJECT_STORE_BUCKET: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.databases.external.keycloakIssuer }}
+  VAULTSCAN_KEYCLOAK_ISSUER: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.databases.external.eventBusURL }}
+  VAULTSCAN_EVENTBUS_URL: {{ . | quote }}
+  {{- end }}

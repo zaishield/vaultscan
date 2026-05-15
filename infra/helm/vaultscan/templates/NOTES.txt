@@ -1,0 +1,33 @@
+────────────────────────────────────────────────────────────
+ZAISHIELD VAULTSCAN deployed.
+Release: {{ .Release.Name }}  Namespace: {{ .Release.Namespace }}
+────────────────────────────────────────────────────────────
+
+Components:
+  • API:               {{ include "vaultscan.fullname" . }}-api               ({{ .Values.api.replicaCount }} replicas)
+  • Agent gateway:     {{ include "vaultscan.fullname" . }}-agent-gateway     ({{ .Values.agentGateway.replicaCount }} replicas)
+  • Portal:            {{ include "vaultscan.fullname" . }}-portal            ({{ .Values.portal.replicaCount }} replicas)
+  • Analytics worker:  {{ include "vaultscan.fullname" . }}-analytics-worker  ({{ .Values.analyticsWorker.replicaCount }} replicas)
+
+URLs:
+{{- range .Values.portal.ingress.hosts }}
+  Portal:   https://{{ .host }}
+{{- end }}
+{{- range .Values.api.ingress.hosts }}
+  API:      https://{{ .host }}
+{{- end }}
+
+Verify the schema migration completed:
+  kubectl -n {{ .Release.Namespace }} get job {{ include "vaultscan.fullname" . }}-migrations
+
+Tail API logs:
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/component=api -f --tail=100
+
+Production checklist:
+  1. Provide secrets via secrets.existingSecret (SealedSecrets / Vault).
+  2. Set databases.external.* to managed Postgres / OpenSearch / object store.
+  3. Replace agentGateway.service.annotations with real EIP allocations.
+  4. Enable serviceMonitor + Prometheus + Grafana for §26 SLOs.
+  5. Confirm Blueprint §37 acceptance (docs/slices/hs-06-acceptance.md).
+
+────────────────────────────────────────────────────────────

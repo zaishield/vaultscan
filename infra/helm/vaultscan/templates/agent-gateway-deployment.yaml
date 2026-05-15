@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-agent-gateway
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "agent-gateway" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  replicas: {{ .Values.agentGateway.replicaCount }}
+  selector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "agent-gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "agent-gateway") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent-gateway
+          image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.agentGateway.image.repository "tag" .Values.agentGateway.image.tag) }}
+          ports: [{ name: tls, containerPort: 8443 }]
+          envFrom: {{- include "vaultscan.envFrom" (dict "root" .) | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: tls }
+            periodSeconds: 5
+          resources: {{- toYaml .Values.agentGateway.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-agent-gateway
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "agent-gateway" "Chart" .Chart "Release" .Release) | nindent 4 }}
+  {{- with .Values.agentGateway.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.agentGateway.service.type }}
+  selector: {{- include "vaultscan.componentSelector" (dict "root" . "component" "agent-gateway") | nindent 4 }}
+  ports:
+    - port: {{ .Values.agentGateway.service.port }}
+      targetPort: {{ .Values.agentGateway.service.targetPort }}
+      name: tls
+{{- if .Values.agentGateway.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-agent-gateway
+spec:
+  minAvailable: {{ .Values.agentGateway.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "agent-gateway") | nindent 6 }}
+{{- end }}

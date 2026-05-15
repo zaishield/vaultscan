@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-portal
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "portal" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  replicaCount: {{ .Values.portal.replicaCount }}
+  selector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "portal") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "portal") | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: portal
+          image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.portal.image.repository "tag" .Values.portal.image.tag) }}
+          ports: [{ name: http, containerPort: 80 }]
+          resources: {{- toYaml .Values.portal.resources | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-portal
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "portal" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  type: {{ .Values.portal.service.type }}
+  selector: {{- include "vaultscan.componentSelector" (dict "root" . "component" "portal") | nindent 4 }}
+  ports:
+    - port: {{ .Values.portal.service.port }}
+      targetPort: http
+      name: http
+{{- if .Values.portal.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-portal
+  annotations: {{- toYaml .Values.portal.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.portal.ingress.className }}
+  rules:
+  {{- range .Values.portal.ingress.hosts }}
+    - host: {{ .host }}
+      http:
+        paths:
+        {{- range .paths }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "vaultscan.fullname" $ }}-portal
+                port: { number: {{ $.Values.portal.service.port }} }
+        {{- end }}
+  {{- end }}
+  tls: {{- toYaml .Values.portal.ingress.tls | nindent 4 }}
+{{- end }}

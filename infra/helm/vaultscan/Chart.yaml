@@ -1,0 +1,22 @@
+apiVersion: v2
+name: vaultscan
+description: |
+  ZAISHIELD VAULTSCAN - Enterprise Hybrid VA/PT Platform.
+  Deploys the API control plane, agent-gateway, branded portal, analytics
+  worker, and the schema migration job. Production deployments should
+  point at managed Postgres / OpenSearch / object storage per Blueprint §26.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+home: https://vaultscan.zaishield.com
+sources:
+  - https://github.com/zaishield/vaultscan
+maintainers:
+  - name: ZAISHIELD VAULTSCAN
+    email: support@zaishield.com
+keywords:
+  - vulnerability-management
+  - vapt
+  - security
+  - mssp
+  - white-label

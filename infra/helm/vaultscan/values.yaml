@@ -1,0 +1,152 @@
+# VAULTSCAN Helm values. Production deployments should override the
+# `databases.external` block and reference an externally-managed Secret.
+
+global:
+  imageRegistry: registry.zaishield.com
+  imageRepositoryPrefix: vaultscan
+  imageTag: ""              # empty -> falls back to .Chart.AppVersion
+  imagePullSecrets: []
+  env: production           # set to "development" to enable the dev-token endpoint
+  brandingDefaultPartnerSlug: zaishield-direct
+  podAnnotations: {}
+  podLabels: {}
+
+# ----- API control plane (Blueprint §11) ------------------------------------
+api:
+  replicaCount: 3
+  image:
+    repository: api
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests: { cpu: "1",   memory: "1Gi" }
+    limits:   { cpu: "4",   memory: "8Gi" }
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: api.vaultscan.zaishield.com
+        paths: ["/"]
+    tls:
+      - secretName: vaultscan-api-tls
+        hosts: [api.vaultscan.zaishield.com]
+  rateLimitRPS: 100
+  emergencyStopMaxLatencySeconds: 30
+
+# ----- Agent gateway (Blueprint §6.3, §27.3) -------------------------------
+agentGateway:
+  replicaCount: 3
+  image:
+    repository: agent-gateway
+    tag: ""
+  service:
+    type: LoadBalancer
+    port: 443
+    targetPort: 8443
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-eip-allocations: ""
+  resources:
+    requests: { cpu: "1", memory: "1Gi" }
+    limits:   { cpu: "4", memory: "4Gi" }
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+# ----- Portal (Blueprint §7) ------------------------------------------------
+portal:
+  replicaCount: 2
+  image:
+    repository: portal
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 80
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: vaultscan.zaishield.com
+        paths: ["/"]
+    tls:
+      - secretName: vaultscan-portal-tls
+        hosts: [vaultscan.zaishield.com]
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits:   { cpu: "500m", memory: "256Mi" }
+
+# ----- Analytics worker (Blueprint §26.4) -----------------------------------
+analyticsWorker:
+  replicaCount: 2
+  image:
+    repository: analytics-worker
+    tag: ""
+  resources:
+    requests: { cpu: "200m", memory: "256Mi" }
+    limits:   { cpu: "2",    memory: "2Gi" }
+
+# ----- Migrations (one-shot Job, runs pre-install / pre-upgrade) ------------
+migrations:
+  enabled: true
+  image:
+    repository: api      # the api image ships the migrate binary
+    tag: ""
+  command: ["/usr/local/bin/migrate", "-dir", "/backend/migrations"]
+  backoffLimit: 3
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
+
+# ----- Database / search / object store endpoints --------------------------
+# Production: leave bundled.* false and provide external endpoints.
+databases:
+  bundled:
+    postgres: false
+    opensearch: false
+    minio: false
+  external:
+    postgresURL: ""      # postgres://user:pass@pg.example.com:5432/vaultscan?sslmode=require
+    opensearchURL: ""
+    objectStoreURL: ""
+    objectStoreBucket: vaultscan-evidence
+    keycloakIssuer: ""
+    eventBusURL: nats://nats.vaultscan-control:4222
+
+# ----- Secrets --------------------------------------------------------------
+# Provide an existing Secret with the keys listed in README.md.
+secrets:
+  existingSecret: vaultscan-api-env
+  inline:               # only used if existingSecret is empty (NOT recommended)
+    databaseURL: ""
+    jwtSecret: ""
+    evidenceMasterKey: ""
+    jobSigningKey: ""
+    objectStoreKey: ""
+    objectStoreSecret: ""
+
+# ----- Network policies (Blueprint §27.1) -----------------------------------
+networkPolicies:
+  enabled: true
+
+# ----- Prometheus ServiceMonitor (optional) ---------------------------------
+serviceMonitor:
+  enabled: false
+  interval: 30s
+
+# ----- Default scheduler hints ----------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}
