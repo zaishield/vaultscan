@@ -1,0 +1,74 @@
+name: e2e
+
+# Playwright E2E suite for the portal. Runs in chromium only on every
+# push (≈2 min). The full webkit + firefox matrix runs on schedule.
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "13 5 * * *"   # daily 05:13 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chromium:
+    name: playwright (chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: install deps
+        working-directory: frontend
+        run: npm ci || npm install
+      - name: install playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: run e2e
+        working-directory: frontend
+        run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-chromium
+          path: frontend/playwright-report/
+          retention-days: 7
+
+  full-matrix:
+    name: playwright (full matrix)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: install deps
+        working-directory: frontend
+        run: npm ci || npm install
+      - name: install browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps
+      - name: run full matrix
+        working-directory: frontend
+        env:
+          E2E_FULL_MATRIX: "1"
+        run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-full
+          path: frontend/playwright-report/
+          retention-days: 14
