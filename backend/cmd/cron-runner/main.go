@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -174,6 +175,9 @@ func main() {
 		{name: "agent_status_gauge", interval: 30 * time.Second, fn: func(ctx context.Context) error {
 			return refreshAgentStatusGauge(ctx, pool.Pool)
 		}},
+		{name: "partition_maintenance", interval: 6 * time.Hour, fn: func(ctx context.Context) error {
+			return ensureNextMonthPartitions(ctx, pool.Pool)
+		}},
 	}
 
 	var wg sync.WaitGroup
@@ -316,6 +320,25 @@ func refreshDLQDepth(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	observability.IntegrationDeadLetterDepth.Set(n)
+	return nil
+}
+
+// ensureNextMonthPartitions calls vaultscan_ensure_month_partition
+// for the candidate partitioned tables. The function is a no-op for
+// tables that haven't been converted to partitioned yet, so it's safe
+// to run unconditionally.
+func ensureNextMonthPartitions(ctx context.Context, pool *pgxpool.Pool) error {
+	tables := []string{"audit_logs", "findings", "scan_jobs", "bus_events"}
+	for _, tbl := range tables {
+		// Pre-create this month, next month, and the one after — so a
+		// 4-week vacation by the cron-runner doesn't leave the default
+		// partition catching writes.
+		for offset := 0; offset <= 2; offset++ {
+			_, _ = pool.Exec(ctx, `
+				SELECT vaultscan_ensure_month_partition($1, now() + ($2 || ' month')::interval)`,
+				tbl, fmt.Sprintf("%d", offset))
+		}
+	}
 	return nil
 }
 
