@@ -39,6 +39,11 @@ type Config struct {
 	EvidenceMasterKey  string  // base64; AES-256 master key for evidence at-rest envelope encryption
 	EvidenceURLTTL     time.Duration
 
+	// ScannerPullKey is the 32-byte (base64) KEK that wraps scanner image-pull
+	// credentials. Distinct from EvidenceMasterKey so a vault-key rotation
+	// doesn't disturb scanner credentials and vice versa.
+	ScannerPullKey     string
+
 	ScannerImageRegistry string
 
 	// APIPublicURLValue is the externally-reachable URL of the API service,
@@ -79,6 +84,8 @@ func Load() (*Config, error) {
 		SecretsToken:      os.Getenv("VAULTSCAN_SECRETS_TOKEN"),
 		EvidenceMasterKey: getenv("VAULTSCAN_EVIDENCE_MASTER_KEY",
 			"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA="),
+		ScannerPullKey: getenv("VAULTSCAN_SCANNER_PULL_KEY",
+			"ZGV2LXNjYW5uZXItcHVsbC1tYXN0ZXIta2V5LTAwMDA="),
 		EvidenceURLTTL:       parseDuration("VAULTSCAN_EVIDENCE_URL_TTL", 5*time.Minute),
 		ScannerImageRegistry: getenv("VAULTSCAN_SCANNER_REGISTRY", "registry.zaishield.com/vaultscan/scanners"),
 		APIPublicURLValue:    getenv("VAULTSCAN_API_PUBLIC_URL", "http://api:8080"),

@@ -28,6 +28,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
+	"github.com/zaishield/vaultscan/backend/internal/guardrails"
 	"github.com/zaishield/vaultscan/backend/internal/integrations"
 	"github.com/zaishield/vaultscan/backend/internal/logging"
 	"github.com/zaishield/vaultscan/backend/internal/partners"
@@ -92,6 +93,19 @@ func main() {
 	brandAssets := branding.NewAssetService(pool.Pool, vault, auditSvc)
 	verifier := auth.NewVerifier(cfg.JWTSharedSecret, pool.Pool)
 
+	// Deepened-service surface (VS-05/VS-12 + HS-01/HS-05). NodeOps gets
+	// the per-tenant pull-credential KEK from config; if it's empty,
+	// pull-credential storage is refused (admin UI surfaces the error).
+	nodeOps, err := scanorch.NewNodeOps(pool.Pool, cfg.ScannerPullKey)
+	if err != nil {
+		log.Warn().Err(err).Msg("scanorch.NodeOps not wired — pull credentials disabled")
+	} else {
+		orch = orch.WithNodeOps(nodeOps)
+	}
+	liveStream := dashboards.NewLiveStream(bus)
+	guardrailSvc := guardrails.New(pool.Pool, auditSvc)
+	bruteforce := auth.NewBruteforceShield(pool.Pool)
+
 	// Optional in-process analytics indexer. The standalone analytics-worker
 	// is preferred for production; set VAULTSCAN_ANALYTICS_INPROC=false to
 	// disable this when running the worker separately.
@@ -119,6 +133,8 @@ func main() {
 		Findings: findSvc, Vault: vault, Retests: retestSvc, Reports: reportSvc,
 		Integrations: intSvc, Dashboards: dashSvc, Users: userSvc, Email: emailSvc,
 		Cosign: cosignSvc, BrandAssets: brandAssets,
+		Nodes: nodeOps, LiveStream: liveStream,
+		Guardrails: guardrailSvc, Bruteforce: bruteforce,
 	})
 
 	srv := &http.Server{

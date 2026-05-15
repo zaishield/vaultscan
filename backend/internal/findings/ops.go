@@ -134,13 +134,13 @@ func severityRank(s string) int {
 // ----------------- Severity overrides ----------------------------------------
 
 type SeverityOverrideInput struct {
-	Name          string
-	TitleRegex    string
-	CVEPattern    string
-	ScannerFilter string
-	NewSeverity   string
-	Reason        string
-	Priority      int
+	Name          string `json:"name"`
+	TitleRegex    string `json:"title_regex"`
+	CVEPattern    string `json:"cve_pattern"`
+	ScannerFilter string `json:"scanner_filter"`
+	NewSeverity   string `json:"new_severity"`
+	Reason        string `json:"reason"`
+	Priority      int    `json:"priority"`
 }
 
 func (s *Service) AddSeverityOverride(ctx context.Context, tenantID uuid.UUID, actor *uuid.UUID, in SeverityOverrideInput) (uuid.UUID, error) {
@@ -211,13 +211,13 @@ func matchesCaseInsensitive(pattern, value string) bool {
 // ----------------- Suppression rules -----------------------------------------
 
 type SuppressionInput struct {
-	Name          string
-	TitleRegex    string
-	CVEPattern    string
-	ScannerFilter string
-	AssetFilter   string
-	Reason        string
-	ExpiresAt     *time.Time
+	Name          string     `json:"name"`
+	TitleRegex    string     `json:"title_regex"`
+	CVEPattern    string     `json:"cve_pattern"`
+	ScannerFilter string     `json:"scanner_filter"`
+	AssetFilter   string     `json:"asset_filter"`
+	Reason        string     `json:"reason"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 }
 
 func (s *Service) AddSuppressionRule(ctx context.Context, tenantID uuid.UUID, actor *uuid.UUID, in SuppressionInput) (uuid.UUID, error) {

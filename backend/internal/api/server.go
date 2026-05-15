@@ -16,6 +16,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/assets"
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/auth"
+	"github.com/zaishield/vaultscan/backend/internal/guardrails"
 	"github.com/zaishield/vaultscan/backend/internal/authdocs"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
 	"github.com/zaishield/vaultscan/backend/internal/config"
@@ -65,6 +66,12 @@ type Services struct {
 	Email        *email.Service
 	Cosign       *cosign.Service
 	BrandAssets  *branding.AssetService
+
+	// Deepened service surface (VS-05..VS-12 + HS-01/HS-02/HS-05).
+	Nodes        *scanorch.NodeOps
+	LiveStream   *dashboards.LiveStream
+	Guardrails   *guardrails.Service
+	Bruteforce   *auth.BruteforceShield
 }
 
 // Mount returns a fully wired HTTP router.
@@ -338,7 +345,138 @@ func Mount(s *Services) http.Handler {
 		r.Route("/api/v1/audit", func(r chi.Router) {
 			r.With(middleware.RequirePermission("view_audit_logs")).Get("/", listAudit(s))
 			r.With(middleware.RequirePermission("view_audit_logs")).Get("/verify", verifyAudit(s))
+			// HS-02 deepening
+			r.With(middleware.RequirePermission("view_audit_logs")).Get("/verify-deep", verifyAuditDeep(s))
+			r.With(middleware.RequirePermission("view_audit_logs")).Get("/timeline", auditTimeline(s))
+			r.With(middleware.RequirePermission("view_audit_logs")).Get("/retention-policies", retentionPolicies(s))
+			r.With(middleware.RequirePermission("view_audit_logs")).
+				Post("/ship/{integration_id}", shipAuditBatch(s))
 		})
+
+		// ===================================================================
+		// VS-05 Scanner ops
+		// ===================================================================
+		r.Route("/api/v1/scanner", func(r chi.Router) {
+			r.With(middleware.RequirePermission("manage_agents")).
+				Post("/nodes/{node_id}/heartbeat", recordScannerHeartbeat(s))
+			r.With(middleware.RequirePermission("manage_agents")).
+				Post("/nodes/failover-sweep", sweepStalledNodes(s))
+			r.Get("/regions/{region}/quota", getRegionQuota(s))
+			r.With(middleware.RequirePermission("manage_agents")).
+				Put("/regions/{region}/quota", setRegionQuota(s))
+			r.With(middleware.RequirePermission("manage_agents")).
+				Post("/regions/{region}/pull-credentials", upsertPullCredential(s))
+			r.Get("/regions/{region}/network-policy.yaml", renderNetworkPolicy(s))
+		})
+
+		// ===================================================================
+		// VS-06 Agent ops
+		// ===================================================================
+		r.Route("/api/v1/agents/{agent_id}/csr", func(r chi.Router) {
+			r.With(middleware.RequirePermission("manage_agents")).
+				Post("/", submitAgentCSR(s))
+		})
+		r.With(middleware.RequirePermission("manage_agents")).
+			Post("/api/v1/agents/{agent_id}/telemetry/rollup", rollupAgentTelemetry(s))
+		r.Get("/api/v1/agents/{agent_id}/telemetry", listAgentTelemetry(s))
+		r.Route("/api/v1/agent-updates", func(r chi.Router) {
+			r.With(middleware.RequirePermission("manage_agents")).
+				Post("/", publishAgentBundle(s))
+		})
+		r.Get("/api/v1/agents/{agent_id}/update-offer", offerAgentUpdate(s))
+		r.With(middleware.RequirePermission("trigger_emergency_stop")).
+			Post("/api/v1/agents/{agent_id}/emergency-stop", requestAgentEmergencyStop(s))
+		r.Post("/api/v1/emergency-stops/{stop_id}/ack", ackAgentEmergencyStop(s))
+		r.Get("/api/v1/agents/{agent_id}/emergency-stop-sla", emergencyStopSLA(s))
+
+		// ===================================================================
+		// VS-07 Findings ops
+		// ===================================================================
+		r.Get("/api/v1/findings/clusters", listFindingClusters(s))
+		r.With(middleware.RequirePermission("edit_findings")).
+			Post("/api/v1/findings/severity-overrides", addSeverityOverride(s))
+		r.With(middleware.RequirePermission("edit_findings")).
+			Post("/api/v1/findings/suppression-rules", addSuppressionRule(s))
+		r.Get("/api/v1/findings/export.sarif", sarifExport(s))
+
+		// ===================================================================
+		// VS-08 Evidence ops
+		// ===================================================================
+		r.With(middleware.RequirePermission("download_evidence")).
+			Post("/api/v1/evidence/{evidence_id}/integrity", verifyEvidenceIntegrity(s))
+		r.With(middleware.RequirePermission("download_evidence"), middleware.RequireMFA()).
+			Post("/api/v1/evidence/{evidence_id}/worm", enableEvidenceWORM(s))
+		r.With(middleware.RequirePermission("download_evidence")).
+			Get("/api/v1/evidence/{evidence_id}/chain-of-custody", chainOfCustody(s))
+		r.With(middleware.RequirePermission("download_evidence")).
+			Get("/api/v1/evidence/{evidence_id}/chain-of-custody.md", chainOfCustodyMarkdown(s))
+		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
+			Post("/api/v1/tenants/{tenant_id}/data-key/rotate", rotateTenantKey(s))
+		r.With(middleware.RequirePermission("download_evidence")).
+			Post("/api/v1/evidence/upload-dek", uploadEvidenceWithDEK(s))
+
+		// ===================================================================
+		// VS-09 Retesting ops
+		// ===================================================================
+		r.With(middleware.RequirePermission("request_retest")).
+			Post("/api/v1/findings/{finding_id}/auto-retest", autoLaunchRetest(s))
+		r.With(middleware.RequirePermission("request_retest")).
+			Post("/api/v1/retest-batches", createRetestBatch(s))
+		r.Get("/api/v1/retest-batches/{batch_id}", getRetestBatch(s))
+		r.With(middleware.RequirePermission("execute_retest")).
+			Patch("/api/v1/retest-batches/{batch_id}/items/{retest_id}", markRetestBatchItem(s))
+		r.Get("/api/v1/retests/{retest_id}/diff", getRetestDiff(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Put("/api/v1/settings/auto-retest", setAutoRetest(s))
+
+		// ===================================================================
+		// VS-10 Reporting ops
+		// ===================================================================
+		r.With(middleware.RequirePermission("generate_report")).
+			Post("/api/v1/report-schedules", createReportSchedule(s))
+		r.With(middleware.RequirePermission("generate_report")).
+			Post("/api/v1/report-schedules/run-due", runDueReports(s))
+		r.Get("/api/v1/compliance/{framework}/engagements/{engagement_id}", complianceMatrix(s))
+		r.Get("/api/v1/compliance/{framework}/engagements/{engagement_id}.md", complianceMatrixMarkdown(s))
+
+		// ===================================================================
+		// VS-11 Integration DLQ
+		// ===================================================================
+		r.Get("/api/v1/integrations/{integration_id}/dead-letters", listDeadLetters(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Post("/api/v1/integrations/dead-letters/{dlq_id}/replay", replayDeadLetter(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Post("/api/v1/integrations/dead-letters/{dlq_id}/resolve", resolveDeadLetter(s))
+
+		// ===================================================================
+		// VS-12 Dashboard ops
+		// ===================================================================
+		r.Get("/api/v1/dashboards/layouts", listDashboardLayouts(s))
+		r.Post("/api/v1/dashboards/layouts", saveDashboardLayout(s))
+		r.Get("/api/v1/dashboards/geo", geoScanNodes(s))
+		r.Get("/api/v1/dashboards/compliance", complianceSnapshot(s))
+		r.Get("/api/v1/dashboards/stream", dashboardStreamSSE(s))
+
+		// ===================================================================
+		// HS-01 Auth hardening
+		// ===================================================================
+		r.With(middleware.RequirePermission("view_audit_logs")).
+			Get("/api/v1/auth/ip-lockouts", listIPLockouts(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Post("/api/v1/auth/ip-lockouts/{ip}/unlock", unlockIP(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Post("/api/v1/auth/compromised-passwords/{prefix}", loadCompromisedPasswords(s))
+
+		// ===================================================================
+		// HS-05 Guardrails
+		// ===================================================================
+		r.Get("/api/v1/platform/maintenance", maintenanceStatus(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Put("/api/v1/platform/maintenance", setMaintenance(s))
+		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
+			Post("/api/v1/platform/break-glass", issueBreakGlass(s))
+		r.Post("/api/v1/platform/break-glass/redeem", redeemBreakGlass(s))
+		r.Get("/api/v1/platform/policy-rules", listPolicyRules(s))
 	})
 
 	return r

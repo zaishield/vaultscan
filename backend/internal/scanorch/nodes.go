@@ -60,13 +60,13 @@ func NewNodeOps(pool *pgxpool.Pool, masterKeyB64 string) (*NodeOps, error) {
 // ----- Heartbeat / health ----------------------------------------------------
 
 type Heartbeat struct {
-	NodeID           uuid.UUID
-	InflightJobs     int
-	LoadAvg          float64
-	KernelVersion    string
-	ScannerVersion   string
-	ImagePullsFailed int
-	LastError        string
+	NodeID           uuid.UUID `json:"node_id"`
+	InflightJobs     int       `json:"inflight_jobs"`
+	LoadAvg          float64   `json:"load_avg"`
+	KernelVersion    string    `json:"kernel_version"`
+	ScannerVersion   string    `json:"scanner_version"`
+	ImagePullsFailed int       `json:"image_pulls_failed"`
+	LastError        string    `json:"last_error,omitempty"`
 }
 
 // Record stamps the node's health row, resetting consecutive_failures if
@@ -273,12 +273,12 @@ var ErrRegionAtQuota = errors.New("scanorch: region at concurrent-job quota")
 // ----- Pull credentials ------------------------------------------------------
 
 type PullCredential struct {
-	ID           uuid.UUID
-	Region       string
-	RegistryHost string
-	Username     string
-	Password     string // cleartext only inside the process — never persisted
-	RotatedAt    *time.Time
+	ID           uuid.UUID  `json:"id"`
+	Region       string     `json:"region"`
+	RegistryHost string     `json:"registry_host"`
+	Username     string     `json:"username"`
+	Password     string     `json:"password,omitempty"` // cleartext only inside the process — never persisted
+	RotatedAt    *time.Time `json:"rotated_at,omitempty"`
 }
 
 func (n *NodeOps) UpsertPullCredential(ctx context.Context, actor *uuid.UUID, in PullCredential) error {

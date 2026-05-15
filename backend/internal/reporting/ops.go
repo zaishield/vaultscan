@@ -265,16 +265,16 @@ type Schedule struct {
 }
 
 type CreateScheduleInput struct {
-	PlatformID   uuid.UUID
-	PartnerID    uuid.UUID
-	TenantID     uuid.UUID
-	EngagementID *uuid.UUID
-	Name         string
-	ReportType   string
-	Cadence      string
-	Formats      []string
-	FirstRunAt   time.Time
-	CreatedBy    *uuid.UUID
+	PlatformID   uuid.UUID  `json:"platform_id"`
+	PartnerID    uuid.UUID  `json:"partner_id"`
+	TenantID     uuid.UUID  `json:"tenant_id"`
+	EngagementID *uuid.UUID `json:"engagement_id,omitempty"`
+	Name         string     `json:"name"`
+	ReportType   string     `json:"report_type"`
+	Cadence      string     `json:"cadence"`
+	Formats      []string   `json:"formats,omitempty"`
+	FirstRunAt   time.Time  `json:"first_run_at,omitempty"`
+	CreatedBy    *uuid.UUID `json:"created_by,omitempty"`
 }
 
 func (s *Service) CreateSchedule(ctx context.Context, in CreateScheduleInput) (uuid.UUID, error) {
