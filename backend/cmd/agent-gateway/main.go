@@ -5,8 +5,15 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,6 +27,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/zaishield/vaultscan/backend/internal/agentgw"
 	"github.com/zaishield/vaultscan/backend/internal/agents"
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/config"
@@ -58,6 +66,40 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(chiware.Recoverer)
 
+	// Pick the agent-auth strategy: real mTLS (production) or the
+	// header path (dev / single-node compose). VAULTSCAN_AGENT_GW_TLS
+	// defaults to "auto" — mTLS if the server cert and at least one CA
+	// row are present, dev-headers otherwise.
+	tlsMode := strings.ToLower(os.Getenv("VAULTSCAN_AGENT_GW_TLS"))
+	useMTLS := tlsMode == "on" || tlsMode == "true" || tlsMode == "auto" || tlsMode == ""
+
+	var authMiddleware func(http.Handler) http.Handler
+	var tlsConfig *tls.Config
+	if useMTLS {
+		verifier, err := agentgw.NewCertVerifier(ctx, pool.Pool)
+		if err != nil {
+			if tlsMode == "on" || tlsMode == "true" {
+				log.Fatal().Err(err).Msg("mTLS mode forced but trust pool not configured")
+			}
+			log.Warn().Err(err).Msg("falling back to dev-header agent auth — populate agent_ca_certificates for mTLS")
+			authMiddleware = agentAuthMiddleware(pool.Pool)
+		} else {
+			authMiddleware = agentgw.IdentityFromTLSMiddleware(pool.Pool)
+			serverCert, serverKey, err := loadOrGenerateGatewayCert(cfg)
+			if err != nil {
+				log.Fatal().Err(err).Msg("gateway server cert")
+			}
+			tlsConfig, err = agentgw.BuildTLSConfig(serverCert, serverKey, verifier)
+			if err != nil {
+				log.Fatal().Err(err).Msg("build TLS config")
+			}
+			log.Info().Msg("agent-gateway running with real mTLS (RequireAndVerifyClientCert + fingerprint check)")
+		}
+	} else {
+		authMiddleware = agentAuthMiddleware(pool.Pool)
+		log.Warn().Msg("agent-gateway running in dev-header mode — production deployments MUST set VAULTSCAN_AGENT_GW_TLS=on")
+	}
+
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
@@ -85,13 +127,13 @@ func main() {
 		writeJSON(w, 200, map[string]string{"status": "enrolled"})
 	})
 
-	// All other endpoints require a per-agent header. In production this is
-	// enforced by mTLS; in dev we accept X-Agent-Id + X-Agent-Cert-Fingerprint.
+	// All other endpoints require a per-agent identity. The middleware is
+	// either mTLS-derived (production) or dev-headers (single-node compose).
 	r.Group(func(r chi.Router) {
-		r.Use(agentAuthMiddleware(pool.Pool))
+		r.Use(authMiddleware)
 
 		r.Post("/api/v1/agents/heartbeat", func(w http.ResponseWriter, r *http.Request) {
-			agentID := agentFromCtx(r)
+			agentID := agentgw.AgentFromContext(r.Context())
 			var req struct {
 				CPUPercent     float64        `json:"cpu_percent"`
 				MemoryPercent  float64        `json:"memory_percent"`
@@ -117,7 +159,7 @@ func main() {
 		})
 
 		r.Get("/api/v1/agents/jobs/poll", func(w http.ResponseWriter, r *http.Request) {
-			agentID := agentFromCtx(r)
+			agentID := agentgw.AgentFromContext(r.Context())
 			n, _ := strconv.Atoi(r.URL.Query().Get("max"))
 			out, err := agentSvc.PollJobs(r.Context(), agentID, n)
 			if err != nil {
@@ -128,7 +170,7 @@ func main() {
 		})
 
 		r.Post("/api/v1/agents/jobs/{job_id}/status", func(w http.ResponseWriter, r *http.Request) {
-			agentID := agentFromCtx(r)
+			agentID := agentgw.AgentFromContext(r.Context())
 			jobID, err := uuid.Parse(chi.URLParam(r, "job_id"))
 			if err != nil {
 				writeJSON(w, 400, map[string]string{"error": err.Error()})
@@ -158,7 +200,7 @@ func main() {
 		})
 
 		r.Post("/api/v1/agents/jobs/{job_id}/results", func(w http.ResponseWriter, r *http.Request) {
-			agentID := agentFromCtx(r)
+			agentID := agentgw.AgentFromContext(r.Context())
 			jobID, err := uuid.Parse(chi.URLParam(r, "job_id"))
 			if err != nil {
 				writeJSON(w, 400, map[string]string{"error": err.Error()})
@@ -222,7 +264,7 @@ func main() {
 		})
 
 		r.Post("/api/v1/agents/jobs/{job_id}/artifacts", func(w http.ResponseWriter, r *http.Request) {
-			agentID := agentFromCtx(r)
+			agentID := agentgw.AgentFromContext(r.Context())
 			jobID, err := uuid.Parse(chi.URLParam(r, "job_id"))
 			if err != nil {
 				writeJSON(w, 400, map[string]string{"error": err.Error()})
@@ -258,7 +300,7 @@ func main() {
 		})
 
 		r.Get("/api/v1/agents/policy", func(w http.ResponseWriter, r *http.Request) {
-			agentID := agentFromCtx(r)
+			agentID := agentgw.AgentFromContext(r.Context())
 			p, err := agentSvc.Policy(r.Context(), agentID)
 			if err != nil {
 				writeJSON(w, 404, map[string]string{"error": err.Error()})
@@ -279,10 +321,20 @@ func main() {
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      120 * time.Second,
 		IdleTimeout:       2 * time.Minute,
+		TLSConfig:         tlsConfig,
 	}
 	go func() {
-		log.Info().Str("addr", cfg.AgentGatewayAddr).Msg("agent-gateway listening")
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Info().Str("addr", cfg.AgentGatewayAddr).Bool("mtls", tlsConfig != nil).
+			Msg("agent-gateway listening")
+		var err error
+		if tlsConfig != nil {
+			// ListenAndServeTLS ignores cert/key paths when Server.TLSConfig
+			// already has Certificates loaded — pass empty strings.
+			err = srv.ListenAndServeTLS("", "")
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal().Err(err).Msg("agent gateway")
 		}
 	}()
@@ -294,25 +346,10 @@ func main() {
 	_ = srv.Shutdown(shctx)
 }
 
-// agentAuthMiddleware verifies the agent's identity. In production the gateway
-// terminates mTLS and uses the client cert; for the dev build we accept the
-// agent id + fingerprint headers as long as they match a stored certificate.
-type agentCtxKey int
-
-const agentIDCtx agentCtxKey = 1
-
-func agentFromCtx(r *http.Request) uuid.UUID {
-	if v := r.Context().Value(agentIDCtx); v != nil {
-		if id, ok := v.(uuid.UUID); ok {
-			return id
-		}
-	}
-	return uuid.Nil
-}
-
-// agentAuthMiddleware verifies the agent identity. Production: terminate
-// mTLS at the gateway and read the client cert SAN. Dev: accept the agent id
-// header plus a cert fingerprint that matches the stored certificate.
+// agentAuthMiddleware is the dev-mode header path: accept X-Agent-Id +
+// X-Agent-Cert-Fingerprint when mTLS isn't configured. Production
+// deployments MUST run the gateway with VAULTSCAN_AGENT_GW_TLS=on so the
+// real mTLS verifier (agentgw.IdentityFromTLSMiddleware) takes over.
 func agentAuthMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -339,10 +376,50 @@ func agentAuthMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 				writeJSON(w, 401, map[string]string{"error": "fingerprint mismatch"})
 				return
 			}
-			r = r.WithContext(context.WithValue(r.Context(), agentIDCtx, id))
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(agentgw.WithAgent(r.Context(), id)))
 		})
 	}
+}
+
+// loadOrGenerateGatewayCert returns the server cert+key the gateway
+// presents to agents. If VAULTSCAN_AGENT_GW_CERT and ..._KEY env vars
+// point at PEM files, those win. Otherwise we mint an in-process self-
+// signed cert valid for 90 days — dev only; production must provide a
+// CA-signed cert via cert-manager / k8s Secret.
+func loadOrGenerateGatewayCert(cfg *config.Config) ([]byte, []byte, error) {
+	if cfg.AgentGatewayCertPath != "" && cfg.AgentGatewayKeyPath != "" {
+		certPEM, err := os.ReadFile(cfg.AgentGatewayCertPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		keyPEM, err := os.ReadFile(cfg.AgentGatewayKeyPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		return certPEM, keyPEM, nil
+	}
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: "vaultscan-agent-gateway-dev"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(90 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"agent-gateway", "localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		return nil, nil, err
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv),
+	})
+	return certPEM, keyPEM, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

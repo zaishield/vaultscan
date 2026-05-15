@@ -44,6 +44,12 @@ type Config struct {
 	// doesn't disturb scanner credentials and vice versa.
 	ScannerPullKey     string
 
+	// Agent-gateway server cert (presented to agents). When both paths are
+	// empty AND VAULTSCAN_AGENT_GW_TLS is "auto", the gateway mints a self-
+	// signed cert at boot (dev only).
+	AgentGatewayCertPath string
+	AgentGatewayKeyPath  string
+
 	ScannerImageRegistry string
 
 	// APIPublicURLValue is the externally-reachable URL of the API service,
@@ -86,6 +92,8 @@ func Load() (*Config, error) {
 			"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA="),
 		ScannerPullKey: getenv("VAULTSCAN_SCANNER_PULL_KEY",
 			"ZGV2LXNjYW5uZXItcHVsbC1tYXN0ZXIta2V5LTAwMDA="),
+		AgentGatewayCertPath: os.Getenv("VAULTSCAN_AGENT_GW_CERT"),
+		AgentGatewayKeyPath:  os.Getenv("VAULTSCAN_AGENT_GW_KEY"),
 		EvidenceURLTTL:       parseDuration("VAULTSCAN_EVIDENCE_URL_TTL", 5*time.Minute),
 		ScannerImageRegistry: getenv("VAULTSCAN_SCANNER_REGISTRY", "registry.zaishield.com/vaultscan/scanners"),
 		APIPublicURLValue:    getenv("VAULTSCAN_API_PUBLIC_URL", "http://api:8080"),

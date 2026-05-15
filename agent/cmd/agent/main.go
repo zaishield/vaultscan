@@ -32,6 +32,7 @@ import (
 	"github.com/zaishield/vaultscan/agent/internal/emergency"
 	"github.com/zaishield/vaultscan/agent/internal/enroll"
 	"github.com/zaishield/vaultscan/agent/internal/heartbeat"
+	"github.com/zaishield/vaultscan/agent/internal/mtls"
 	"github.com/zaishield/vaultscan/agent/internal/packager"
 	"github.com/zaishield/vaultscan/agent/internal/policy"
 	"github.com/zaishield/vaultscan/agent/internal/rotation"
@@ -74,12 +75,23 @@ func main() {
 	}
 
 	localPolicy := policy.NewLocal()
+	// HTTP client: mTLS-enabled when the gateway requires it (production),
+	// plain TLS otherwise. Env-gated so a single-node compose can still run.
+	client := &http.Client{Timeout: 60 * time.Second}
+	if strings.ToLower(os.Getenv("VAULTSCAN_GATEWAY_MTLS")) == "on" {
+		mClient, err := mtls.Client(*dataDir)
+		if err != nil {
+			log.Fatal().Err(err).Msg("mTLS client requested but cert/key missing — run enrollment first")
+		}
+		client = mClient
+		log.Info().Msg("agent using mTLS client transport")
+	}
 	ag := &Agent{
 		log:        log,
 		gateway:    *gateway,
 		agentID:    agentID,
 		dataDir:    *dataDir,
-		client:     &http.Client{Timeout: 60 * time.Second},
+		client:     client,
 		cache:      cstore,
 		policy:     localPolicy,
 		runner:     runner.New().WithPolicy(localPolicy),
@@ -156,6 +168,14 @@ func main() {
 		defer wg.Done()
 		ag.rotator.Run(ctx, func(newFp string) {
 			ag.fingerprint = newFp
+			// If we're talking mTLS, hot-swap the leaf cert in the
+			// HTTP transport so subsequent requests use the new cert
+			// without a process restart.
+			if strings.ToLower(os.Getenv("VAULTSCAN_GATEWAY_MTLS")) == "on" {
+				if err := mtls.UpdateClientCert(ag.client, *dataDir); err != nil {
+					log.Warn().Err(err).Msg("hot-swap client cert failed")
+				}
+			}
 			log.Info().Str("fingerprint", newFp[:16]+"…").Msg("cert rotated; new fingerprint live")
 		})
 	}()
