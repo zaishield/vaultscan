@@ -160,10 +160,20 @@ func Mount(s *Services) http.Handler {
 			r.Get("/", listEngagements(s))
 			r.With(middleware.RequirePermission("approve_scope")).
 				Post("/{engagement_id}/activate", activateEngagement(s))
+			r.With(middleware.RequirePermission("approve_scope")).
+				Post("/{engagement_id}/pause", pauseEngagement(s))
+			r.With(middleware.RequirePermission("approve_scope")).
+				Post("/{engagement_id}/resume", resumeEngagement(s))
+			r.With(middleware.RequirePermission("approve_scope")).
+				Post("/{engagement_id}/rate-limit", setEngagementRateLimit(s))
+			r.With(middleware.RequirePermission("download_evidence"), middleware.RequireMFA()).
+				Get("/{engagement_id}/authorization/{document_id}/view", viewAuthDoc(s))
 		})
 		r.Route("/api/v1/scope", func(r chi.Router) {
 			r.With(middleware.RequirePermission("create_engagement")).
 				Post("/", addScope(s))
+			r.With(middleware.RequirePermission("create_engagement")).
+				Post("/import-csv", importScopeCSV(s))
 			r.Get("/{engagement_id}", listScope(s))
 			r.With(middleware.RequirePermission("approve_scope")).
 				Post("/{scope_id}/approve", approveScope(s))

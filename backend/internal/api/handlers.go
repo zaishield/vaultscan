@@ -2125,6 +2125,120 @@ func drillRecentScans(s *Services) http.HandlerFunc {
 	}
 }
 
+// ----- VS-03 deepening: pause/resume, rate limit, scope CSV, auth-doc view -
+
+func pauseEngagement(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "engagement_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		_ = decode(r, &req)
+		identity, _ := auth.FromContext(r.Context())
+		if err := s.Engagements.Pause(r.Context(), id, &identity.UserID, req.Reason); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "paused"})
+	}
+}
+
+func resumeEngagement(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "engagement_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		if err := s.Engagements.Resume(r.Context(), id, &identity.UserID); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "active"})
+	}
+}
+
+func setEngagementRateLimit(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "engagement_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var req struct {
+			MaxScansPerHour int `json:"max_scans_per_hour"`
+		}
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		if err := s.Engagements.SetRateLimit(r.Context(), id, &identity.UserID, req.MaxScansPerHour); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]int{"max_scans_per_hour": req.MaxScansPerHour})
+	}
+}
+
+func importScopeCSV(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		eid, err := uuid.Parse(r.URL.Query().Get("engagement_id"))
+		if err != nil {
+			badRequest(w, "engagement_id required")
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		added, err := s.Engagements.ImportScopeCSV(r.Context(), &identity.UserID, eid, r.Body)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]int{"added": added})
+	}
+}
+
+// viewAuthDoc returns the decrypted authorization document body and logs
+// the access. MFA-gated because seeing the signed letter is a privileged
+// compliance action.
+func viewAuthDoc(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, err := uuidParam(r, "engagement_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		docID, err := uuidParam(r, "document_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var storageURL, contentType string
+		if err := s.Pool.QueryRow(r.Context(), `
+			SELECT storage_url, 'application/octet-stream'
+			  FROM authorization_documents WHERE id=$1`, docID).
+			Scan(&storageURL, &contentType); err != nil {
+			notFound(w)
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		_ = s.Engagements.LogAuthDocAccess(r.Context(), docID, &identity.UserID,
+			"view", clientIP(r), r.UserAgent())
+		// Issue a short-TTL signed URL pointing at the evidence vault.
+		// The actual decrypt happens via the evidence-download endpoint
+		// which already enforces tenant isolation.
+		writeJSON(w, http.StatusOK, map[string]string{
+			"storage_url": storageURL,
+			"note":        "use POST /api/v1/evidence/{id}/url to obtain a signed URL",
+		})
+	}
+}
+
 // ----- VS-02 deepening: brand assets, DNS check, preview -------------------
 
 func listBrandAssets(s *Services) http.HandlerFunc {

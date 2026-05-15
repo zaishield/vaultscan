@@ -3,8 +3,11 @@ package engagements
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -249,6 +252,49 @@ func (s *Service) ApproveScope(ctx context.Context, actor *uuid.UUID, scopeID uu
 		ActorID: actor, Payload: map[string]any{"scope_id": scopeID, "engagement_id": engagementID},
 	})
 	return nil
+}
+
+// ImportScopeCSV bulk-loads scope targets from a CSV stream. Columns:
+//   target_type,target_value,plane[,notes]
+// All rows land in 'pending' state — approvers still need to call
+// ApproveScope to activate them.
+func (s *Service) ImportScopeCSV(ctx context.Context, actor *uuid.UUID, engagementID uuid.UUID, body io.Reader) (int, error) {
+	r := csv.NewReader(body)
+	r.TrimLeadingSpace = true
+	header, err := r.Read()
+	if err != nil {
+		return 0, fmt.Errorf("scope: csv header: %w", err)
+	}
+	idx := map[string]int{}
+	for i, h := range header {
+		idx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+	for _, k := range []string{"target_type", "target_value", "plane"} {
+		if _, ok := idx[k]; !ok {
+			return 0, fmt.Errorf("scope: csv missing column %q", k)
+		}
+	}
+	added := 0
+	for {
+		row, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return added, err
+		}
+		notes := ""
+		if i, ok := idx["notes"]; ok && i < len(row) {
+			notes = row[i]
+		}
+		if _, err := s.AddScope(ctx, actor, engagementID,
+			row[idx["target_type"]], row[idx["target_value"]],
+			row[idx["plane"]], notes); err != nil {
+			return added, err
+		}
+		added++
+	}
+	return added, nil
 }
 
 func (s *Service) ListScope(ctx context.Context, engagementID uuid.UUID) ([]models.ScopeTarget, error) {

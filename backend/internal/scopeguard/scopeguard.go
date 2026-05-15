@@ -179,13 +179,36 @@ func (s *Service) Evaluate(ctx context.Context, in Inputs) (*Decision, error) {
 		}
 	}
 
-	// 6. Aggressive scans require explicit approval.
-	requiresApproval := false
+	// 5b. Intensity cap. The engagement's max intensity bounds what scan
+	// profile we can run — a 'light' engagement refuses 'aggressive' profiles
+	// even if the operator has approve_aggressive_scan.
 	var profileIntensity string
 	var profileRequiresApproval bool
 	_ = s.pool.QueryRow(ctx,
 		`SELECT intensity, requires_approval FROM scan_profiles WHERE code=$1`, in.ScanProfile).
 		Scan(&profileIntensity, &profileRequiresApproval)
+	if intensityRank(profileIntensity) > intensityRank(intensity) {
+		d.Code = DecisionBlockedOutOfScope
+		d.Reason = "scan profile intensity " + profileIntensity +
+			" exceeds engagement cap " + intensity
+		s.log(ctx, in, d)
+		return d, nil
+	}
+
+	// 5c. Per-engagement rate limit (overrides the per-tenant default
+	// from RecentJobsLastHour). If the engagement row has a tighter cap,
+	// honour it.
+	if engCap := s.engagementRateLimit(ctx, in.EngagementID); engCap > 0 {
+		if recentEng := s.recentScansForEngagement(ctx, in.EngagementID); recentEng >= engCap {
+			d.Code = DecisionBlockedRateLimit
+			d.Reason = "engagement rate limit exceeded"
+			s.log(ctx, in, d)
+			return d, nil
+		}
+	}
+
+	// 6. Aggressive scans require explicit approval.
+	requiresApproval := false
 	if profileRequiresApproval || profileIntensity == "aggressive" || in.Intensity == "aggressive" {
 		requiresApproval = true
 	}
@@ -262,6 +285,41 @@ func (s *Service) checkBlackouts(ctx context.Context, engagementID uuid.UUID, no
 		}
 	}
 	return false, ""
+}
+
+// engagementRateLimit returns max_scans_per_hour for an engagement, or 0
+// when no override is set.
+func (s *Service) engagementRateLimit(ctx context.Context, engagementID uuid.UUID) int {
+	var n *int
+	_ = s.pool.QueryRow(ctx,
+		`SELECT max_scans_per_hour FROM engagements WHERE id=$1`, engagementID).Scan(&n)
+	if n == nil {
+		return 0
+	}
+	return *n
+}
+
+func (s *Service) recentScansForEngagement(ctx context.Context, engagementID uuid.UUID) int {
+	var n int
+	_ = s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM scan_jobs
+		 WHERE engagement_id=$1 AND created_at > now() - INTERVAL '1 hour'`,
+		engagementID).Scan(&n)
+	return n
+}
+
+// intensityRank lets Scope Guard compare profile intensity vs engagement
+// cap deterministically.
+func intensityRank(intensity string) int {
+	switch intensity {
+	case "light":
+		return 1
+	case "standard":
+		return 2
+	case "aggressive":
+		return 3
+	}
+	return 0
 }
 
 func (s *Service) targetInScope(ctx context.Context, engagementID uuid.UUID,
