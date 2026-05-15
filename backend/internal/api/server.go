@@ -73,6 +73,10 @@ type Services struct {
 	LiveStream   *dashboards.LiveStream
 	Guardrails   *guardrails.Service
 	Bruteforce   *auth.BruteforceShield
+
+	// HS-01 / MFA + JWKS deepening.
+	MFA  *auth.MFAService
+	Keys *auth.KeyManager
 }
 
 // Mount returns a fully wired HTTP router.
@@ -114,6 +118,16 @@ func Mount(s *Services) http.Handler {
 	// Public branding endpoint (Blueprint §8.5)
 	r.Get("/api/v1/branding", brandingByDomain(s))
 	r.Post("/api/v1/auth/dev-token", devToken(s))
+
+	// JWKS — public so external token consumers can fetch the active
+	// + verify_only RSA public keys without auth (RFC 7517 norm).
+	r.Get("/.well-known/jwks.json", jwksHandler(s))
+	r.Get("/api/v1/.well-known/jwks.json", jwksHandler(s))
+
+	// MFA second-step verify is reachable without a full JWT — the
+	// caller has just completed password auth and holds a short-lived
+	// challenge token. The MFA service does its own user-id check.
+	r.Post("/api/v1/auth/mfa/verify", mfaVerify(s))
 
 	// Public cloud public key. Scanner workers and internal agents fetch
 	// this on bootstrap to verify per-job signatures (Blueprint §11.3,
@@ -484,6 +498,16 @@ func Mount(s *Services) http.Handler {
 			Post("/api/v1/platform/break-glass", issueBreakGlass(s))
 		r.Post("/api/v1/platform/break-glass/redeem", redeemBreakGlass(s))
 		r.Get("/api/v1/platform/policy-rules", listPolicyRules(s))
+
+		// MFA enrolment + management (HS-01).
+		r.Post("/api/v1/auth/mfa/enroll/start", mfaEnrollStart(s))
+		r.Post("/api/v1/auth/mfa/enroll/confirm", mfaEnrollConfirm(s))
+		r.With(middleware.RequireMFA()).
+			Delete("/api/v1/auth/mfa", mfaDisable(s))
+
+		// JWT key rotation (admin only, MFA-gated).
+		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
+			Post("/api/v1/auth/jwt-keys/rotate", rotateJWTKey(s))
 	})
 
 	return r

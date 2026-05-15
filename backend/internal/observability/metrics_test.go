@@ -65,7 +65,10 @@ func readCounter(t *testing.T, route, method, status string) float64 {
 	t.Helper()
 	srv := httptest.NewServer(PromHandler())
 	defer srv.Close()
-	resp, _ := http.Get(srv.URL)
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	wanted := `vaultscan_http_requests_total{method="` + method +

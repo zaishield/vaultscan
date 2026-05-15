@@ -121,6 +121,23 @@ func main() {
 	guardrailSvc := guardrails.New(pool.Pool, auditSvc)
 	bruteforce := auth.NewBruteforceShield(pool.Pool)
 
+	// Real TOTP/MFA + RSA JWT key management. Both share the platform
+	// KEK so a single rotation covers both surfaces. Bootstrap ensures
+	// there's always at least one active signing key on boot.
+	mfaSvc, err := auth.NewMFAService(pool.Pool, cfg.EvidenceMasterKey)
+	if err != nil {
+		log.Warn().Err(err).Msg("MFA service not configured — /api/v1/auth/mfa/* will 500")
+	}
+	keyMgr, err := auth.NewKeyManager(pool.Pool, cfg.EvidenceMasterKey)
+	if err != nil {
+		log.Warn().Err(err).Msg("JWT key manager not configured — RS256 issuance disabled")
+	} else {
+		if _, err := keyMgr.Bootstrap(ctx); err != nil {
+			log.Warn().Err(err).Msg("JWT key bootstrap failed")
+		}
+		verifier = verifier.WithKeyManager(keyMgr)
+	}
+
 	// Optional in-process analytics indexer. The standalone analytics-worker
 	// is preferred for production; set VAULTSCAN_ANALYTICS_INPROC=false to
 	// disable this when running the worker separately.
@@ -150,6 +167,7 @@ func main() {
 		Cosign: cosignSvc, BrandAssets: brandAssets,
 		Nodes: nodeOps, LiveStream: liveStream,
 		Guardrails: guardrailSvc, Bruteforce: bruteforce,
+		MFA: mfaSvc, Keys: keyMgr,
 	})
 
 	srv := &http.Server{
