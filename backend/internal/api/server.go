@@ -517,6 +517,15 @@ func Mount(s *Services) http.Handler {
 		r.Post("/api/v1/mobile/alerts/ack", mobileAckAlert(s))
 		r.With(middleware.RequirePermission("trigger_emergency_stop"), middleware.RequireMFA()).
 			Post("/api/v1/mobile/emergency-stop", mobileEmergencyStop(s))
+
+		// §33 Customer feedback. Any authenticated user can submit;
+		// listing + triage gated to view_audit_logs (admins).
+		r.Post("/api/v1/feedback", submitFeedback(s))
+		r.Post("/api/v1/feedback/dismiss-nps", dismissNPSPrompt(s))
+		r.With(middleware.RequirePermission("view_audit_logs")).
+			Get("/api/v1/feedback", listFeedback(s))
+		r.With(middleware.RequirePermission("view_audit_logs")).
+			Patch("/api/v1/feedback/{feedback_id}", triageFeedback(s))
 	})
 
 	return r
