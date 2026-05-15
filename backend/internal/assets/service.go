@@ -1,0 +1,279 @@
+// Package assets implements asset inventory CRUD and bulk import (Blueprint §16).
+package assets
+
+import (
+	"context"
+	"encoding/csv"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/zaishield/vaultscan/backend/internal/audit"
+	"github.com/zaishield/vaultscan/backend/internal/models"
+)
+
+type Service struct {
+	pool  *pgxpool.Pool
+	audit *audit.Service
+}
+
+func New(pool *pgxpool.Pool, a *audit.Service) *Service {
+	return &Service{pool: pool, audit: a}
+}
+
+type CreateInput struct {
+	PlatformID    uuid.UUID
+	PartnerID     uuid.UUID
+	TenantID      uuid.UUID
+	EngagementID  *uuid.UUID
+	AssetType     string
+	Name          string
+	Value         string
+	Plane         string
+	Criticality   string
+	Owner         string
+	Environment   string
+	CloudProvider string
+	Tags          []string
+	Metadata      map[string]any
+	DiscoveredVia string
+	CreatedBy     *uuid.UUID
+}
+
+func (s *Service) Create(ctx context.Context, in CreateInput) (*models.Asset, error) {
+	if in.AssetType == "" || in.Value == "" {
+		return nil, errors.New("assets: type and value required")
+	}
+	if !validType(in.AssetType) {
+		return nil, fmt.Errorf("assets: unsupported asset_type %q", in.AssetType)
+	}
+	if in.Criticality == "" {
+		in.Criticality = "unknown"
+	}
+	if in.Plane == "" {
+		in.Plane = "external"
+	}
+	if in.DiscoveredVia == "" {
+		in.DiscoveredVia = "manual"
+	}
+	if in.Name == "" {
+		in.Name = in.Value
+	}
+	tagsJSON, _ := json.Marshal(in.Tags)
+	metaJSON, _ := json.Marshal(in.Metadata)
+	a := &models.Asset{
+		ID: uuid.New(), PlatformID: in.PlatformID, PartnerID: in.PartnerID,
+		TenantID: in.TenantID, EngagementID: in.EngagementID,
+		AssetType: in.AssetType, Name: in.Name, Value: in.Value,
+		Plane: in.Plane, Criticality: in.Criticality, Owner: in.Owner,
+		Environment: in.Environment, CloudProvider: in.CloudProvider,
+		Tags: in.Tags, Metadata: in.Metadata, DiscoveredVia: in.DiscoveredVia,
+	}
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO assets(id, platform_id, partner_id, tenant_id, engagement_id,
+		    asset_type, name, value, plane, criticality, owner, environment, cloud_provider,
+		    tags, metadata, discovered_via, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		RETURNING first_seen, last_seen, created_at`,
+		a.ID, a.PlatformID, a.PartnerID, a.TenantID, a.EngagementID,
+		a.AssetType, a.Name, a.Value, a.Plane, a.Criticality,
+		nullIfEmpty(a.Owner), nullIfEmpty(a.Environment), nullIfEmpty(a.CloudProvider),
+		tagsJSON, metaJSON, a.DiscoveredVia, in.CreatedBy,
+	).Scan(&a.FirstSeen, &a.LastSeen, &a.CreatedAt)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
+		// Idempotent upsert: bump last_seen, return existing.
+		return s.touchExisting(ctx, in.TenantID, in.AssetType, in.Value)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("assets: insert: %w", err)
+	}
+	_ = s.audit.Record(ctx, audit.Entry{
+		PlatformID: a.PlatformID, PartnerID: &a.PartnerID, TenantID: &a.TenantID,
+		ActorID: in.CreatedBy, Event: "asset.created",
+		TargetType: "asset", TargetID: a.ID.String(),
+		Payload: map[string]any{"type": a.AssetType, "value": a.Value},
+	})
+	return a, nil
+}
+
+func (s *Service) touchExisting(ctx context.Context, tenant uuid.UUID, t, v string) (*models.Asset, error) {
+	a := &models.Asset{}
+	var tagsJSON, metaJSON []byte
+	var owner, env, cloud *string
+	err := s.pool.QueryRow(ctx, `
+		UPDATE assets SET last_seen=now()
+		 WHERE tenant_id=$1 AND asset_type=$2 AND value=$3
+		 RETURNING id, platform_id, partner_id, tenant_id, engagement_id, asset_type,
+		           name, value, plane, criticality, owner, environment, cloud_provider,
+		           tags, metadata, discovered_via, first_seen, last_seen, created_at`,
+		tenant, t, v).
+		Scan(&a.ID, &a.PlatformID, &a.PartnerID, &a.TenantID, &a.EngagementID,
+			&a.AssetType, &a.Name, &a.Value, &a.Plane, &a.Criticality,
+			&owner, &env, &cloud, &tagsJSON, &metaJSON, &a.DiscoveredVia,
+			&a.FirstSeen, &a.LastSeen, &a.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if owner != nil {
+		a.Owner = *owner
+	}
+	if env != nil {
+		a.Environment = *env
+	}
+	if cloud != nil {
+		a.CloudProvider = *cloud
+	}
+	_ = json.Unmarshal(tagsJSON, &a.Tags)
+	_ = json.Unmarshal(metaJSON, &a.Metadata)
+	return a, nil
+}
+
+type ListFilter struct {
+	TenantID     uuid.UUID
+	EngagementID *uuid.UUID
+	AssetType    string
+	Plane        string
+	Criticality  string
+	Search       string
+	Limit, Offset int
+}
+
+func (s *Service) List(ctx context.Context, f ListFilter) ([]models.Asset, error) {
+	if f.Limit <= 0 || f.Limit > 1000 {
+		f.Limit = 100
+	}
+	args := []any{f.TenantID}
+	q := `SELECT id, platform_id, partner_id, tenant_id, engagement_id, asset_type,
+	             name, value, plane, criticality, COALESCE(owner,''), COALESCE(environment,''),
+	             COALESCE(cloud_provider,''), tags, metadata, discovered_via,
+	             first_seen, last_seen, created_at
+	        FROM assets
+	       WHERE tenant_id=$1`
+	if f.EngagementID != nil {
+		q += fmt.Sprintf(" AND engagement_id=$%d", len(args)+1)
+		args = append(args, *f.EngagementID)
+	}
+	if f.AssetType != "" {
+		q += fmt.Sprintf(" AND asset_type=$%d", len(args)+1)
+		args = append(args, f.AssetType)
+	}
+	if f.Plane != "" {
+		q += fmt.Sprintf(" AND plane=$%d", len(args)+1)
+		args = append(args, f.Plane)
+	}
+	if f.Criticality != "" {
+		q += fmt.Sprintf(" AND criticality=$%d", len(args)+1)
+		args = append(args, f.Criticality)
+	}
+	if f.Search != "" {
+		q += fmt.Sprintf(" AND (value ILIKE $%d OR name ILIKE $%d)", len(args)+1, len(args)+1)
+		args = append(args, "%"+f.Search+"%")
+	}
+	q += fmt.Sprintf(" ORDER BY last_seen DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
+	args = append(args, f.Limit, f.Offset)
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.Asset{}
+	for rows.Next() {
+		var a models.Asset
+		var tagsJSON, metaJSON []byte
+		if err := rows.Scan(&a.ID, &a.PlatformID, &a.PartnerID, &a.TenantID, &a.EngagementID,
+			&a.AssetType, &a.Name, &a.Value, &a.Plane, &a.Criticality,
+			&a.Owner, &a.Environment, &a.CloudProvider, &tagsJSON, &metaJSON,
+			&a.DiscoveredVia, &a.FirstSeen, &a.LastSeen, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(tagsJSON, &a.Tags)
+		_ = json.Unmarshal(metaJSON, &a.Metadata)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ImportCSV reads a CSV with headers asset_type,value,name,plane,criticality
+// and creates / refreshes assets for the tenant.
+func (s *Service) ImportCSV(ctx context.Context, in CreateInput, body io.Reader) (created, updated int, err error) {
+	r := csv.NewReader(body)
+	r.TrimLeadingSpace = true
+	header, err := r.Read()
+	if err != nil {
+		return 0, 0, fmt.Errorf("assets: csv header: %w", err)
+	}
+	idx := map[string]int{}
+	for i, h := range header {
+		idx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+	required := []string{"asset_type", "value"}
+	for _, k := range required {
+		if _, ok := idx[k]; !ok {
+			return 0, 0, fmt.Errorf("assets: csv missing column %q", k)
+		}
+	}
+	for {
+		row, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return created, updated, err
+		}
+		ci := in
+		ci.AssetType = row[idx["asset_type"]]
+		ci.Value = row[idx["value"]]
+		if i, ok := idx["name"]; ok {
+			ci.Name = row[i]
+		}
+		if i, ok := idx["plane"]; ok {
+			ci.Plane = row[i]
+		}
+		if i, ok := idx["criticality"]; ok {
+			ci.Criticality = row[i]
+		}
+		if i, ok := idx["owner"]; ok {
+			ci.Owner = row[i]
+		}
+		if i, ok := idx["environment"]; ok {
+			ci.Environment = row[i]
+		}
+		ci.DiscoveredVia = "csv"
+		_, err = s.Create(ctx, ci)
+		if err != nil {
+			return created, updated, err
+		}
+		created++
+	}
+	return created, 0, nil
+}
+
+func validType(t string) bool {
+	for _, v := range models.AssetTypes {
+		if v == t {
+			return true
+		}
+	}
+	return false
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// rowsTime is a helper kept for compatibility.
+var _ = pgx.ErrNoRows
+var _ = time.Time{}

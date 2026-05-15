@@ -1,0 +1,140 @@
+// Package tenants implements the multi-tenant CRUD layer (Blueprint §9).
+package tenants
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/zaishield/vaultscan/backend/internal/audit"
+	"github.com/zaishield/vaultscan/backend/internal/eventbus"
+	"github.com/zaishield/vaultscan/backend/internal/models"
+)
+
+type Service struct {
+	pool  *pgxpool.Pool
+	audit *audit.Service
+	bus   *eventbus.Bus
+}
+
+func New(pool *pgxpool.Pool, a *audit.Service, b *eventbus.Bus) *Service {
+	return &Service{pool: pool, audit: a, bus: b}
+}
+
+type CreateInput struct {
+	PlatformID    uuid.UUID
+	PartnerID     uuid.UUID
+	Name          string
+	Slug          string
+	IsolationMode string
+}
+
+func (s *Service) Create(ctx context.Context, actor *uuid.UUID, in CreateInput) (*models.Tenant, error) {
+	if in.Name == "" || in.Slug == "" {
+		return nil, errors.New("tenants: name and slug required")
+	}
+	if in.IsolationMode == "" {
+		in.IsolationMode = "shared"
+	}
+	t := &models.Tenant{
+		ID:            uuid.New(),
+		PlatformID:    in.PlatformID,
+		PartnerID:     in.PartnerID,
+		Name:          in.Name,
+		Slug:          in.Slug,
+		Status:        "active",
+		IsolationMode: in.IsolationMode,
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO tenants(id, platform_id, partner_id, name, slug, status, isolation_mode)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		RETURNING created_at`,
+		t.ID, t.PlatformID, t.PartnerID, t.Name, t.Slug, t.Status, t.IsolationMode,
+	).Scan(&t.CreatedAt); err != nil {
+		return nil, fmt.Errorf("tenants: insert: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO tenant_settings(tenant_id) VALUES ($1)`, t.ID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO partner_customer_mapping(partner_id, tenant_id) VALUES ($1,$2)
+		 ON CONFLICT DO NOTHING`, t.PartnerID, t.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	_ = s.audit.Record(ctx, audit.Entry{
+		PlatformID: t.PlatformID, PartnerID: &t.PartnerID, TenantID: &t.ID,
+		ActorID: actor, Event: audit.EventTenantCreated,
+		TargetType: "tenant", TargetID: t.ID.String(),
+		Payload: map[string]any{"name": t.Name, "slug": t.Slug},
+	})
+	_ = s.bus.Publish(ctx, eventbus.Event{
+		Type: eventbus.TenantCreated, TenantID: &t.ID, PartnerID: &t.PartnerID,
+		ActorID: actor, Payload: map[string]any{"slug": t.Slug, "name": t.Name},
+	})
+	return t, nil
+}
+
+func (s *Service) Get(ctx context.Context, id uuid.UUID) (*models.Tenant, error) {
+	t := &models.Tenant{}
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, platform_id, partner_id, name, slug, status, isolation_mode, created_at
+		  FROM tenants WHERE id=$1`, id).
+		Scan(&t.ID, &t.PlatformID, &t.PartnerID, &t.Name, &t.Slug, &t.Status,
+			&t.IsolationMode, &t.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return t, err
+}
+
+type ListFilter struct {
+	PlatformID uuid.UUID
+	PartnerID  *uuid.UUID
+	Limit      int
+	Offset     int
+}
+
+func (s *Service) List(ctx context.Context, f ListFilter) ([]models.Tenant, error) {
+	if f.Limit <= 0 || f.Limit > 500 {
+		f.Limit = 100
+	}
+	args := []any{f.PlatformID, f.Limit, f.Offset}
+	q := `SELECT id, platform_id, partner_id, name, slug, status, isolation_mode, created_at
+	        FROM tenants WHERE platform_id=$1`
+	if f.PartnerID != nil {
+		q += " AND partner_id=$4"
+		args = append(args, *f.PartnerID)
+	}
+	q += " ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Tenant
+	for rows.Next() {
+		var t models.Tenant
+		if err := rows.Scan(&t.ID, &t.PlatformID, &t.PartnerID, &t.Name,
+			&t.Slug, &t.Status, &t.IsolationMode, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+var ErrNotFound = errors.New("tenant not found")

@@ -1,0 +1,237 @@
+// Package api wires services to HTTP routes per Blueprint §21.
+package api
+
+import (
+	"context"
+	"errors"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	chiware "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
+
+	"github.com/zaishield/vaultscan/backend/internal/agents"
+	"github.com/zaishield/vaultscan/backend/internal/assets"
+	"github.com/zaishield/vaultscan/backend/internal/audit"
+	"github.com/zaishield/vaultscan/backend/internal/auth"
+	"github.com/zaishield/vaultscan/backend/internal/authdocs"
+	"github.com/zaishield/vaultscan/backend/internal/branding"
+	"github.com/zaishield/vaultscan/backend/internal/config"
+	"github.com/zaishield/vaultscan/backend/internal/dashboards"
+	"github.com/zaishield/vaultscan/backend/internal/engagements"
+	"github.com/zaishield/vaultscan/backend/internal/eventbus"
+	"github.com/zaishield/vaultscan/backend/internal/evidence"
+	"github.com/zaishield/vaultscan/backend/internal/findings"
+	"github.com/zaishield/vaultscan/backend/internal/integrations"
+	"github.com/zaishield/vaultscan/backend/internal/middleware"
+	"github.com/zaishield/vaultscan/backend/internal/partners"
+	"github.com/zaishield/vaultscan/backend/internal/reporting"
+	"github.com/zaishield/vaultscan/backend/internal/retesting"
+	"github.com/zaishield/vaultscan/backend/internal/scanorch"
+	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
+	"github.com/zaishield/vaultscan/backend/internal/tenants"
+)
+
+// Services aggregates everything the API server needs.
+type Services struct {
+	Pool         *pgxpool.Pool
+	Cfg          *config.Config
+	Log          zerolog.Logger
+	Verifier     *auth.Verifier
+	Audit        *audit.Service
+	Bus          *eventbus.Bus
+	Branding     *branding.Service
+	Tenants      *tenants.Service
+	Partners     *partners.Service
+	Engagements  *engagements.Service
+	AuthDocs     *authdocs.Service
+	Assets       *assets.Service
+	Scope        *scopeguard.Service
+	ScanOrch     *scanorch.Orchestrator
+	Agents       *agents.Service
+	Findings     *findings.Service
+	Vault        *evidence.Vault
+	Retests      *retesting.Service
+	Reports      *reporting.Service
+	Integrations *integrations.Service
+	Dashboards   *dashboards.Service
+}
+
+// Mount returns a fully wired HTTP router.
+func Mount(s *Services) http.Handler {
+	r := chi.NewRouter()
+	r.Use(chiware.Recoverer)
+	r.Use(middleware.RequestID())
+	r.Use(middleware.SecurityHeaders())
+
+	cors := cors.New(cors.Options{
+		AllowedOrigins:   s.Cfg.CORSAllowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Tenant-Id", "X-Request-Id"},
+		ExposedHeaders:   []string{"X-Request-Id"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	})
+	r.Use(cors.Handler)
+
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	})
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*1e9)
+		defer cancel()
+		if err := s.Pool.Ping(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "db down", "err": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})
+	})
+
+	// Public branding endpoint (Blueprint §8.5)
+	r.Get("/api/v1/branding", brandingByDomain(s))
+	r.Post("/api/v1/auth/dev-token", devToken(s))
+
+	// All authenticated endpoints
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Auth(func(req *http.Request) (*auth.Identity, error) {
+			tok := req.Header.Get("Authorization")
+			if tok == "" {
+				return nil, errors.New("missing Authorization header")
+			}
+			return s.Verifier.Parse(req.Context(), tok)
+		}))
+		r.Use(middleware.TenantScope("X-Tenant-Id"))
+		rl := middleware.NewRateLimit(s.Cfg.RateLimitRPS)
+		r.Use(rl.Middleware())
+
+		// Tenants
+		r.Route("/api/v1/tenants", func(r chi.Router) {
+			r.With(middleware.RequirePermission("create_tenant")).
+				Post("/", createTenant(s))
+			r.Get("/", listTenants(s))
+			r.Get("/{tenant_id}", getTenant(s))
+		})
+		// Partners
+		r.Route("/api/v1/partners", func(r chi.Router) {
+			r.With(middleware.RequirePermission("create_partner")).
+				Post("/", createPartner(s))
+			r.Get("/", listPartners(s))
+			r.Get("/{partner_id}", getPartner(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Put("/{partner_id}/branding", updateBranding(s))
+			r.Get("/{partner_id}/hierarchy/tenant/{tenant_id}", hierarchyForTenant(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Post("/{partner_id}/domains", addPartnerDomain(s))
+		})
+
+		// Engagements + Scope + Authorization
+		r.Route("/api/v1/engagements", func(r chi.Router) {
+			r.With(middleware.RequirePermission("create_engagement")).
+				Post("/", createEngagement(s))
+			r.Get("/{engagement_id}", getEngagement(s))
+			r.Get("/", listEngagements(s))
+			r.With(middleware.RequirePermission("approve_scope")).
+				Post("/{engagement_id}/activate", activateEngagement(s))
+		})
+		r.Route("/api/v1/scope", func(r chi.Router) {
+			r.With(middleware.RequirePermission("create_engagement")).
+				Post("/", addScope(s))
+			r.Get("/{engagement_id}", listScope(s))
+			r.With(middleware.RequirePermission("approve_scope")).
+				Post("/{scope_id}/approve", approveScope(s))
+		})
+		r.Route("/api/v1/authorization", func(r chi.Router) {
+			r.With(middleware.RequirePermission("upload_authorization")).
+				Post("/{engagement_id}", uploadAuthDoc(s))
+		})
+
+		// Assets
+		r.Route("/api/v1/assets", func(r chi.Router) {
+			r.Post("/", createAsset(s))
+			r.Get("/", listAssets(s))
+			r.Post("/import-csv", importAssetsCSV(s))
+		})
+
+		// Scans
+		r.Route("/api/v1/scans", func(r chi.Router) {
+			r.Get("/profiles", listScanProfiles(s))
+			r.With(middleware.RequirePermission("create_scan_job")).
+				Post("/external", submitExternalScan(s))
+			r.With(middleware.RequirePermission("create_scan_job")).
+				Post("/internal", submitInternalScan(s))
+			r.Get("/{scan_id}", getScan(s))
+			r.Get("/", listScans(s))
+			r.With(middleware.RequirePermission("approve_aggressive_scan")).
+				Post("/{scan_id}/approve", approveScan(s))
+			r.With(middleware.RequirePermission("trigger_emergency_stop")).
+				Post("/emergency-stop", emergencyStop(s))
+		})
+
+		// Agents
+		r.Route("/api/v1/agents", func(r chi.Router) {
+			r.With(middleware.RequirePermission("manage_agents")).
+				Post("/", provisionAgent(s))
+			r.Get("/", listAgents(s))
+			r.Get("/{agent_id}", getAgent(s))
+			r.Get("/{agent_id}/policy", getAgentPolicy(s))
+			r.With(middleware.RequirePermission("manage_agents")).
+				Put("/{agent_id}/policy", updateAgentPolicy(s))
+		})
+
+		// Findings
+		r.Route("/api/v1/findings", func(r chi.Router) {
+			r.Get("/", listFindings(s))
+			r.Get("/{finding_id}", getFinding(s))
+			r.With(middleware.RequirePermission("edit_findings")).
+				Patch("/{finding_id}", patchFinding(s))
+		})
+
+		// Evidence
+		r.Route("/api/v1/evidence", func(r chi.Router) {
+			r.With(middleware.RequirePermission("download_evidence"), middleware.RequireMFA()).
+				Get("/{evidence_id}", evidenceMeta(s))
+			r.With(middleware.RequirePermission("download_evidence"), middleware.RequireMFA()).
+				Get("/{evidence_id}/url", signedDownloadURL(s))
+			r.Get("/{evidence_id}/download", downloadEvidence(s))
+		})
+
+		// Retesting
+		r.Route("/api/v1/retests", func(r chi.Router) {
+			r.With(middleware.RequirePermission("request_retest")).
+				Post("/", requestRetest(s))
+			r.With(middleware.RequirePermission("execute_retest")).
+				Post("/{retest_id}/result", recordRetestResult(s))
+			r.Get("/findings/{finding_id}", listRetestsForFinding(s))
+		})
+
+		// Reports
+		r.Route("/api/v1/reports", func(r chi.Router) {
+			r.With(middleware.RequirePermission("generate_report")).
+				Post("/", generateReport(s))
+			r.Get("/{report_id}", getReport(s))
+		})
+
+		// Integrations
+		r.Route("/api/v1/integrations", func(r chi.Router) {
+			r.Get("/", listIntegrations(s))
+			r.Post("/{type}", createIntegration(s))
+		})
+
+		// Dashboards
+		r.Route("/api/v1/dashboards", func(r chi.Router) {
+			r.Get("/executive", execDashboard(s))
+			r.Get("/technical", techDashboard(s))
+			r.Get("/partner", partnerDashboard(s))
+		})
+
+		// Audit
+		r.Route("/api/v1/audit", func(r chi.Router) {
+			r.With(middleware.RequirePermission("view_audit_logs")).Get("/", listAudit(s))
+			r.With(middleware.RequirePermission("view_audit_logs")).Get("/verify", verifyAudit(s))
+		})
+	})
+
+	return r
+}

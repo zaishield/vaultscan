@@ -1,0 +1,205 @@
+// Package audit provides hash-chained, append-only audit logging.
+//
+// Blueprint §32 requires immutable, tenant-scoped, exportable, SIEM-forwardable
+// audit records. Each row hashes the prior row so any in-place modification is
+// detectable.
+package audit
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"net"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Event types listed in Blueprint §32.1 (30+ entries) plus operational extras.
+const (
+	EventLoginSuccess          = "auth.login.success"
+	EventLoginFailed           = "auth.login.failed"
+	EventLogout                = "auth.logout"
+	EventMFAChanged            = "auth.mfa.changed"
+	EventUserCreated           = "user.created"
+	EventRoleChanged           = "user.role.changed"
+	EventPartnerCreated        = "partner.created"
+	EventBrandingChanged       = "partner.branding.changed"
+	EventTenantCreated         = "tenant.created"
+	EventScopeAdded            = "scope.added"
+	EventScopeApproved         = "scope.approved"
+	EventAuthorizationUploaded = "authorization.uploaded"
+	EventScanCreated           = "scan.created"
+	EventScanApproved          = "scan.approved"
+	EventScanStarted           = "scan.started"
+	EventScanStopped           = "scan.stopped"
+	EventScanCompleted         = "scan.completed"
+	EventEmergencyStop         = "scan.emergency_stop"
+	EventFindingEdited         = "finding.edited"
+	EventFindingAccepted       = "finding.accepted"
+	EventFindingFalsePositive  = "finding.false_positive"
+	EventReportGenerated       = "report.generated"
+	EventReportDownloaded      = "report.downloaded"
+	EventEvidenceViewed        = "evidence.viewed"
+	EventEvidenceDownloaded    = "evidence.downloaded"
+	EventEvidenceUploaded      = "evidence.uploaded"
+	EventAgentEnrolled         = "agent.enrolled"
+	EventAgentDisconnected     = "agent.disconnected"
+	EventAgentCertRotated      = "agent.cert.rotated"
+	EventScopeGuardDecision    = "scopeguard.decision"
+	EventIntegrationCreated    = "integration.created"
+	EventRetestRequested       = "retest.requested"
+	EventRetestPassed          = "retest.passed"
+	EventRetestFailed          = "retest.failed"
+)
+
+type Service struct {
+	pool *pgxpool.Pool
+}
+
+func New(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+
+type Entry struct {
+	PlatformID uuid.UUID
+	PartnerID  *uuid.UUID
+	TenantID   *uuid.UUID
+	ActorID    *uuid.UUID
+	ActorType  string // user | service | agent | system
+	Event      string
+	TargetType string
+	TargetID   string
+	Payload    map[string]any
+	IP         net.IP
+	UserAgent  string
+}
+
+// Record appends a hash-chained entry. If anything fails, the call returns
+// the error - callers should treat audit-failure as a hard error.
+func (s *Service) Record(ctx context.Context, e Entry) error {
+	if e.ActorType == "" {
+		e.ActorType = "user"
+	}
+	if e.PlatformID == uuid.Nil {
+		return fmt.Errorf("audit: platform_id required")
+	}
+	payload, err := json.Marshal(e.Payload)
+	if err != nil {
+		return fmt.Errorf("audit: marshal payload: %w", err)
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var prev []byte
+	if err := tx.QueryRow(ctx,
+		`SELECT chain_hash FROM audit_logs ORDER BY id DESC LIMIT 1`).Scan(&prev); err != nil && err.Error() != "no rows in result set" {
+		// fresh table: prev stays nil
+	}
+
+	h := sha256.New()
+	if prev != nil {
+		h.Write(prev)
+	}
+	fmt.Fprintf(h, "%s|%s|%s|%v|%v|%v|%s|%s",
+		e.Event, e.ActorType, e.IP.String(),
+		e.PlatformID, e.PartnerID, e.TenantID,
+		e.TargetType, e.TargetID)
+	h.Write(payload)
+	hash := h.Sum(nil)
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO audit_logs(platform_id, partner_id, tenant_id, actor_id,
+		                       actor_type, event, target_type, target_id,
+		                       payload, ip, user_agent, chain_prev, chain_hash)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		e.PlatformID, e.PartnerID, e.TenantID, e.ActorID,
+		e.ActorType, e.Event, e.TargetType, e.TargetID,
+		payload, ipOrNull(e.IP), nullIfEmpty(e.UserAgent), prev, hash,
+	)
+	if err != nil {
+		return fmt.Errorf("audit: insert: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// Verify recomputes the hash chain and returns the row id of the first
+// inconsistency, or 0 if the chain is intact.
+func (s *Service) Verify(ctx context.Context) (int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, event, actor_type, ip, platform_id, partner_id, tenant_id,
+		       target_type, target_id, payload, chain_prev, chain_hash
+		  FROM audit_logs ORDER BY id ASC`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var prev []byte
+	for rows.Next() {
+		var (
+			id              int64
+			event, actor    string
+			ipStr           *string
+			platID          uuid.UUID
+			partID, tenID   *uuid.UUID
+			tType, tID      *string
+			payload         []byte
+			chainPrev, hash []byte
+		)
+		if err := rows.Scan(&id, &event, &actor, &ipStr, &platID, &partID, &tenID,
+			&tType, &tID, &payload, &chainPrev, &hash); err != nil {
+			return 0, err
+		}
+		h := sha256.New()
+		if prev != nil {
+			h.Write(prev)
+		}
+		fmt.Fprintf(h, "%s|%s|%s|%v|%v|%v|%s|%s",
+			event, actor, derefStr(ipStr),
+			platID, partID, tenID,
+			derefStr(tType), derefStr(tID))
+		h.Write(payload)
+		expect := h.Sum(nil)
+		if !equal(expect, hash) {
+			return id, nil
+		}
+		prev = hash
+	}
+	return 0, rows.Err()
+}
+
+func ipOrNull(ip net.IP) any {
+	if ip == nil {
+		return nil
+	}
+	return ip.String()
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func equal(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
