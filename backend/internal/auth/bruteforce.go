@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 // BruteforceShield records login failures per IP and locks the IP once a
@@ -41,6 +43,7 @@ func (b *BruteforceShield) RecordFailure(ctx context.Context, ip net.IP, email s
 	if ip == nil {
 		return false, nil
 	}
+	observability.AuthLoginFailures.Inc()
 	if _, err := b.pool.Exec(ctx, `
 		INSERT INTO auth_ip_failures(ip, email) VALUES ($1::inet, $2)`,
 		ip.String(), nullIfEmpty(email)); err != nil {
@@ -65,6 +68,9 @@ func (b *BruteforceShield) RecordFailure(ctx context.Context, ip net.IP, email s
 		       locked_at    = now()`,
 		ip.String(), time.Now().UTC().Add(b.LockFor),
 		"failures="+itoa(count)+" within "+b.Window.String())
+	if err == nil {
+		observability.AuthIPLockouts.Inc()
+	}
 	return true, err
 }
 

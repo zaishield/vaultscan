@@ -17,6 +17,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 	"github.com/zaishield/vaultscan/backend/internal/parsers"
 	"github.com/zaishield/vaultscan/backend/internal/scanorch"
 )
@@ -279,6 +280,8 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 		w.log.Warn().Err(err).Msg("mark succeeded")
 		return
 	}
+	// Worker only claims plane='external' jobs (see claimNext).
+	observability.ScanJobsCompleted.WithLabelValues("external", "succeeded").Inc()
 	_ = w.audit.Record(ctx, audit.Entry{
 		PlatformID: j.PlatformID, PartnerID: &j.PartnerID, TenantID: &j.TenantID,
 		ActorType: "service", Event: audit.EventScanCompleted,
@@ -294,6 +297,7 @@ func (w *Worker) failJob(ctx context.Context, j *claimedJob, reason string) {
 		UPDATE scan_jobs SET status='failed', completed_at=now(), updated_at=now(),
 		                     cancellation_reason=$2
 		 WHERE id=$1`, j.ID, base64.StdEncoding.EncodeToString([]byte(reason)))
+	observability.ScanJobsCompleted.WithLabelValues("external", "failed").Inc()
 	_ = w.audit.Record(ctx, audit.Entry{
 		PlatformID: j.PlatformID, PartnerID: &j.PartnerID, TenantID: &j.TenantID,
 		ActorType: "service", Event: audit.EventScanStopped,

@@ -21,6 +21,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/models"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 type Service struct {
@@ -166,6 +167,11 @@ func (s *Service) Upsert(ctx context.Context, in IngestInput) (*models.Finding, 
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, err
+	}
+	if isNew {
+		observability.FindingsIngested.WithLabelValues(in.Scanner, in.Severity).Inc()
+	} else {
+		observability.FindingsDeduplicated.Inc()
 	}
 	// VS-07: stamp the override audit trail + attach the similarity cluster
 	// + evaluate suppression rules. Each one short-circuits cleanly on no-op.

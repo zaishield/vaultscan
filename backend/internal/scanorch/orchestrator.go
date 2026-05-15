@@ -24,6 +24,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/models"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
 )
 
@@ -186,6 +187,7 @@ func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.Scan
 		ActorID: in.RequestedBy,
 		Payload: map[string]any{"scan_job_id": job.ID, "profile": prof.Code, "plane": job.Plane},
 	})
+	observability.ScanJobsCreated.WithLabelValues(job.Plane).Inc()
 
 	if !job.RequiresApproval {
 		// Approve flips DB state to 'dispatched' but our in-memory `job`
@@ -241,8 +243,14 @@ func (o *Orchestrator) Approve(ctx context.Context, jobID uuid.UUID, actor *uuid
 }
 
 // EmergencyStop transitions all running jobs (or one job) to stopped state and
-// emits the EmergencyStopTriggered event.
+// emits the EmergencyStopTriggered event. Records the wall-time latency
+// from start-of-call to last-row-processed into the EmergencyStopSLAms
+// histogram so we can alert on §11.6's 30-second SLO.
 func (o *Orchestrator) EmergencyStop(ctx context.Context, actor *uuid.UUID, scope EmergencyScope) (int, error) {
+	start := time.Now()
+	defer func() {
+		observability.EmergencyStopSLAms.Observe(float64(time.Since(start).Milliseconds()))
+	}()
 	var args []any
 	q := `UPDATE scan_jobs SET status='stopped', cancellation_reason=$1, updated_at=now()
 	       WHERE status IN ('pending','approved','dispatched','running')`
@@ -281,6 +289,11 @@ func (o *Orchestrator) EmergencyStop(ctx context.Context, actor *uuid.UUID, scop
 			Type: eventbus.EmergencyStopTriggered, TenantID: &tenantID, PartnerID: &partnerID,
 			ActorID: actor, Payload: map[string]any{"scan_job_id": id},
 		})
+		// Stopped jobs count as completed (with status=stopped).
+		// We don't know the plane at this point without an extra column
+		// scan; use "unknown" rather than 0 — operators can filter by
+		// status="stopped" and tolerate the small label cardinality cost.
+		observability.ScanJobsCompleted.WithLabelValues("unknown", "stopped").Inc()
 	}
 	return count, rows.Err()
 }

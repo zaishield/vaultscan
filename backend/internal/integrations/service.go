@@ -22,6 +22,7 @@ import (
 
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 type Service struct {
@@ -359,6 +360,7 @@ func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, n
 		delay *= 2
 	}
 	s.recordDelivery(ctx, integrationID, ev, attempt, "failed", 0, "max attempts reached")
+	observability.IntegrationDeliveryFailures.WithLabelValues(itype).Inc()
 	// VS-11: send the event to the dead-letter queue so an operator can
 	// inspect + replay later. We pull the last status row to capture the
 	// final HTTP code (if any).

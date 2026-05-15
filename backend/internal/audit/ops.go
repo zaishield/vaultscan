@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 // ---------------- Deep chain verification ----------------------------------
@@ -97,6 +99,7 @@ func (s *Service) VerifyDeep(ctx context.Context) (*VerifyResult, error) {
 		_, _ = s.pool.Exec(ctx, `
 			INSERT INTO audit_chain_breaks(first_bad_id, last_good_id, detail)
 			VALUES ($1, $2, $3)`, firstBad, lastGood, detail)
+		observability.AuditChainBreaks.Inc()
 	}
 	return res, nil
 }
