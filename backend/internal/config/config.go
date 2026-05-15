@@ -41,6 +41,11 @@ type Config struct {
 
 	ScannerImageRegistry string
 
+	// APIPublicURLValue is the externally-reachable URL of the API service,
+	// used by sibling services (scanner-worker, analytics-worker) to fetch
+	// the orchestrator public key.
+	APIPublicURLValue string
+
 	BrandingDefault    string  // partner slug treated as the default if no domain matches
 	CORSAllowedOrigins []string
 
@@ -76,6 +81,7 @@ func Load() (*Config, error) {
 			"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA="),
 		EvidenceURLTTL:       parseDuration("VAULTSCAN_EVIDENCE_URL_TTL", 5*time.Minute),
 		ScannerImageRegistry: getenv("VAULTSCAN_SCANNER_REGISTRY", "registry.zaishield.com/vaultscan/scanners"),
+		APIPublicURLValue:    getenv("VAULTSCAN_API_PUBLIC_URL", "http://api:8080"),
 		BrandingDefault:      getenv("VAULTSCAN_BRANDING_DEFAULT", "zaishield-direct"),
 		CORSAllowedOrigins:   splitList(getenv("VAULTSCAN_CORS_ALLOWED_ORIGINS",
 			"http://localhost:5173,http://localhost:3000")),
@@ -86,6 +92,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("VAULTSCAN_DATABASE_URL is required")
 	}
 	return c, nil
+}
+
+// APIPublicURL returns the externally-reachable API URL, with the trailing
+// slash trimmed so callers can append paths directly.
+func (c *Config) APIPublicURL() string {
+	return strings.TrimRight(c.APIPublicURLValue, "/")
 }
 
 func getenv(k, def string) string {

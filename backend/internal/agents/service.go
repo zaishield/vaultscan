@@ -363,6 +363,24 @@ func (s *Service) UpdatePolicy(ctx context.Context, agentID uuid.UUID, p models.
 	return err
 }
 
+// IssueRotationToken creates a fresh enrollment token bound to an existing
+// agent. Used by /api/v1/agents/{id}/rotate-cert so the operator doesn't have
+// to re-provision the entire agent record.
+func IssueRotationToken(ctx context.Context, pool *pgxpool.Pool, agentID uuid.UUID, issuedBy *uuid.UUID) (string, error) {
+	raw := newToken()
+	hash, err := bcrypt.GenerateFromPassword([]byte(raw), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agent_enrollment_tokens(agent_id, token_hash, issued_by, expires_at)
+		VALUES ($1, $2, $3, now() + INTERVAL '24 hours')`,
+		agentID, string(hash), issuedBy); err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
 func newToken() string {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)

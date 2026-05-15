@@ -184,6 +184,26 @@ services:
     ports: ["${VAULTSCAN_PORTAL_PORT:-5173}:80"]
     depends_on: [api]
 
+  # External scanner worker (Blueprint §12). Polls dispatched external scan
+  # jobs for its region, verifies the cloud signature + image digest, runs
+  # the tool, ingests parsed findings, and reports status. One per region in
+  # production; here we run a single AE-region worker for the demo.
+  scanner-worker:
+    build:
+      context: ../..
+      dockerfile: infra/compose/scanner-worker.Dockerfile
+    image: vaultscan-scanner-worker:dev
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+      VAULTSCAN_SCANNER_REGION: ae
+      VAULTSCAN_API_PUBLIC_URL: http://api:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
   # OpenSearch indexer that mirrors authoritative Postgres records into the
   # analytics index family (Blueprint §26.4). Runs separately from the API so
   # OpenSearch backpressure can't affect the user-facing path.

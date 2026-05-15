@@ -61,6 +61,7 @@ type harness struct {
 	assets      *assets.Service
 	scope       *scopeguard.Service
 	scanorch    *scanorch.Orchestrator
+	signer      *scanorch.Signer
 	agents      *agents.Service
 	findings    *findings.Service
 	vault       *evidence.Vault
@@ -149,7 +150,7 @@ func bootHarness(dsn string) (*harness, func(), error) {
 	h := &harness{
 		pool: pool.Pool, audit: auditSvc, bus: bus, branding: brand,
 		tenants: tenSvc, engagements: engSvc, authdocs: docSvc, assets: assetSvc,
-		scope: scope, scanorch: orch, agents: agentSvc, findings: findSvc,
+		scope: scope, scanorch: orch, signer: signer, agents: agentSvc, findings: findSvc,
 		vault: vault,
 	}
 	cleanup := func() {

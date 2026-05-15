@@ -50,6 +50,7 @@ type Services struct {
 	Assets       *assets.Service
 	Scope        *scopeguard.Service
 	ScanOrch     *scanorch.Orchestrator
+	Signer       *scanorch.Signer  // exposed so /api/v1/orchestrator/public-key can serve PEM
 	Agents       *agents.Service
 	Findings     *findings.Service
 	Vault        *evidence.Vault
@@ -92,6 +93,12 @@ func Mount(s *Services) http.Handler {
 	// Public branding endpoint (Blueprint §8.5)
 	r.Get("/api/v1/branding", brandingByDomain(s))
 	r.Post("/api/v1/auth/dev-token", devToken(s))
+
+	// Public cloud public key. Scanner workers and internal agents fetch
+	// this on bootstrap to verify per-job signatures (Blueprint §11.3,
+	// §13.5). The endpoint is read-only and serves a PEM-encoded
+	// SubjectPublicKeyInfo so callers can validate without any client.
+	r.Get("/api/v1/orchestrator/public-key", orchestratorPublicKey(s))
 
 	// All authenticated endpoints
 	r.Group(func(r chi.Router) {
@@ -178,6 +185,12 @@ func Mount(s *Services) http.Handler {
 			r.Get("/{agent_id}/policy", getAgentPolicy(s))
 			r.With(middleware.RequirePermission("manage_agents")).
 				Put("/{agent_id}/policy", updateAgentPolicy(s))
+			// Cert rotation: issues a fresh enrollment token + revokes the
+			// agent's current certificate. Agent's update channel detects
+			// the rotation and submits a new CSR via the agent-gateway
+			// enroll endpoint with the new token.
+			r.With(middleware.RequirePermission("manage_agents")).
+				Post("/{agent_id}/rotate-cert", rotateAgentCert(s))
 		})
 
 		// Findings

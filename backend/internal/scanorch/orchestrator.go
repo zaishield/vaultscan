@@ -114,12 +114,12 @@ func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.Scan
 		job.ScannerNodeID = &nid
 	}
 
-	// Sign the job manifest.
-	manifest, _ := json.Marshal(map[string]any{
-		"job_id": job.ID, "tenant_id": job.TenantID, "engagement_id": job.EngagementID,
-		"profile": prof.Code, "tools": prof.Tools, "targets": in.Targets,
-		"plane": job.Plane, "agent_id": in.AgentID, "issued_at": time.Now().UTC(),
-	})
+	// Sign the canonical job manifest. The shape MUST stay reproducible by
+	// the scanner worker / agent purely from the scan_jobs row — anything
+	// else (timestamps, env-dependent fields) would make verification
+	// impossible after restart.
+	manifest := CanonicalManifest(job.ID, job.TenantID, job.EngagementID,
+		prof.Code, job.Plane, in.AgentID, prof.Tools, in.Targets)
 	sig, err := o.signer.Sign(manifest)
 	if err != nil {
 		return nil, nil, err
@@ -178,9 +178,14 @@ func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.Scan
 	})
 
 	if !job.RequiresApproval {
-		if _, err := o.Approve(ctx, job.ID, in.RequestedBy); err != nil {
+		// Approve flips DB state to 'dispatched' but our in-memory `job`
+		// still says 'pending'. Re-fetch so callers see what the worker
+		// will pick up.
+		approved, err := o.Approve(ctx, job.ID, in.RequestedBy)
+		if err != nil {
 			return nil, nil, err
 		}
+		job = approved
 	}
 	return job, lastDecision, nil
 }
@@ -533,6 +538,33 @@ func (s *Signer) PublicKeyPEM() (string, error) {
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 	return string(pemBytes), nil
+}
+
+// CanonicalManifest returns the byte sequence that MUST be hashed and signed
+// by the orchestrator AND independently reconstructed by every scanner
+// worker / agent prior to executing the job. Keep it deterministic: every
+// field must be present in the scan_jobs row so verification is possible
+// after process restart or in a fresh worker.
+//
+// Key ordering is alphabetical because that's what Go's json.Marshal does
+// for map[string]any, and we deliberately rely on that property here.
+func CanonicalManifest(
+	jobID, tenantID, engagementID uuid.UUID,
+	profileCode, plane string,
+	agentID *uuid.UUID,
+	tools, targets []string,
+) []byte {
+	manifest, _ := json.Marshal(map[string]any{
+		"agent_id":      agentID,
+		"engagement_id": engagementID,
+		"job_id":        jobID,
+		"plane":         plane,
+		"profile":       profileCode,
+		"targets":       targets,
+		"tenant_id":     tenantID,
+		"tools":         tools,
+	})
+	return manifest
 }
 
 // VerifyExternal allows agents (in-process tests) to validate a signature.

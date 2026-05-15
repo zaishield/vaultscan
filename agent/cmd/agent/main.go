@@ -96,6 +96,18 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// First-boot bootstrap: if no cloud public key is on disk yet, pull it
+	// from the API and cache it under data-dir/cloud-public.pem. Subsequent
+	// boots find it via the standard search path.
+	if !ag.verifier.Loaded() {
+		if err := ag.verifier.FetchAndPersist(ctx, *gateway, *dataDir); err != nil {
+			log.Warn().Err(err).
+				Msg("cloud public key unavailable; agent will refuse every job until a key is provisioned")
+		} else {
+			log.Info().Msg("cloud public key fetched and cached")
+		}
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {

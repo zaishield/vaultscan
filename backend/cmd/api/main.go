@@ -108,7 +108,7 @@ func main() {
 		Pool: pool.Pool, Cfg: cfg, Log: log, Verifier: verifier,
 		Audit: auditSvc, Bus: bus, Branding: brand,
 		Tenants: tenSvc, Partners: partSvc, Engagements: engSvc, AuthDocs: docSvc,
-		Assets: assetSvc, Scope: scope, ScanOrch: orch, Agents: agentSvc,
+		Assets: assetSvc, Scope: scope, ScanOrch: orch, Signer: signer, Agents: agentSvc,
 		Findings: findSvc, Vault: vault, Retests: retestSvc, Reports: reportSvc,
 		Integrations: intSvc, Dashboards: dashSvc,
 	})

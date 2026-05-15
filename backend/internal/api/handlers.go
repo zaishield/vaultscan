@@ -1399,6 +1399,79 @@ func schemeAndHost(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
+// orchestratorPublicKey serves the RSA SubjectPublicKeyInfo PEM that scanner
+// workers and internal agents use to verify per-job signatures.
+func orchestratorPublicKey(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Signer == nil {
+			internalErr(w, errors.New("orchestrator signer not configured"))
+			return
+		}
+		pem, err := s.Signer.PublicKeyPEM()
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-pem-file")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(pem))
+	}
+}
+
+// rotateAgentCert revokes the agent's current certificate and issues a
+// fresh one-time enrollment token. The agent's update channel detects the
+// rotation (cert_status='expiring' → 'revoked') and re-enrolls via the
+// agent-gateway with the new token.
+func rotateAgentCert(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "agent_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+
+		// Revoke active cert + flip agent into pending-enroll. The agent's
+		// next heartbeat-ack will see the status change and trigger
+		// re-enrollment.
+		ctx := r.Context()
+		if _, err := s.Pool.Exec(ctx, `
+			UPDATE agent_certificates SET revoked_at = now()
+			 WHERE agent_id = $1 AND revoked_at IS NULL`, id); err != nil {
+			internalErr(w, err)
+			return
+		}
+		if _, err := s.Pool.Exec(ctx, `
+			UPDATE agents
+			   SET status='pending', cert_status='revoked', updated_at=now()
+			 WHERE id=$1`, id); err != nil {
+			internalErr(w, err)
+			return
+		}
+
+		// Issue a new enrollment token via the agents service (re-uses the
+		// same bcrypt token machinery that initial provisioning uses).
+		tok, err := agents.IssueRotationToken(ctx, s.Pool, id, &identity.UserID)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+
+		// Audit + bus.
+		platID := identity.PlatformID
+		_ = s.Audit.Record(ctx, audit.Entry{
+			PlatformID: platID, ActorID: &identity.UserID,
+			Event: audit.EventAgentCertRotated, TargetType: "agent",
+			TargetID: id.String(),
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"agent_id":         id,
+			"enrollment_token": tok,
+			"note":             "Cert revoked. Agent will re-enroll on next update poll.",
+		})
+	}
+}
+
 type byteReadCloser struct{ p []byte }
 
 func (b *byteReadCloser) Read(p []byte) (int, error) {
