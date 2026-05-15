@@ -28,6 +28,9 @@ import { Compliance } from './pages/Compliance';
 import { DeadLetterQueue } from './pages/DeadLetterQueue';
 import { PlatformOps } from './pages/PlatformOps';
 import { AuditForensics } from './pages/AuditForensics';
+import { Marketplace } from './pages/Marketplace';
+import { Feedback } from './pages/Feedback';
+import { MobileDevices } from './pages/MobileDevices';
 import { useAuthStore } from './store/auth';
 
 export function App() {
@@ -63,6 +66,9 @@ export function App() {
           <Route path="/retesting/batches" element={<RetestBatches />} />
           <Route path="/compliance" element={<Compliance />} />
           <Route path="/platform" element={<PlatformOps />} />
+          <Route path="/marketplace" element={<Marketplace />} />
+          <Route path="/feedback" element={<Feedback />} />
+          <Route path="/mobile" element={<MobileDevices />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Route>

@@ -27,10 +27,13 @@ const NAV: { label: string; to: string; section?: string }[] = [
   { label: 'Retest Batches',    to: '/retesting/batches' },
   { label: 'Remediation',       to: '/remediation' },
   { label: 'Integrations',      to: '/integrations',      section: '07 SYSTEM' },
+  { label: 'Marketplace',       to: '/marketplace' },
   { label: 'Dead-Letter Queue', to: '/integrations/dlq' },
   { label: 'Audit Trail',       to: '/audit' },
   { label: 'Audit Forensics',   to: '/audit/forensics' },
   { label: 'Platform Ops',      to: '/platform' },
+  { label: 'Mobile Portal',     to: '/mobile' },
+  { label: 'Feedback',          to: '/feedback' },
   { label: 'Settings',          to: '/settings' },
 ];
 
