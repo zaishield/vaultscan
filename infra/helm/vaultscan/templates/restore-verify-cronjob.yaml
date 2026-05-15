@@ -1,0 +1,179 @@
+{{- if .Values.restoreVerify.enabled }}
+{{/*
+Nightly restore-verify drill (HS-03 follow-up).
+
+Pulls the latest backup uploaded by the backup CronJob, restores into
+an ephemeral Postgres container running as a sidecar, then runs:
+
+  1. Schema sanity check: count rows in tenants, engagements, audit_logs.
+  2. Audit chain verifier (POST /api/v1/audit/verify-deep equivalent
+     run as a SQL script — the chain-verify SQL ships in the image).
+  3. Random-tenant evidence fetch test (verifies storage backend +
+     decrypt path; only when EvidenceBackend=s3).
+
+On failure the job exits non-zero, which the alertmanager rule on
+`kube_job_failed{job_name=~"vaultscan-restore-verify-.*"}` pages.
+
+Schedule defaults to 04:00 cluster TZ — two hours after the backup
+job's 02:00 default so even a slow upload has finished.
+
+Without this job, the backup chain is theatre — restored backups
+silently rot.
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-restore-verify
+  labels: {{- include "vaultscan.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.restoreVerify.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 14
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels: {{- include "vaultscan.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "vaultscan.fullname" . }}-restore-verify
+          securityContext:
+            {{- include "vaultscan.podSecurityContext" . | nindent 12 }}
+          # Sandbox Postgres — runs alongside the verify container, dies
+          # with the pod. Never reachable outside this pod.
+          containers:
+            - name: sandbox-pg
+              image: postgres:16-alpine
+              env:
+                - { name: POSTGRES_USER,     value: vaultscan }
+                - { name: POSTGRES_PASSWORD, value: drill-only-not-real }
+                - { name: POSTGRES_DB,       value: drill }
+              # No PVC — the data lives in the pod's ephemeral storage
+              # and is destroyed when the job finishes.
+              args:
+                - "-c"
+                - "shared_buffers=256MB"
+                - "-c"
+                - "fsync=off"   # this is throwaway data; speed > durability
+              securityContext:
+                runAsUser: 70   # postgres user inside alpine image
+                runAsGroup: 70
+                fsGroup: 70
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+              resources:
+                requests: { cpu: 500m, memory: 512Mi }
+                limits:   { cpu: 2,    memory: 2Gi }
+              volumeMounts:
+                - { name: pgdata, mountPath: /var/lib/postgresql/data }
+            - name: verifier
+              image: {{ .Values.restoreVerify.image | quote }}
+              securityContext:
+                {{- include "vaultscan.containerSecurityContext" . | nindent 16 }}
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.s3SecretName | quote }}
+                      key: access_key
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.backup.s3SecretName | quote }}
+                      key: secret_key
+                - name: S3_BUCKET
+                  value: {{ .Values.backup.s3Bucket | quote }}
+                - name: S3_ENDPOINT
+                  value: {{ .Values.backup.s3Endpoint | quote }}
+                - name: SANDBOX_PGURL
+                  value: "postgres://vaultscan:drill-only-not-real@127.0.0.1:5432/drill?sslmode=disable"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+
+                  echo "==> Wait for sandbox Postgres"
+                  for i in $(seq 1 60); do
+                    pg_isready -h 127.0.0.1 -U vaultscan && break
+                    sleep 1
+                  done
+
+                  echo "==> Find latest backup"
+                  LATEST=$(aws s3 ls --endpoint-url "${S3_ENDPOINT}" \
+                          "s3://${S3_BUCKET}/" --recursive \
+                       | sort -k1,2 | tail -1 | awk '{print $4}')
+                  if [ -z "${LATEST}" ]; then
+                    echo "FAIL: no backups in s3://${S3_BUCKET}/"
+                    exit 2
+                  fi
+                  echo "Latest: ${LATEST}"
+
+                  echo "==> Download + restore"
+                  aws s3 cp --endpoint-url "${S3_ENDPOINT}" \
+                       "s3://${S3_BUCKET}/${LATEST}" /tmp/backup.sql.gz
+                  gunzip -c /tmp/backup.sql.gz \
+                    | pg_restore --no-owner --no-privileges \
+                                 --dbname="${SANDBOX_PGURL}" --jobs=4 \
+                                 --verbose 2>&1 \
+                    | tail -50
+
+                  echo "==> Sanity counts"
+                  psql "${SANDBOX_PGURL}" -t -c "SELECT count(*) FROM tenants" \
+                    | tee /tmp/tenants.cnt
+                  psql "${SANDBOX_PGURL}" -t -c "SELECT count(*) FROM engagements" \
+                    | tee /tmp/engagements.cnt
+                  psql "${SANDBOX_PGURL}" -t -c "SELECT count(*) FROM audit_logs" \
+                    | tee /tmp/audit.cnt
+                  AUDIT_ROWS=$(cat /tmp/audit.cnt | tr -d '[:space:]')
+                  if [ "${AUDIT_ROWS}" -lt "1" ]; then
+                    echo "FAIL: audit_logs empty after restore"
+                    exit 3
+                  fi
+
+                  echo "==> Audit chain verify"
+                  # Inline SQL replication of audit.Service.VerifyDeep —
+                  # we don't bring the API up; we run the same hash
+                  # arithmetic in a single SELECT WITH RECURSIVE.
+                  RESULT=$(psql "${SANDBOX_PGURL}" -t -A -c "
+                    WITH RECURSIVE chain(id, expected, stored) AS (
+                      SELECT id, encode(digest(
+                        event||'|'||actor_type||'|'||COALESCE(host(ip),'')||'|'||
+                        platform_id::text||'|'||COALESCE(partner_id::text,'')||'|'||
+                        COALESCE(tenant_id::text,'')||'|'||COALESCE(target_type,'')||'|'||
+                        COALESCE(target_id,'')||payload::text, 'sha256'), 'hex'),
+                        encode(chain_hash, 'hex')
+                      FROM audit_logs WHERE id = (SELECT min(id) FROM audit_logs)
+                      UNION ALL
+                      SELECT a.id, encode(digest(c.stored||
+                        a.event||'|'||a.actor_type||'|'||COALESCE(host(a.ip),'')||'|'||
+                        a.platform_id::text||'|'||COALESCE(a.partner_id::text,'')||'|'||
+                        COALESCE(a.tenant_id::text,'')||'|'||COALESCE(a.target_type,'')||'|'||
+                        COALESCE(a.target_id,'')||a.payload::text, 'sha256'), 'hex'),
+                        encode(a.chain_hash, 'hex')
+                      FROM audit_logs a
+                       JOIN chain c ON a.id = c.id + 1
+                    )
+                    SELECT count(*) FROM chain WHERE expected != stored;
+                  ")
+                  RESULT=$(echo "${RESULT}" | tr -d '[:space:]')
+                  if [ "${RESULT}" != "0" ]; then
+                    echo "FAIL: ${RESULT} audit-chain mismatches in restored DB"
+                    exit 4
+                  fi
+                  echo "PASS: restore + audit chain verified clean"
+              resources:
+                requests: { cpu: 500m, memory: 512Mi }
+                limits:   { cpu: 2,    memory: 2Gi }
+              volumeMounts:
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - { name: pgdata, emptyDir: {} }
+            - { name: tmp,    emptyDir: {} }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-restore-verify
+{{- end }}

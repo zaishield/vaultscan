@@ -169,6 +169,16 @@ backup:
     weekly: 8
     monthly: 24
 
+# ----- Restore-verify CronJob (HS-03 follow-up) -----------------------------
+# Nightly drill that pulls the latest backup, restores into a sandbox
+# Postgres, runs the audit-chain verifier, exits non-zero on failure.
+# kube_job_failed alert pages on-call. Without this job, backups rot
+# silently — restore-once-a-quarter is too slow to catch corruption.
+restoreVerify:
+  enabled: false
+  schedule: "0 4 * * *"      # 04:00 cluster TZ (2h after backup)
+  image: ghcr.io/zaishield/vaultscan-restore-verify:0.1.0
+
 # ----- Pod Security profile (HS-03) -----------------------------------------
 # Defaults applied via the shared _security.tpl helpers. Overriding any
 # field here lets an operator relax the posture intentionally.
