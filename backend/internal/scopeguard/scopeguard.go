@@ -4,6 +4,7 @@ package scopeguard
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"strings"
 	"time"
@@ -118,7 +119,15 @@ func (s *Service) Evaluate(ctx context.Context, in Inputs) (*Decision, error) {
 		return d, nil
 	}
 
-	// 3. Scan window check via rules_of_engagement.
+	// 3a. Blackout window check (Black Friday, RTO drills, etc).
+	if blocked, why := s.checkBlackouts(ctx, in.EngagementID, in.Now); blocked {
+		d.Code = DecisionBlockedTimeWindow
+		d.Reason = why
+		s.log(ctx, in, d)
+		return d, nil
+	}
+
+	// 3b. Scan window check via rules_of_engagement.
 	if blocked, why := s.checkWindow(ctx, in.EngagementID, in.Now); blocked {
 		d.Code = DecisionBlockedTimeWindow
 		d.Reason = why
@@ -226,6 +235,30 @@ func (s *Service) checkWindow(ctx context.Context, engagementID uuid.UUID, now t
 		eh := endStr.Hour()*60 + endStr.Minute()
 		if sh != eh && (nh < sh || nh > eh) {
 			return true, "current time outside rules-of-engagement window"
+		}
+	}
+	return false, ""
+}
+
+// checkBlackouts reads the engagement's rules_of_engagement.blackouts and
+// returns (true, reason) when `now` falls inside any window.
+func (s *Service) checkBlackouts(ctx context.Context, engagementID uuid.UUID, now time.Time) (bool, string) {
+	var raw []byte
+	if err := s.pool.QueryRow(ctx, `
+		SELECT blackouts FROM rules_of_engagement
+		 WHERE engagement_id=$1 ORDER BY created_at DESC LIMIT 1`, engagementID).
+		Scan(&raw); err != nil {
+		return false, "" // no RoE → no blackouts
+	}
+	var blackouts []struct {
+		Label    string    `json:"label"`
+		StartsAt time.Time `json:"starts_at"`
+		EndsAt   time.Time `json:"ends_at"`
+	}
+	_ = json.Unmarshal(raw, &blackouts)
+	for _, b := range blackouts {
+		if !b.StartsAt.After(now) && !b.EndsAt.Before(now) {
+			return true, "blackout window active: " + b.Label
 		}
 	}
 	return false, ""

@@ -113,12 +113,18 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*Report, erro
 		in.Formats = []string{FormatHTML, FormatJSON, FormatCSV, FormatPDF, FormatDOCX, FormatXLSX}
 	}
 	id := uuid.New()
+	// Approval is required when the partner has opted in via the
+	// reports.approval_required feature flag. Reports that need approval
+	// are generated but stay in status='pending_approval' until an
+	// approver acts.
+	requiresApproval := s.partnerApprovalRequired(ctx, in.PartnerID)
+	initialStatus := "generating"
 	if _, err := s.pool.Exec(ctx, `
 		INSERT INTO reports(id, platform_id, partner_id, tenant_id, engagement_id,
-		    report_type, title, status, generated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,'generating',$8)`,
+		    report_type, title, status, generated_by, requires_approval)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		id, in.PlatformID, in.PartnerID, in.TenantID, in.EngagementID,
-		in.ReportType, in.Title, in.GeneratedBy); err != nil {
+		in.ReportType, in.Title, initialStatus, in.GeneratedBy, requiresApproval); err != nil {
 		return nil, err
 	}
 
@@ -161,10 +167,16 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*Report, erro
 			Format: format, StorageURL: storageURL, SHA256: hashHex, SizeBytes: int64(len(body)),
 		})
 	}
+	finalStatus := "ready"
+	if requiresApproval {
+		finalStatus = "pending_approval"
+	}
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE reports SET status='ready', generated_at=now() WHERE id=$1`, id); err != nil {
+		`UPDATE reports SET status=$2, generated_at=now() WHERE id=$1`,
+		id, finalStatus); err != nil {
 		return nil, err
 	}
+	r.Status = finalStatus
 	_ = s.audit.Record(ctx, audit.Entry{
 		PlatformID: in.PlatformID, PartnerID: &in.PartnerID, TenantID: &in.TenantID,
 		ActorID: in.GeneratedBy, Event: audit.EventReportGenerated,
@@ -201,6 +213,60 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Report, error) {
 		r.Exports = append(r.Exports, e)
 	}
 	return r, nil
+}
+
+// partnerApprovalRequired reads partner_feature_flags. Defaults to false
+// when the flag isn't present.
+func (s *Service) partnerApprovalRequired(ctx context.Context, partnerID uuid.UUID) bool {
+	var enabled bool
+	_ = s.pool.QueryRow(ctx, `
+		SELECT enabled FROM partner_feature_flags
+		 WHERE partner_id=$1 AND flag='reports.approval_required'`,
+		partnerID).Scan(&enabled)
+	return enabled
+}
+
+// Approve marks a pending report as approved (or rejected). On approve,
+// flips status to 'ready' so the report can be downloaded. Records an
+// audit event with the approver + decision.
+func (s *Service) Approve(ctx context.Context, reportID uuid.UUID,
+	approver *uuid.UUID, decision string, note string) error {
+	if decision != "approved" && decision != "rejected" {
+		return fmt.Errorf("reporting: decision must be approved|rejected, got %q", decision)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO report_approvals(report_id, approver_id, decision, note)
+		VALUES ($1, $2, $3, $4)`, reportID, approver, decision, note); err != nil {
+		return err
+	}
+	newStatus := "approved"
+	if decision == "rejected" {
+		newStatus = "rejected"
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE reports SET status=$2, approved_by=$3, approved_at=now() WHERE id=$1`,
+		reportID, newStatus, approver); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	var platformID, partnerID, tenantID uuid.UUID
+	_ = s.pool.QueryRow(ctx,
+		`SELECT platform_id, partner_id, tenant_id FROM reports WHERE id=$1`, reportID).
+		Scan(&platformID, &partnerID, &tenantID)
+	return s.audit.Record(ctx, audit.Entry{
+		PlatformID: platformID, PartnerID: &partnerID, TenantID: &tenantID,
+		ActorID: approver, Event: "report." + decision,
+		TargetType: "report", TargetID: reportID.String(),
+		Payload: map[string]any{"note": note},
+	})
 }
 
 // LogDownload records a report download for audit.

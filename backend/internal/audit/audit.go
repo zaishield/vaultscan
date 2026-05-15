@@ -94,6 +94,17 @@ func (s *Service) Record(ctx context.Context, e Entry) error {
 	}
 	defer tx.Rollback(ctx)
 
+	// Serialise the read-prev + insert sequence with a transaction-scoped
+	// advisory lock keyed off the audit_logs OID. Without this, two
+	// concurrent Record calls each see the same `prev`, compute hashes
+	// that reference the same predecessor, and Verify sees a forked chain
+	// after the rows commit. The lock is released automatically at COMMIT
+	// / ROLLBACK so it cannot deadlock against itself.
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext('vaultscan.audit_logs'))`); err != nil {
+		return fmt.Errorf("audit: lock chain: %w", err)
+	}
+
 	var prev []byte
 	if err := tx.QueryRow(ctx,
 		`SELECT chain_hash FROM audit_logs ORDER BY id DESC LIMIT 1`).Scan(&prev); err != nil && err.Error() != "no rows in result set" {

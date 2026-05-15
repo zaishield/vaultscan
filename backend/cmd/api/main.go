@@ -15,6 +15,8 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/api"
 	"github.com/zaishield/vaultscan/backend/internal/assets"
 	"github.com/zaishield/vaultscan/backend/internal/audit"
+	"github.com/zaishield/vaultscan/backend/internal/email"
+	"github.com/zaishield/vaultscan/backend/internal/users"
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/authdocs"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
@@ -83,6 +85,8 @@ func main() {
 	intSvc := integrations.New(pool.Pool, bus, auditSvc)
 	intSvc.Wire(bus)
 	dashSvc := dashboards.New(pool.Pool)
+	userSvc := users.New(pool.Pool, auditSvc)
+	emailSvc := email.New(pool.Pool, nil) // production wires SMTP/SES; dev uses MemoryTransport
 	verifier := auth.NewVerifier(cfg.JWTSharedSecret, pool.Pool)
 
 	// Optional in-process analytics indexer. The standalone analytics-worker
@@ -110,7 +114,7 @@ func main() {
 		Tenants: tenSvc, Partners: partSvc, Engagements: engSvc, AuthDocs: docSvc,
 		Assets: assetSvc, Scope: scope, ScanOrch: orch, Signer: signer, Agents: agentSvc,
 		Findings: findSvc, Vault: vault, Retests: retestSvc, Reports: reportSvc,
-		Integrations: intSvc, Dashboards: dashSvc,
+		Integrations: intSvc, Dashboards: dashSvc, Users: userSvc, Email: emailSvc,
 	})
 
 	srv := &http.Server{

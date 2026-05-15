@@ -20,6 +20,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/branding"
 	"github.com/zaishield/vaultscan/backend/internal/config"
 	"github.com/zaishield/vaultscan/backend/internal/dashboards"
+	"github.com/zaishield/vaultscan/backend/internal/email"
 	"github.com/zaishield/vaultscan/backend/internal/engagements"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
@@ -32,6 +33,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/scanorch"
 	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
+	"github.com/zaishield/vaultscan/backend/internal/users"
 )
 
 // Services aggregates everything the API server needs.
@@ -58,6 +60,8 @@ type Services struct {
 	Reports      *reporting.Service
 	Integrations *integrations.Service
 	Dashboards   *dashboards.Service
+	Users        *users.Service
+	Email        *email.Service
 }
 
 // Mount returns a fully wired HTTP router.
@@ -246,12 +250,54 @@ func Mount(s *Services) http.Handler {
 			r.Post("/{type}", createIntegration(s))
 		})
 
-		// Dashboards
+		// Dashboards (with time-range + drill-down)
 		r.Route("/api/v1/dashboards", func(r chi.Router) {
 			r.Get("/executive", execDashboard(s))
 			r.Get("/technical", techDashboard(s))
 			r.Get("/partner", partnerDashboard(s))
+			r.Get("/findings/critical", drillCriticalFindings(s))
+			r.Get("/findings/sla-breaches", drillSLABreaches(s))
+			r.Get("/scans/recent", drillRecentScans(s))
 		})
+
+		// Users + role assignment (VS-01)
+		r.Route("/api/v1/users", func(r chi.Router) {
+			r.Get("/", listUsers(s))
+			r.With(middleware.RequirePermission("create_tenant")).
+				Post("/", createUser(s))
+			r.Get("/{user_id}", getUser(s))
+			r.Get("/{user_id}/roles", listUserRoles(s))
+			r.With(middleware.RequirePermission("create_tenant")).
+				Post("/{user_id}/roles", assignUserRole(s))
+			r.With(middleware.RequirePermission("create_tenant")).
+				Delete("/{user_id}/roles/{role_code}", revokeUserRole(s))
+		})
+
+		// White-label email templates (VS-02)
+		r.Route("/api/v1/partners/{partner_id}/email-templates", func(r chi.Router) {
+			r.Get("/", listEmailTemplates(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Put("/{code}", upsertEmailTemplate(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Post("/{code}/send-test", sendTestEmail(s))
+		})
+
+		// Rules of engagement + blackouts (VS-03)
+		r.Route("/api/v1/engagements/{engagement_id}/roe", func(r chi.Router) {
+			r.Get("/", getRoE(s))
+			r.With(middleware.RequirePermission("approve_scope")).
+				Put("/", upsertRoE(s))
+		})
+
+		// Report approval workflow (VS-10)
+		r.With(middleware.RequirePermission("generate_report")).
+			Post("/api/v1/reports/{report_id}/approve", approveReport(s))
+
+		// Integration test + health (VS-11)
+		r.Route("/api/v1/integrations/{integration_id}", func(r chi.Router) {
+			r.Post("/test", testIntegration(s))
+		})
+		r.Get("/api/v1/integration-health", integrationHealth(s))
 
 		// Audit
 		r.Route("/api/v1/audit", func(r chi.Router) {

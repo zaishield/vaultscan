@@ -226,5 +226,150 @@ func (s *Service) Partner(ctx context.Context, partnerID uuid.UUID) (*Partner, e
 	return p, nil
 }
 
-// keep import used for clarity even when no time-typed metric is exported yet
-var _ = time.Time{}
+// ----- Drill-down endpoints -------------------------------------------------
+//
+// Every dashboard card on the portal links to a filtered list. The widgets
+// call these helpers so the underlying query lives in one place and the
+// time-range selector works uniformly across exec / technical / partner views.
+
+// Range applies a user-selected time window to dashboard queries. Zero
+// duration = no lower bound (i.e. "all time").
+type Range struct {
+	Since time.Time
+}
+
+// ParseRange turns the portal's "?since=24h" / "?since=7d" / "?since=30d" /
+// "?since=all" into a Range. Defaults to 30 days.
+func ParseRange(spec string) Range {
+	if spec == "" || spec == "30d" {
+		return Range{Since: time.Now().Add(-30 * 24 * time.Hour)}
+	}
+	if spec == "all" {
+		return Range{}
+	}
+	if spec == "24h" {
+		return Range{Since: time.Now().Add(-24 * time.Hour)}
+	}
+	if spec == "7d" {
+		return Range{Since: time.Now().Add(-7 * 24 * time.Hour)}
+	}
+	if d, err := time.ParseDuration(spec); err == nil {
+		return Range{Since: time.Now().Add(-d)}
+	}
+	return Range{Since: time.Now().Add(-30 * 24 * time.Hour)}
+}
+
+// CriticalFindings drives the "Critical findings" exec-dashboard card
+// drill-down. Returns the IDs + titles + assets the operator should click
+// through to.
+type FindingRow struct {
+	ID               uuid.UUID `json:"id"`
+	Title            string    `json:"title"`
+	Severity         string    `json:"severity"`
+	AffectedEndpoint string    `json:"affected_endpoint"`
+	CVE              string    `json:"cve,omitempty"`
+	Status           string    `json:"status"`
+	LastSeen         time.Time `json:"last_seen"`
+}
+
+func (s *Service) CriticalFindings(ctx context.Context, tenantID uuid.UUID, r Range, limit int) ([]FindingRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	args := []any{tenantID, limit}
+	q := `SELECT id, title, severity, COALESCE(affected_endpoint, ''),
+	             COALESCE(cve, ''), status, last_seen
+	        FROM findings
+	       WHERE tenant_id=$1
+	         AND severity='critical'
+	         AND status NOT IN ('closed','remediated','retest_passed','false_positive')`
+	if !r.Since.IsZero() {
+		q += " AND last_seen >= $3"
+		args = append(args, r.Since)
+	}
+	q += " ORDER BY last_seen DESC LIMIT $2"
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []FindingRow{}
+	for rows.Next() {
+		var f FindingRow
+		if err := rows.Scan(&f.ID, &f.Title, &f.Severity, &f.AffectedEndpoint,
+			&f.CVE, &f.Status, &f.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// SLABreaches drives the "SLA breaches" exec card.
+func (s *Service) SLABreaches(ctx context.Context, tenantID uuid.UUID, limit int) ([]FindingRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, title, severity, COALESCE(affected_endpoint, ''),
+		       COALESCE(cve, ''), status, last_seen
+		  FROM findings
+		 WHERE tenant_id=$1 AND sla_breached_at IS NOT NULL
+		 ORDER BY sla_breached_at DESC LIMIT $2`, tenantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []FindingRow{}
+	for rows.Next() {
+		var f FindingRow
+		if err := rows.Scan(&f.ID, &f.Title, &f.Severity, &f.AffectedEndpoint,
+			&f.CVE, &f.Status, &f.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// RecentScans drives the scan-trend chart drill-down.
+type ScanRow struct {
+	ID            uuid.UUID `json:"id"`
+	ProfileCode   string    `json:"profile_code"`
+	Plane         string    `json:"plane"`
+	Region        string    `json:"region,omitempty"`
+	Status        string    `json:"status"`
+	TargetSummary string    `json:"target_summary"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+func (s *Service) RecentScans(ctx context.Context, tenantID uuid.UUID, r Range, limit int) ([]ScanRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	args := []any{tenantID, limit}
+	q := `SELECT j.id, p.code, j.plane, COALESCE(j.region,''), j.status,
+	             j.target_summary, j.created_at
+	        FROM scan_jobs j JOIN scan_profiles p ON p.id = j.profile_id
+	       WHERE j.tenant_id=$1`
+	if !r.Since.IsZero() {
+		q += " AND j.created_at >= $3"
+		args = append(args, r.Since)
+	}
+	q += " ORDER BY j.created_at DESC LIMIT $2"
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ScanRow{}
+	for rows.Next() {
+		var sj ScanRow
+		if err := rows.Scan(&sj.ID, &sj.ProfileCode, &sj.Plane, &sj.Region,
+			&sj.Status, &sj.TargetSummary, &sj.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, sj)
+	}
+	return out, rows.Err()
+}

@@ -125,6 +125,132 @@ type Integration struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
+// Test dispatches a single synthetic payload to the integration's
+// destination URL and reports back whether the endpoint accepted it.
+// Used by the portal's "Test Connection" button so operators can verify
+// a Slack / Jira / webhook is reachable + the credentials work, without
+// waiting for a real event.
+type TestResult struct {
+	OK           bool   `json:"ok"`
+	StatusCode   int    `json:"status_code"`
+	LatencyMs    int    `json:"latency_ms"`
+	ResponseBody string `json:"response_body,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+func (s *Service) Test(ctx context.Context, integrationID uuid.UUID) (*TestResult, error) {
+	var (
+		itype string
+		cfg   []byte
+	)
+	if err := s.pool.QueryRow(ctx, `
+		SELECT type, config FROM integrations WHERE id=$1`, integrationID).
+		Scan(&itype, &cfg); err != nil {
+		return nil, fmt.Errorf("integrations: load: %w", err)
+	}
+	var config map[string]any
+	_ = json.Unmarshal(cfg, &config)
+
+	target, _ := config["url"].(string)
+	if target == "" {
+		target, _ = config["api_url"].(string)
+	}
+	if target == "" {
+		return &TestResult{Error: "no url / api_url configured"}, nil
+	}
+	body, _ := json.Marshal(map[string]any{
+		"event_type": "vaultscan.test",
+		"message":    "VAULTSCAN connection test from /api/v1/integrations/" + integrationID.String() + "/test",
+		"integration_type": itype,
+	})
+	start := time.Now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		return &TestResult{Error: err.Error()}, nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if secret, ok := config["hmac_secret"].(string); ok {
+		req.Header.Set("X-Vaultscan-Signature",
+			"sha256="+hexDigest(hmac.New(sha256.New, []byte(secret)), body))
+	}
+	resp, err := s.client.Do(req)
+	latency := int(time.Since(start).Milliseconds())
+	if err != nil {
+		return &TestResult{Error: err.Error(), LatencyMs: latency}, nil
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	res := &TestResult{
+		OK:           resp.StatusCode < 400,
+		StatusCode:   resp.StatusCode,
+		LatencyMs:    latency,
+		ResponseBody: string(respBody),
+	}
+	// Persist the test outcome so the health view doesn't have to repeat it.
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE integrations SET last_status=$2, last_check_at=now() WHERE id=$1`,
+		integrationID, statusLabel(res))
+	return res, nil
+}
+
+// Health is one row in the integration health dashboard view.
+type Health struct {
+	IntegrationID    uuid.UUID `json:"integration_id"`
+	Type             string    `json:"type"`
+	Name             string    `json:"name"`
+	Enabled          bool      `json:"enabled"`
+	Last5MinDelivered int      `json:"last_5min_delivered"`
+	Last5MinFailed    int      `json:"last_5min_failed"`
+	LastStatus        string   `json:"last_status"`
+}
+
+// HealthRollup returns one row per integration with delivery success/fail
+// counts for the last 5 minutes, plus the latest test status.
+func (s *Service) HealthRollup(ctx context.Context, tenantID, partnerID *uuid.UUID) ([]Health, error) {
+	args := []any{}
+	q := `SELECT i.id, i.type, i.name, i.enabled,
+	             COALESCE(i.last_status, ''),
+	             COUNT(d.id) FILTER (WHERE d.status='delivered' AND d.created_at > now() - INTERVAL '5 minutes'),
+	             COUNT(d.id) FILTER (WHERE d.status='failed'    AND d.created_at > now() - INTERVAL '5 minutes')
+	        FROM integrations i
+	   LEFT JOIN integration_deliveries d ON d.integration_id = i.id
+	       WHERE 1=1`
+	if tenantID != nil {
+		q += fmt.Sprintf(" AND i.tenant_id=$%d", len(args)+1)
+		args = append(args, *tenantID)
+	}
+	if partnerID != nil {
+		q += fmt.Sprintf(" AND i.partner_id=$%d", len(args)+1)
+		args = append(args, *partnerID)
+	}
+	q += " GROUP BY i.id ORDER BY i.created_at DESC"
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Health
+	for rows.Next() {
+		var h Health
+		if err := rows.Scan(&h.IntegrationID, &h.Type, &h.Name, &h.Enabled,
+			&h.LastStatus, &h.Last5MinDelivered, &h.Last5MinFailed); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+func statusLabel(r *TestResult) string {
+	if r.OK {
+		return fmt.Sprintf("test ok %d", r.StatusCode)
+	}
+	if r.Error != "" {
+		return "test error: " + r.Error
+	}
+	return fmt.Sprintf("test fail %d", r.StatusCode)
+}
+
 // Wire subscribes the integration service to every event in eventbus.AllEventTypes
 // and dispatches matching deliveries to enabled integrations.
 func (s *Service) Wire(bus *eventbus.Bus) {

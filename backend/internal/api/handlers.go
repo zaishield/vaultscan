@@ -23,6 +23,8 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/authdocs"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
+	"github.com/zaishield/vaultscan/backend/internal/dashboards"
+	"github.com/zaishield/vaultscan/backend/internal/email"
 	"github.com/zaishield/vaultscan/backend/internal/engagements"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
@@ -34,6 +36,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/scanorch"
 	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
+	"github.com/zaishield/vaultscan/backend/internal/users"
 )
 
 // ----- helpers ------------------------------------------------------------
@@ -1726,6 +1729,393 @@ func retestQueueForUser(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		identity, _ := auth.FromContext(r.Context())
 		out, err := s.Retests.PendingForUser(r.Context(), identity.UserID)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	}
+}
+
+// ----- VS-01 user / role handlers ------------------------------------------
+
+type createUserReq struct {
+	PartnerID  string `json:"partner_id"`
+	TenantID   string `json:"tenant_id"`
+	Email      string `json:"email"`
+	FullName   string `json:"full_name"`
+	MFAEnabled bool   `json:"mfa_enabled"`
+}
+
+func createUser(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req createUserReq
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		in := users.CreateInput{
+			PlatformID: identity.PlatformID, Email: req.Email,
+			FullName: req.FullName, MFAEnabled: req.MFAEnabled, Actor: &identity.UserID,
+		}
+		if req.PartnerID != "" {
+			id, _ := uuid.Parse(req.PartnerID)
+			in.PartnerID = &id
+		}
+		if req.TenantID != "" {
+			id, _ := uuid.Parse(req.TenantID)
+			in.TenantID = &id
+		}
+		u, err := s.Users.Create(r.Context(), in)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, u)
+	}
+}
+
+func listUsers(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		identity, _ := auth.FromContext(r.Context())
+		var partnerID, tenantID *uuid.UUID
+		if v := r.URL.Query().Get("partner_id"); v != "" {
+			id, _ := uuid.Parse(v)
+			partnerID = &id
+		}
+		if v := r.URL.Query().Get("tenant_id"); v != "" {
+			id, _ := uuid.Parse(v)
+			tenantID = &id
+		}
+		out, err := s.Users.List(r.Context(), identity.PlatformID, partnerID, tenantID)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	}
+}
+
+func getUser(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "user_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		u, err := s.Users.Get(r.Context(), id)
+		if err != nil {
+			notFound(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, u)
+	}
+}
+
+func listUserRoles(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "user_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		out, err := s.Users.RolesForUser(r.Context(), id)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"roles": out})
+	}
+}
+
+func assignUserRole(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, err := uuidParam(r, "user_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var req struct {
+			RoleCode     string `json:"role_code"`
+			ScopePartner string `json:"scope_partner,omitempty"`
+			ScopeTenant  string `json:"scope_tenant,omitempty"`
+		}
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var roleID uuid.UUID
+		if err := s.Pool.QueryRow(r.Context(),
+			`SELECT id FROM roles WHERE code=$1`, req.RoleCode).Scan(&roleID); err != nil {
+			badRequest(w, "unknown role: "+req.RoleCode)
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		in := users.AssignRoleInput{UserID: userID, RoleID: roleID, GrantedBy: &identity.UserID}
+		if req.ScopePartner != "" {
+			id, _ := uuid.Parse(req.ScopePartner)
+			in.ScopePartner = &id
+		}
+		if req.ScopeTenant != "" {
+			id, _ := uuid.Parse(req.ScopeTenant)
+			in.ScopeTenant = &id
+		}
+		if err := s.Users.AssignRole(r.Context(), in); err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "assigned"})
+	}
+}
+
+func revokeUserRole(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, err := uuidParam(r, "user_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		roleCode := chi.URLParam(r, "role_code")
+		var roleID uuid.UUID
+		if err := s.Pool.QueryRow(r.Context(),
+			`SELECT id FROM roles WHERE code=$1`, roleCode).Scan(&roleID); err != nil {
+			badRequest(w, "unknown role: "+roleCode)
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		var scopePartner, scopeTenant *uuid.UUID
+		if v := r.URL.Query().Get("scope_partner"); v != "" {
+			id, _ := uuid.Parse(v)
+			scopePartner = &id
+		}
+		if v := r.URL.Query().Get("scope_tenant"); v != "" {
+			id, _ := uuid.Parse(v)
+			scopeTenant = &id
+		}
+		if err := s.Users.RevokeRole(r.Context(), userID, roleID, scopePartner, scopeTenant, &identity.UserID); err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+	}
+}
+
+// ----- VS-02 email templates -----------------------------------------------
+
+func listEmailTemplates(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pid, err := uuidParam(r, "partner_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		out, err := s.Email.List(r.Context(), pid)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	}
+}
+
+func upsertEmailTemplate(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pid, err := uuidParam(r, "partner_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		code := chi.URLParam(r, "code")
+		var req email.Template
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		req.PartnerID = pid
+		req.Code = code
+		if err := s.Email.Upsert(r.Context(), pid, req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
+func sendTestEmail(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pid, err := uuidParam(r, "partner_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		code := chi.URLParam(r, "code")
+		var req struct {
+			To string `json:"to"`
+		}
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		msg, err := s.Email.SendTest(r.Context(), pid, code, req.To)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, msg)
+	}
+}
+
+// ----- VS-03 rules of engagement -------------------------------------------
+
+func getRoE(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		eid, err := uuidParam(r, "engagement_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		roe, err := s.Engagements.GetRoE(r.Context(), eid)
+		if err != nil {
+			notFound(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, roe)
+	}
+}
+
+func upsertRoE(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		eid, err := uuidParam(r, "engagement_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var req engagements.RulesOfEngagement
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		req.EngagementID = eid
+		if err := s.Engagements.UpsertRoE(r.Context(), eid, req); err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
+// ----- VS-10 report approval -----------------------------------------------
+
+func approveReport(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "report_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var req struct {
+			Decision string `json:"decision"`
+			Note     string `json:"note"`
+		}
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		if err := s.Reports.Approve(r.Context(), id, &identity.UserID, req.Decision, req.Note); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": req.Decision})
+	}
+}
+
+// ----- VS-11 integration test + health --------------------------------------
+
+func testIntegration(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "integration_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		res, err := s.Integrations.Test(r.Context(), id)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
+	}
+}
+
+func integrationHealth(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var tid, pid *uuid.UUID
+		if v := r.URL.Query().Get("tenant_id"); v != "" {
+			id, _ := uuid.Parse(v)
+			tid = &id
+		}
+		if v := r.URL.Query().Get("partner_id"); v != "" {
+			id, _ := uuid.Parse(v)
+			pid = &id
+		}
+		out, err := s.Integrations.HealthRollup(r.Context(), tid, pid)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	}
+}
+
+// ----- VS-12 dashboard drill-down ------------------------------------------
+
+func drillCriticalFindings(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		if err != nil {
+			badRequest(w, "tenant_id required")
+			return
+		}
+		rng := dashboards.ParseRange(r.URL.Query().Get("since"))
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		out, err := s.Dashboards.CriticalFindings(r.Context(), tenantID, rng, limit)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	}
+}
+
+func drillSLABreaches(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		if err != nil {
+			badRequest(w, "tenant_id required")
+			return
+		}
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		out, err := s.Dashboards.SLABreaches(r.Context(), tenantID, limit)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	}
+}
+
+func drillRecentScans(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		if err != nil {
+			badRequest(w, "tenant_id required")
+			return
+		}
+		rng := dashboards.ParseRange(r.URL.Query().Get("since"))
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		out, err := s.Dashboards.RecentScans(r.Context(), tenantID, rng, limit)
 		if err != nil {
 			internalErr(w, err)
 			return

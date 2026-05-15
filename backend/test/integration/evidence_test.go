@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"time"
 	"crypto/sha256"
 	"encoding/hex"
 	"net"
@@ -103,11 +104,29 @@ func TestAuditChain_VerifyDetectsTamper(t *testing.T) {
 		t.Fatalf("expected clean chain, broken at id=%d", brokenAt)
 	}
 
-	// Tamper with a row by mutating the payload directly.
+	// Pick the row we'll tamper with; capture its original payload so we
+	// can repair the chain afterwards. Without the repair, every later
+	// test in this shared harness sees a poisoned chain and the audit
+	// Verify smoke-tests in those tests would fail.
+	var targetID int64
+	var original string
+	if err := h.pool.QueryRow(ctx, `
+		SELECT id, payload FROM audit_logs
+		 WHERE tenant_id=$1 ORDER BY id LIMIT 1`, tenantID).
+		Scan(&targetID, &original); err != nil {
+		t.Fatalf("locate tamper target: %v", err)
+	}
+	t.Cleanup(func() {
+		// Restore the row so the chain re-verifies for any test that runs
+		// after this one in the same TestMain process.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = h.pool.Exec(ctx,
+			`UPDATE audit_logs SET payload=$2 WHERE id=$1`, targetID, original)
+	})
+
 	res, err := h.pool.Exec(ctx,
-		`UPDATE audit_logs SET payload='{"tampered":true}'::jsonb
-		  WHERE tenant_id=$1
-		  AND id=(SELECT MIN(id) FROM audit_logs WHERE tenant_id=$1)`, tenantID)
+		`UPDATE audit_logs SET payload='{"tampered":true}' WHERE id=$1`, targetID)
 	if err != nil {
 		t.Fatalf("tamper: %v", err)
 	}
