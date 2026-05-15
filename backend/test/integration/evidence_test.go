@@ -118,13 +118,29 @@ func TestAuditChain_VerifyDetectsTamper(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		// Restore the row so the chain re-verifies for any test that runs
-		// after this one in the same TestMain process.
+		// after this one in the same TestMain process. The immutability
+		// trigger from migration 0029 normally rejects UPDATE on
+		// audit_logs; this test simulates the very attack that defense
+		// catches, so we drop+recreate the trigger around the mutation.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		_, _ = h.pool.Exec(ctx, `ALTER TABLE audit_logs DISABLE TRIGGER audit_logs_no_update`)
 		_, _ = h.pool.Exec(ctx,
 			`UPDATE audit_logs SET payload=$2 WHERE id=$1`, targetID, original)
+		_, _ = h.pool.Exec(ctx, `ALTER TABLE audit_logs ENABLE TRIGGER audit_logs_no_update`)
 	})
 
+	// The immutability trigger (HS-01) explicitly rejects UPDATE — disable
+	// it for the duration of this simulated-tamper to exercise the chain
+	// verifier itself.
+	if _, err := h.pool.Exec(ctx,
+		`ALTER TABLE audit_logs DISABLE TRIGGER audit_logs_no_update`); err != nil {
+		t.Fatalf("disable trigger: %v", err)
+	}
+	defer func() {
+		_, _ = h.pool.Exec(context.Background(),
+			`ALTER TABLE audit_logs ENABLE TRIGGER audit_logs_no_update`)
+	}()
 	res, err := h.pool.Exec(ctx,
 		`UPDATE audit_logs SET payload='{"tampered":true}' WHERE id=$1`, targetID)
 	if err != nil {
