@@ -26,7 +26,7 @@ CREATE TABLE findings (
     business_impact   TEXT,
     technical_impact  TEXT,
     remediation       TEXT,
-    references        JSONB NOT NULL DEFAULT '[]',
+    "references"      JSONB NOT NULL DEFAULT '[]',     -- quoted: 'references' is a reserved word
     status            TEXT NOT NULL DEFAULT 'open',
         -- open | triaged | assigned | in_progress | risk_accepted | false_positive
         -- | remediated | retest_requested | retest_passed | retest_failed | closed

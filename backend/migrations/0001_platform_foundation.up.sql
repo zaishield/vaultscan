@@ -167,13 +167,22 @@ CREATE TABLE role_permissions (
     PRIMARY KEY (role_id, permission_id)
 );
 
+-- user_roles uses a synthetic surrogate key + a unique partial expression
+-- index. PRIMARY KEY itself can't contain expressions, but UNIQUE INDEX can.
 CREATE TABLE user_roles (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role_id        UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     scope_partner  UUID REFERENCES partners(id) ON DELETE CASCADE,
     scope_tenant   UUID REFERENCES tenants(id)  ON DELETE CASCADE,
     granted_by     UUID REFERENCES users(id),
-    granted_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (user_id, role_id, COALESCE(scope_partner, '00000000-0000-0000-0000-000000000000'),
-                                    COALESCE(scope_tenant,  '00000000-0000-0000-0000-000000000000'))
+    granted_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX user_roles_unique_idx
+    ON user_roles (
+        user_id, role_id,
+        COALESCE(scope_partner, '00000000-0000-0000-0000-000000000000'::uuid),
+        COALESCE(scope_tenant,  '00000000-0000-0000-0000-000000000000'::uuid)
+    );
+CREATE INDEX user_roles_user_idx ON user_roles(user_id);
+CREATE INDEX user_roles_role_idx ON user_roles(role_id);

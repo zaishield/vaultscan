@@ -15,9 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/zaishield/vaultscan/backend/internal/audit"
@@ -108,8 +106,8 @@ func (s *Service) Upsert(ctx context.Context, in IngestInput) (*models.Finding, 
 	now := time.Now().UTC()
 
 	var (
-		newID  uuid.UUID
-		isNew  bool
+		newID uuid.UUID
+		isNew bool
 	)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -117,6 +115,10 @@ func (s *Service) Upsert(ctx context.Context, in IngestInput) (*models.Finding, 
 	}
 	defer tx.Rollback(ctx)
 
+	// Single-statement upsert. xmax = 0 on the returned row means the INSERT
+	// path won (no prior row); a non-zero xmax means the DO UPDATE fired.
+	// This avoids the "transaction aborted by unique violation" problem
+	// that splitting INSERT + UPDATE inside one tx would hit.
 	err = tx.QueryRow(ctx, `
 		INSERT INTO findings(id, platform_id, partner_id, tenant_id, engagement_id, asset_id,
 		    scan_job_id, title, description, severity, confidence, cvss_score, cvss_vector,
@@ -125,31 +127,20 @@ func (s *Service) Upsert(ctx context.Context, in IngestInput) (*models.Finding, 
 		    status, first_seen, last_seen, dedup_fingerprint)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
 		        $21,$22,$23,$24,$25,'open',$26,$26,$27)
-		RETURNING id`,
+		ON CONFLICT (tenant_id, dedup_fingerprint) DO UPDATE
+		   SET last_seen   = EXCLUDED.last_seen,
+		       scan_job_id = COALESCE(EXCLUDED.scan_job_id, findings.scan_job_id)
+		RETURNING id, (xmax = 0) AS is_new`,
 		id, in.PlatformID, in.PartnerID, in.TenantID, in.EngagementID, in.AssetID,
 		in.ScanJobID, in.Title, in.Description, in.Severity, in.Confidence, in.CVSSScore,
 		in.CVSSVector, in.CWE, in.CVE, in.Scanner, in.ScanType, in.AffectedEndpoint,
 		in.Port, in.Protocol, in.EvidenceSummary, in.BusinessImpact, in.TechnicalImpact,
 		in.Remediation, refs, now, fp,
-	).Scan(&newID)
-
-	var pgErr *pgconn.PgError
-	switch {
-	case errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation:
-		// duplicate: bump last_seen
-		err = tx.QueryRow(ctx, `
-			UPDATE findings SET last_seen=$3, scan_job_id=COALESCE($2, scan_job_id)
-			 WHERE tenant_id=$1 AND dedup_fingerprint=$4
-			 RETURNING id`,
-			in.TenantID, in.ScanJobID, now, fp).Scan(&newID)
-		if err != nil {
-			return nil, false, fmt.Errorf("findings: dedup update: %w", err)
-		}
-		isNew = false
-	case err != nil:
-		return nil, false, fmt.Errorf("findings: insert: %w", err)
-	default:
-		isNew = true
+	).Scan(&newID, &isNew)
+	if err != nil {
+		return nil, false, fmt.Errorf("findings: upsert: %w", err)
+	}
+	if isNew {
 		_, _ = tx.Exec(ctx, `
 			INSERT INTO finding_status_history(finding_id, from_status, to_status, note)
 			VALUES ($1, NULL, 'open', 'initial ingest')`, newID)

@@ -1355,7 +1355,7 @@ func listAudit(s *Services) http.HandlerFunc {
 				tType, tID      *string
 				tenantID, partID *uuid.UUID
 				occ             time.Time
-				payload         []byte
+				payload         string // TEXT since migration 0012
 			)
 			if err := rows.Scan(&id, &event, &actor, &actorID, &tType, &tID,
 				&tenantID, &partID, &occ, &payload); err != nil {
@@ -1363,7 +1363,7 @@ func listAudit(s *Services) http.HandlerFunc {
 				return
 			}
 			var pl any
-			_ = json.Unmarshal(payload, &pl)
+			_ = json.Unmarshal([]byte(payload), &pl)
 			out = append(out, map[string]any{
 				"id": id, "event": event, "actor_type": actor, "actor_id": actorID,
 				"target_type": tType, "target_id": tID, "tenant_id": tenantID,

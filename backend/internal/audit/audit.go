@@ -100,12 +100,16 @@ func (s *Service) Record(ctx context.Context, e Entry) error {
 		// fresh table: prev stays nil
 	}
 
+	// chain_hash = sha256(prev_hash || canonical_metadata || payload_bytes).
+	// payload is stored as TEXT (migration 0012), so the bytes Record writes
+	// here are exactly what Verify reads back. canonicalIP / derefStr keep
+	// nil-vs-NULL handling identical on both sides of the chain.
 	h := sha256.New()
 	if prev != nil {
 		h.Write(prev)
 	}
 	fmt.Fprintf(h, "%s|%s|%s|%v|%v|%v|%s|%s",
-		e.Event, e.ActorType, e.IP.String(),
+		e.Event, e.ActorType, canonicalIP(e.IP),
 		e.PlatformID, e.PartnerID, e.TenantID,
 		e.TargetType, e.TargetID)
 	h.Write(payload)
@@ -118,7 +122,8 @@ func (s *Service) Record(ctx context.Context, e Entry) error {
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		e.PlatformID, e.PartnerID, e.TenantID, e.ActorID,
 		e.ActorType, e.Event, e.TargetType, e.TargetID,
-		payload, ipOrNull(e.IP), nullIfEmpty(e.UserAgent), prev, hash,
+		string(payload), ipOrNull(e.IP), nullIfEmpty(e.UserAgent),
+		prev, hash,
 	)
 	if err != nil {
 		return fmt.Errorf("audit: insert: %w", err)
@@ -130,7 +135,7 @@ func (s *Service) Record(ctx context.Context, e Entry) error {
 // inconsistency, or 0 if the chain is intact.
 func (s *Service) Verify(ctx context.Context) (int64, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, event, actor_type, ip, platform_id, partner_id, tenant_id,
+		SELECT id, event, actor_type, host(ip), platform_id, partner_id, tenant_id,
 		       target_type, target_id, payload, chain_prev, chain_hash
 		  FROM audit_logs ORDER BY id ASC`)
 	if err != nil {
@@ -146,7 +151,7 @@ func (s *Service) Verify(ctx context.Context) (int64, error) {
 			platID          uuid.UUID
 			partID, tenID   *uuid.UUID
 			tType, tID      *string
-			payload         []byte
+			payload         string
 			chainPrev, hash []byte
 		)
 		if err := rows.Scan(&id, &event, &actor, &ipStr, &platID, &partID, &tenID,
@@ -161,8 +166,9 @@ func (s *Service) Verify(ctx context.Context) (int64, error) {
 			event, actor, derefStr(ipStr),
 			platID, partID, tenID,
 			derefStr(tType), derefStr(tID))
-		h.Write(payload)
+		h.Write([]byte(payload))
 		expect := h.Sum(nil)
+		_ = canonicalIP // see Record() — derefStr handles the same canonical empty-string form.
 		if !equal(expect, hash) {
 			return id, nil
 		}
@@ -174,6 +180,15 @@ func (s *Service) Verify(ctx context.Context) (int64, error) {
 func ipOrNull(ip net.IP) any {
 	if ip == nil {
 		return nil
+	}
+	return ip.String()
+}
+
+// canonicalIP returns the form that Verify will read back. A nil net.IP is
+// stored as SQL NULL, which Verify deserialises as the empty string.
+func canonicalIP(ip net.IP) string {
+	if ip == nil {
+		return ""
 	}
 	return ip.String()
 }

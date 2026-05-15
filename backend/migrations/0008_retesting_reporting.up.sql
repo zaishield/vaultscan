@@ -45,9 +45,14 @@ CREATE TABLE report_templates (
     report_type  TEXT NOT NULL,
     sections     JSONB NOT NULL DEFAULT '[]',
     template_html TEXT,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (COALESCE(partner_id, '00000000-0000-0000-0000-000000000000'), code)
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- UNIQUE constraints don't accept expressions; use a UNIQUE INDEX instead.
+CREATE UNIQUE INDEX report_templates_unique_idx
+    ON report_templates (
+        COALESCE(partner_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        code
+    );
 
 CREATE TABLE reports (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
