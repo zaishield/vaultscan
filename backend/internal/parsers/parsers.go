@@ -51,6 +51,14 @@ var Registry = map[string]ParseFunc{
 	"naabu":     ParseNaabu,
 	"katana":    ParseKatana,
 	"ffuf":      ParseFFUF,
+	// DevSecOps + offensive (§15.7 — parsers/devsec.go).
+	"sqlmap":    ParseSQLMap,
+	"gobuster":  ParseGobuster,
+	"dirsearch": ParseDirsearch,
+	"semgrep":   ParseSemgrep,
+	"gitleaks":  ParseGitleaks,
+	"hydra":     ParseHydra,
+	"recon-ng":  ParseReconNG,
 }
 
 func base(ctx Context) findings.IngestInput {
