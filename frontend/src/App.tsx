@@ -19,6 +19,15 @@ import { Remediation } from './pages/Remediation';
 import { Integrations } from './pages/Integrations';
 import { AuditTrail } from './pages/AuditTrail';
 import { Settings } from './pages/Settings';
+import { ScannerFarm } from './pages/ScannerFarm';
+import { AgentOps } from './pages/AgentOps';
+import { FindingClusters } from './pages/FindingClusters';
+import { ChainOfCustody } from './pages/ChainOfCustody';
+import { RetestBatches } from './pages/RetestBatches';
+import { Compliance } from './pages/Compliance';
+import { DeadLetterQueue } from './pages/DeadLetterQueue';
+import { PlatformOps } from './pages/PlatformOps';
+import { AuditForensics } from './pages/AuditForensics';
 import { useAuthStore } from './store/auth';
 
 export function App() {
@@ -43,8 +52,17 @@ export function App() {
           <Route path="/retesting" element={<Retesting />} />
           <Route path="/remediation" element={<Remediation />} />
           <Route path="/integrations" element={<Integrations />} />
+          <Route path="/integrations/dlq" element={<DeadLetterQueue />} />
           <Route path="/audit" element={<AuditTrail />} />
+          <Route path="/audit/forensics" element={<AuditForensics />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/scanner-farm" element={<ScannerFarm />} />
+          <Route path="/agents/ops" element={<AgentOps />} />
+          <Route path="/findings/clusters" element={<FindingClusters />} />
+          <Route path="/evidence/custody" element={<ChainOfCustody />} />
+          <Route path="/retesting/batches" element={<RetestBatches />} />
+          <Route path="/compliance" element={<Compliance />} />
+          <Route path="/platform" element={<PlatformOps />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Route>
