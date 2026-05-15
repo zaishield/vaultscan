@@ -75,7 +75,22 @@ func main() {
 
 	auditSvc := audit.New(pool.Pool)
 	bus := eventbus.New(pool.Pool)
-	vault, err := evidence.NewVault(pool.Pool, auditSvc, bus, cfg.EvidenceMasterKey)
+	storage, err := evidence.NewStorageFromConfig(evidence.StorageConfig{
+		Backend:          cfg.EvidenceBackend,
+		FilesystemRoot:   cfg.EvidenceFilesystemRoot,
+		S3Endpoint:       cfg.ObjectStoreURL,
+		S3Bucket:         cfg.ObjectStoreBucket,
+		S3Region:         cfg.ObjectStoreRegion,
+		S3AccessKey:      cfg.ObjectStoreKey,
+		S3SecretKey:      cfg.ObjectStoreSecret,
+		S3ForcePathStyle: cfg.EvidenceS3ForcePathStyle,
+		S3SSE:            cfg.EvidenceS3SSE,
+	})
+	if err != nil {
+		log.Fatal().Err(err).Msg("init evidence storage")
+	}
+	vault, err := evidence.NewVault(pool.Pool, auditSvc, bus, cfg.EvidenceMasterKey,
+		evidence.WithStorage(storage))
 	if err != nil {
 		log.Fatal().Err(err).Msg("init vault")
 	}

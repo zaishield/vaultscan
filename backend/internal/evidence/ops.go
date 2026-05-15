@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
 	"time"
 
@@ -176,16 +175,11 @@ func (v *Vault) PutWithDEK(ctx context.Context, tenantID uuid.UUID, body []byte)
 	if err != nil {
 		return "", 0, err
 	}
-	tenantDir := strings.Join([]string{v.rootDir, tenantID.String()}, "/")
-	if err := os.MkdirAll(tenantDir, 0o700); err != nil {
-		return "", 0, err
-	}
 	id := uuid.New()
-	if err := os.WriteFile(tenantDir+"/"+id.String()+".enc",
-		append(nonce, ct...), 0o600); err != nil {
-		return "", 0, err
+	if err := v.storage.Put(ctx, tenantID, id, append(nonce, ct...)); err != nil {
+		return "", 0, fmt.Errorf("evidence: storage.Put: %w", err)
 	}
-	return fmt.Sprintf("vaultscan://%s/%s", tenantID, id), version, nil
+	return objectURL(tenantID, id), version, nil
 }
 
 // RecordWithDEK is like Record but uses the tenant DEK envelope.
@@ -229,13 +223,13 @@ func (v *Vault) ReadWithDEK(ctx context.Context, evidenceID uuid.UUID, actor *uu
 		Scan(&tenantID, &storageURL, &keyVersion, &sha); err != nil {
 		return nil, err
 	}
-	path := vaultscanURLToPath(v.rootDir, storageURL)
-	if path == "" {
+	tid, oid, ok := parseObjectURL(storageURL)
+	if !ok || tid != tenantID {
 		return nil, errors.New("evidence: bad storage url")
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := v.storage.Get(ctx, tid, oid)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("evidence: storage.Get: %w", err)
 	}
 	if len(raw) < 12 {
 		return nil, errors.New("evidence: ciphertext too short")
@@ -278,11 +272,11 @@ func (v *Vault) VerifyIntegrity(ctx context.Context, evidenceID uuid.UUID) (bool
 		Scan(&tenantID, &storageURL, &keyVersion, &sha); err != nil {
 		return false, err
 	}
-	path := vaultscanURLToPath(v.rootDir, storageURL)
-	if path == "" {
+	tid, oid, ok := parseObjectURL(storageURL)
+	if !ok || tid != tenantID {
 		return false, errors.New("evidence: bad storage url")
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := v.storage.Get(ctx, tid, oid)
 	if err != nil {
 		_ = v.recordCustody(ctx, evidenceID, "integrity_failed", nil, "system", nil, "",
 			map[string]any{"error": err.Error()})
@@ -309,15 +303,15 @@ func (v *Vault) VerifyIntegrity(ctx context.Context, evidenceID uuid.UUID) (bool
 	}
 	digest := sha256.Sum256(plain)
 	got := hex.EncodeToString(digest[:])
-	ok := got == sha
+	matched := got == sha
 	ev := "integrity_verified"
-	if !ok {
+	if !matched {
 		ev = "integrity_failed"
 	}
 	_ = v.recordCustody(ctx, evidenceID, ev, nil, "system", nil, "", map[string]any{
 		"expected": sha, "observed": got,
 	})
-	return ok, nil
+	return matched, nil
 }
 
 // EnableWORM locks an evidence object: SweepExpired skips it, delete
@@ -353,8 +347,8 @@ func (v *Vault) PurgeWithWORMCheck(ctx context.Context, evidenceID uuid.UUID, ac
 			map[string]any{"reason": reason, "blocked_by": "worm"})
 		return false, nil
 	}
-	if path := vaultscanURLToPath(v.rootDir, url); path != "" {
-		_ = os.Remove(path)
+	if tid, oid, ok := parseObjectURL(url); ok {
+		_ = v.storage.Delete(ctx, tid, oid)
 	}
 	if _, err := v.pool.Exec(ctx,
 		`UPDATE finding_evidence SET purged_at=now() WHERE id=$1`, evidenceID); err != nil {

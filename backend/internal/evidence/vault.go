@@ -32,14 +32,22 @@ type Vault struct {
 	pool       *pgxpool.Pool
 	audit      *audit.Service
 	bus        *eventbus.Bus
-	rootDir    string
+	storage    Storage
+	rootDir    string  // legacy: used only when no explicit Storage is set
 	masterKey  []byte
 	urlTTL     time.Duration
 }
 
 type Option func(*Vault)
 
+// WithFilesystem mints a FilesystemStorage rooted at dir. Equivalent
+// to WithStorage(NewFilesystemStorage(dir)).
 func WithFilesystem(dir string) Option        { return func(v *Vault) { v.rootDir = dir } }
+
+// WithStorage attaches a custom Storage backend (S3, MinIO, in-memory
+// for tests, etc). Takes precedence over WithFilesystem.
+func WithStorage(s Storage) Option            { return func(v *Vault) { v.storage = s } }
+
 func WithURLTTL(ttl time.Duration) Option     { return func(v *Vault) { v.urlTTL = ttl } }
 
 func NewVault(pool *pgxpool.Pool, a *audit.Service, b *eventbus.Bus, masterKeyB64 string, opts ...Option) (*Vault, error) {
@@ -56,8 +64,12 @@ func NewVault(pool *pgxpool.Pool, a *audit.Service, b *eventbus.Bus, masterKeyB6
 	for _, o := range opts {
 		o(v)
 	}
-	if err := os.MkdirAll(v.rootDir, 0o700); err != nil {
-		return nil, err
+	if v.storage == nil {
+		fs, err := NewFilesystemStorage(v.rootDir)
+		if err != nil {
+			return nil, err
+		}
+		v.storage = fs
 	}
 	return v, nil
 }
@@ -74,9 +86,10 @@ type PutInput struct {
 	UploadedBy   *uuid.UUID
 }
 
-// Put encrypts the body and stores it. The returned URL is an internal
-// reference (vaultscan://...) suitable for storage in the DB; a signed
-// download URL is generated on read.
+// Put encrypts the body and stores it via the configured Storage
+// backend. The returned URL is an internal reference (vaultscan://...)
+// suitable for storage in the DB; a signed download URL is generated
+// on read.
 func (v *Vault) Put(ctx context.Context, in PutInput) (storageURL string, err error) {
 	if in.TenantID == uuid.Nil {
 		return "", errors.New("evidence: tenant_id required")
@@ -85,16 +98,11 @@ func (v *Vault) Put(ctx context.Context, in PutInput) (storageURL string, err er
 	if err != nil {
 		return "", err
 	}
-	tenantDir := filepath.Join(v.rootDir, in.TenantID.String())
-	if err := os.MkdirAll(tenantDir, 0o700); err != nil {
-		return "", err
-	}
 	id := uuid.New()
-	objectKey := filepath.Join(tenantDir, id.String()+".enc")
-	if err := os.WriteFile(objectKey, append(nonce, ciphertext...), 0o600); err != nil {
-		return "", err
+	if err := v.storage.Put(ctx, in.TenantID, id, append(nonce, ciphertext...)); err != nil {
+		return "", fmt.Errorf("evidence: storage.Put: %w", err)
 	}
-	return fmt.Sprintf("vaultscan://%s/%s", in.TenantID, id), nil
+	return objectURL(in.TenantID, id), nil
 }
 
 // Record creates a finding_evidence row for an existing object.
@@ -140,13 +148,16 @@ func (v *Vault) Read(ctx context.Context, evidenceID uuid.UUID, actor *uuid.UUID
 	if err != nil {
 		return nil, nil, err
 	}
-	objectKey := vaultscanURLToPath(v.rootDir, ev.StorageURL)
-	if objectKey == "" {
+	tenantID, objectID, ok := parseObjectURL(ev.StorageURL)
+	if !ok {
 		return nil, nil, errors.New("evidence: bad storage url")
 	}
-	raw, err := os.ReadFile(objectKey)
+	if tenantID != ev.TenantID {
+		return nil, nil, errors.New("evidence: tenant id mismatch in storage url")
+	}
+	raw, err := v.storage.Get(ctx, tenantID, objectID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("evidence: storage.Get: %w", err)
 	}
 	if len(raw) < 12 {
 		return nil, nil, errors.New("evidence: ciphertext too short")
@@ -219,9 +230,12 @@ func (v *Vault) SweepExpired(ctx context.Context) (int, error) {
 	}
 	purged := 0
 	for _, p := range pending {
-		objPath := vaultscanURLToPath(v.rootDir, p.url)
-		if objPath != "" {
-			_ = os.Remove(objPath) // missing file is OK — row state catches up
+		if tenantID, objectID, ok := parseObjectURL(p.url); ok {
+			if delErr := v.storage.Delete(ctx, tenantID, objectID); delErr != nil {
+				// Don't fail the whole sweep on a single delete failure;
+				// the row stays unpurged so we'll retry next tick.
+				continue
+			}
 		}
 		if _, err := v.pool.Exec(ctx,
 			`UPDATE finding_evidence SET purged_at = now() WHERE id=$1`, p.id); err != nil {

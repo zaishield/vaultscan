@@ -39,6 +39,20 @@ type Config struct {
 	EvidenceMasterKey  string  // base64; AES-256 master key for evidence at-rest envelope encryption
 	EvidenceURLTTL     time.Duration
 
+	// EvidenceBackend selects the storage adapter the evidence vault uses.
+	//   "filesystem" — local disk (dev / single-node only)
+	//   "s3"         — S3-compatible object store (AWS S3, MinIO, Ceph,
+	//                  R2, Backblaze, Wasabi). Reads ObjectStore* fields.
+	EvidenceBackend         string
+	EvidenceFilesystemRoot  string
+	// EvidenceS3ForcePathStyle = true (default) for MinIO/Ceph/AWS path
+	// addressing; false for AWS virtual-host (https://bucket.s3.<region>.amazonaws.com/key).
+	EvidenceS3ForcePathStyle bool
+	// EvidenceS3SSE: optional X-Amz-Server-Side-Encryption header value
+	// ("AES256" | "aws:kms" | ""). Adds a second SSE layer on top of the
+	// vault's envelope encryption.
+	EvidenceS3SSE           string
+
 	// ScannerPullKey is the 32-byte (base64) KEK that wraps scanner image-pull
 	// credentials. Distinct from EvidenceMasterKey so a vault-key rotation
 	// doesn't disturb scanner credentials and vice versa.
@@ -90,6 +104,10 @@ func Load() (*Config, error) {
 		SecretsToken:      os.Getenv("VAULTSCAN_SECRETS_TOKEN"),
 		EvidenceMasterKey: getenv("VAULTSCAN_EVIDENCE_MASTER_KEY",
 			"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA="),
+		EvidenceBackend:        getenv("VAULTSCAN_EVIDENCE_BACKEND", "filesystem"),
+		EvidenceFilesystemRoot: os.Getenv("VAULTSCAN_EVIDENCE_FS_ROOT"),
+		EvidenceS3ForcePathStyle: getenv("VAULTSCAN_EVIDENCE_S3_FORCE_PATH_STYLE", "true") == "true",
+		EvidenceS3SSE:          os.Getenv("VAULTSCAN_EVIDENCE_S3_SSE"),
 		ScannerPullKey: getenv("VAULTSCAN_SCANNER_PULL_KEY",
 			"ZGV2LXNjYW5uZXItcHVsbC1tYXN0ZXIta2V5LTAwMDA="),
 		AgentGatewayCertPath: os.Getenv("VAULTSCAN_AGENT_GW_CERT"),
