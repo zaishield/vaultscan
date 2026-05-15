@@ -30,19 +30,27 @@ type ParseFunc func(ctx Context, raw []byte) ([]findings.IngestInput, error)
 
 // Registry maps tool codes to their parser implementations.
 var Registry = map[string]ParseFunc{
-	"nmap":     ParseNmap,
-	"openvas":  ParseOpenVAS,
-	"zap":      ParseZAP,
-	"nuclei":   ParseNuclei,
-	"testssl":  ParseTestSSL,
-	"sslyze":   ParseSslyze,
-	"trivy":    ParseTrivy,
-	"prowler":  ParseProwler,
+	"nmap":       ParseNmap,
+	"openvas":    ParseOpenVAS,
+	"zap":        ParseZAP,
+	"nuclei":     ParseNuclei,
+	"testssl":    ParseTestSSL,
+	"sslyze":     ParseSslyze,
+	"trivy":      ParseTrivy,
+	"prowler":    ParseProwler,
 	"kube-bench": ParseKubeBench,
-	"lynis":    ParseLynis,
+	"lynis":      ParseLynis,
 	"bloodhound": ParseBloodhound,
-	"netexec":  ParseNetexec,
-	"mobsf":    ParseMobSF,
+	"netexec":    ParseNetexec,
+	"mobsf":      ParseMobSF,
+	// Discovery parsers (parsers/discovery.go).
+	"amass":     ParseAmass,
+	"subfinder": ParseSubfinder,
+	"dnsx":      ParseDNSx,
+	"httpx":     ParseHTTPX,
+	"naabu":     ParseNaabu,
+	"katana":    ParseKatana,
+	"ffuf":      ParseFFUF,
 }
 
 func base(ctx Context) findings.IngestInput {
