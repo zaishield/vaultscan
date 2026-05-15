@@ -508,6 +508,15 @@ func Mount(s *Services) http.Handler {
 		// JWT key rotation (admin only, MFA-gated).
 		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
 			Post("/api/v1/auth/jwt-keys/rotate", rotateJWTKey(s))
+
+		// §24 Mobile portal — thin surface for iOS / Android.
+		// All routes require authentication; emergency-stop adds MFA.
+		r.Post("/api/v1/mobile/devices", enrollMobileDevice(s))
+		r.Delete("/api/v1/mobile/devices/{device_id}", revokeMobileDevice(s))
+		r.Get("/api/v1/mobile/dashboard", mobileDashboard(s))
+		r.Post("/api/v1/mobile/alerts/ack", mobileAckAlert(s))
+		r.With(middleware.RequirePermission("trigger_emergency_stop"), middleware.RequireMFA()).
+			Post("/api/v1/mobile/emergency-stop", mobileEmergencyStop(s))
 	})
 
 	return r
