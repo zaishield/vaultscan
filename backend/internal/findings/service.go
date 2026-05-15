@@ -100,6 +100,14 @@ func (s *Service) Upsert(ctx context.Context, in IngestInput) (*models.Finding, 
 	if in.Confidence == "" {
 		in.Confidence = "medium"
 	}
+	// VS-07: apply tenant severity overrides BEFORE the canonical insert so
+	// the persisted row carries the overridden severity (which means SLA
+	// computation in the same tx uses the corrected value).
+	overriddenFrom := ""
+	if newSev, prev, err := s.ApplyOverrides(ctx, in.TenantID, in); err == nil && newSev != in.Severity {
+		overriddenFrom = prev
+		in.Severity = newSev
+	}
 	fp := dedupFingerprint(in)
 	refs, _ := json.Marshal(in.References)
 	id := uuid.New()
@@ -158,6 +166,21 @@ func (s *Service) Upsert(ctx context.Context, in IngestInput) (*models.Finding, 
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, err
+	}
+	// VS-07: stamp the override audit trail + attach the similarity cluster
+	// + evaluate suppression rules. Each one short-circuits cleanly on no-op.
+	if isNew && overriddenFrom != "" {
+		_, _ = s.pool.Exec(ctx,
+			`UPDATE findings SET severity_overridden_from=$2 WHERE id=$1`,
+			newID, overriddenFrom)
+	}
+	if isNew {
+		if _, err := s.AttachCluster(ctx, newID, in); err != nil {
+			return nil, false, fmt.Errorf("findings: attach cluster: %w", err)
+		}
+		if ruleID, reason, err := s.EvaluateSuppression(ctx, in.TenantID, in, in.AffectedEndpoint); err == nil && ruleID != uuid.Nil {
+			_ = s.MarkSuppressed(ctx, newID, ruleID, reason)
+		}
 	}
 	f, err := s.Get(ctx, newID)
 	if err != nil {
