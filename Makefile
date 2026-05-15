@@ -1,43 +1,97 @@
 SHELL := /bin/bash
-.PHONY: help bootstrap up down restart logs migrate seed test backend-build agent-build frontend-build vet
+COMPOSE := docker compose -f infra/compose/docker-compose.yml
 
-help:
-	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/	/' | column -t -s'	'
+.PHONY: help bootstrap doctor up down restart logs migrate seed urls reset \
+        test backend-build agent-build frontend-build vet integration-test
 
-bootstrap: ## Build images and bring up the stack
-	cd infra/compose && docker compose build && docker compose up -d
-	$(MAKE) migrate
+help: ## Show this help
+	@awk -F':.*##' '/^[a-zA-Z_-]+:.*##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-up: ## Start the local stack
-	cd infra/compose && docker compose up -d
+# ----------------------------------------------------------------------------
+# Local stack lifecycle (container-only — no host Go/Node required)
+# ----------------------------------------------------------------------------
 
-down: ## Tear down the local stack
-	cd infra/compose && docker compose down
+bootstrap: doctor up wait-db migrate seed urls ## Bring up the full stack from a cold start
 
-restart: down up ## Restart the local stack
+doctor: ## Verify Docker + Compose are available
+	@docker version --format '{{.Server.Version}}' >/dev/null 2>&1 || { \
+	  echo "✗ Docker daemon not reachable. Start Docker Desktop (mac/win) or"; \
+	  echo "  'sudo systemctl start docker' (linux)."; exit 1; }
+	@docker compose version --short >/dev/null 2>&1 || { \
+	  echo "✗ docker compose v2 plugin not found."; \
+	  echo "  Install: apt-get install docker-compose-plugin  (or upgrade Docker Desktop)"; exit 1; }
+	@printf "✓ docker %s, compose %s\n" \
+	  "$$(docker version --format '{{.Server.Version}}')" \
+	  "$$(docker compose version --short)"
 
-logs: ## Tail logs
-	cd infra/compose && docker compose logs -f --tail=200
+up: ## Build images and bring up the long-running services
+	$(COMPOSE) up -d --build postgres opensearch minio keycloak nats
+	$(COMPOSE) build api agent-gateway portal
+	$(COMPOSE) up -d api agent-gateway portal
 
-migrate: ## Run pending migrations against local Postgres
-	cd backend && VAULTSCAN_DATABASE_URL=postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable go run ./cmd/migrate -dir migrations
+wait-db: ## Block until Postgres is accepting connections
+	@printf "Waiting for Postgres "
+	@for i in $$(seq 1 90); do \
+	  if $(COMPOSE) exec -T postgres pg_isready -U vaultscan -d vaultscan >/dev/null 2>&1; then \
+	    echo " ready"; exit 0; \
+	  fi; printf "."; sleep 1; \
+	done; echo " timeout"; exit 1
 
-seed: ## Insert demo tenants/engagements/findings
-	cd backend && VAULTSCAN_DATABASE_URL=postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable go run ./cmd/seed || echo "seed binary not yet built; uses default migrations seed"
+migrate: ## Run pending schema migrations (idempotent)
+	$(COMPOSE) run --rm migrate
 
-backend-build: ## Build all Go binaries
+seed: ## Insert demo distributor / MSSP / tenant / engagement / findings
+	$(COMPOSE) run --rm seed
+
+urls: ## Print local URLs once the stack is up
+	@echo
+	@echo "VAULTSCAN is up:"
+	@echo "  Portal     http://localhost:5173"
+	@echo "  API        http://localhost:8080/healthz"
+	@echo "  Agent GW   http://localhost:8443"
+	@echo "  Keycloak   http://localhost:8081  (admin / admin)"
+	@echo "  MinIO      http://localhost:9001  (vaultscan / vaultscan-dev-secret)"
+	@echo "  OpenSearch http://localhost:9200"
+	@echo
+	@echo "Default credentials: docs/operations/local-dev.md"
+
+down: ## Stop the stack (keeps volumes)
+	$(COMPOSE) down
+
+restart: down up ## Restart the stack
+
+reset: ## Stop the stack AND wipe all data volumes (destructive)
+	$(COMPOSE) down -v
+	@rm -rf /tmp/vaultscan-evidence /tmp/vaultscan-agent 2>/dev/null || true
+	@echo "✓ all VAULTSCAN volumes removed"
+
+logs: ## Tail logs from every service
+	$(COMPOSE) logs -f --tail=200
+
+# ----------------------------------------------------------------------------
+# Build / test (require Go / Node on host — for hacking, not for deployment)
+# ----------------------------------------------------------------------------
+
+backend-build: ## Build all Go backend binaries
 	cd backend && CGO_ENABLED=0 go build ./...
 
-agent-build: ## Build the internal agent
+agent-build: ## Build the internal agent binary
 	cd agent && CGO_ENABLED=0 go build ./...
 
-frontend-build: ## Build the React portal
+frontend-build: ## Build the portal production bundle
 	cd frontend && npm install --silent && npm run build
 
-vet: ## Run go vet across both modules
+vet: ## Run go vet across both Go modules
 	cd backend && go vet ./...
-	cd agent && go vet ./...
+	cd agent   && go vet ./...
 
-test: ## Run all unit tests
+test: ## Run all unit tests (host Go required)
 	cd backend && go test ./...
-	cd agent && go test ./...
+	cd agent   && go test ./...
+
+integration-test: ## Run integration tests against the live compose Postgres
+	$(COMPOSE) up -d postgres
+	@$(MAKE) --no-print-directory wait-db
+	$(COMPOSE) run --rm migrate
+	cd backend && VAULTSCAN_TEST_DATABASE_URL=postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable \
+	  go test -tags=integration -count=1 -v ./test/integration/...
