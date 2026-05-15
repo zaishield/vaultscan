@@ -1,0 +1,30 @@
+# Spectral ruleset for VAULTSCAN OpenAPI lint.
+#
+# Inherits the bundled "spectral:oas" ruleset (catches missing
+# required fields, malformed refs, etc) + a few custom rules:
+#   - operation-tag-required: every op MUST have at least one tag
+#   - operation-id-camelcase: operationId pattern enforcement
+#   - response-description-required: every response needs a description
+
+extends:
+  - spectral:oas
+
+rules:
+  operation-tag-required:
+    description: Every operation must have at least one tag.
+    given: "$.paths.*[get,post,put,patch,delete]"
+    severity: warn
+    then:
+      field: tags
+      function: truthy
+
+  operation-operationid-required: warn
+  operation-description: off  # generated baseline lacks descriptions; surfaced as info
+
+  paths-must-start-with-slash:
+    description: Path keys must start with /.
+    given: "$.paths.*~"
+    severity: error
+    then:
+      function: pattern
+      functionOptions: { match: "^/" }

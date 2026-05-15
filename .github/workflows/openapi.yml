@@ -1,0 +1,70 @@
+name: openapi
+
+# Validates the API surface contract:
+#   1. Drift check — re-run the oasgen Python script and confirm the
+#      committed openapi.yaml hasn't fallen behind the chi route table.
+#      A new route in code without spec coverage fails CI.
+#   2. Spectral lint — runs the OpenAPI spec through Spectral with
+#      our ruleset (.spectral.yaml).
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  drift-check:
+    name: spec-vs-route-table drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: install python yaml
+        run: pip install --quiet pyyaml
+      - name: regenerate spec
+        run: |
+          python3 backend/cmd/oasgen/generate.py /tmp/openapi.regen.yaml
+      - name: compare counts
+        run: |
+          # The committed spec MAY be deeper than the generated baseline
+          # (hand-tuned schemas) but MUST cover every (method, path) the
+          # baseline emits. Diff path keys, fail on missing routes.
+          python3 - <<'PY'
+          import yaml
+          regen = yaml.safe_load(open("/tmp/openapi.regen.yaml"))
+          live  = yaml.safe_load(open("docs/api/openapi.yaml"))
+          regen_paths = set()
+          for path, methods in regen["paths"].items():
+            for method in methods:
+              regen_paths.add(f"{method.upper()} {path}")
+          live_paths = set()
+          for path, methods in live["paths"].items():
+            for method in methods:
+              live_paths.add(f"{method.upper()} {path}")
+          missing = regen_paths - live_paths
+          if missing:
+            print("FAIL: routes in code without OpenAPI coverage:")
+            for m in sorted(missing):
+              print("  ", m)
+            print("Run: python3 backend/cmd/oasgen/generate.py docs/api/openapi.yaml")
+            exit(1)
+          print(f"OK: {len(live_paths)} routes documented; baseline expects {len(regen_paths)}")
+          PY
+
+  spectral-lint:
+    name: spectral lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: install spectral
+        run: npm install -g @stoplight/spectral-cli@6.11
+      - name: lint
+        run: spectral lint --ruleset docs/api/.spectral.yaml docs/api/openapi.yaml
