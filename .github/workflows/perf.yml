@@ -1,0 +1,151 @@
+name: perf
+
+# Runs the smoke tier of the k6 load suite against an ephemeral
+# in-CI stack on every push. The full baseline (api_steady,
+# api_spike, scan_submit_burst, findings_ingest_burst,
+# emergency_stop_sla) only runs on a manual workflow_dispatch — it
+# takes ~12 minutes and is too expensive for every PR.
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "smoke (fast, every PR) or baseline (full suite)"
+        type: choice
+        required: true
+        default: smoke
+        options: [smoke, baseline]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: k6 API smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name != 'workflow_dispatch' || inputs.tier == 'smoke'
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vaultscan
+          POSTGRES_PASSWORD: vaultscan
+          POSTGRES_DB: vaultscan
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vaultscan"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: backend/go.sum
+      - name: install k6
+        run: |
+          curl -fsSL https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6
+      - name: build api
+        working-directory: backend
+        env:
+          VAULTSCAN_DATABASE_URL: postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable
+        run: |
+          go build -o /tmp/api ./cmd/api
+      - name: run migrations
+        working-directory: backend
+        env:
+          PGURL: postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable
+        run: |
+          for f in migrations/*.up.sql; do
+            psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f" || true
+          done
+      - name: start api
+        env:
+          VAULTSCAN_DATABASE_URL: postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable
+          VAULTSCAN_ENV: development
+        run: |
+          /tmp/api &
+          echo $! > /tmp/api.pid
+          # Wait for healthz.
+          for i in {1..30}; do
+            if curl -sf http://localhost:8080/healthz >/dev/null; then
+              echo "API up"; break
+            fi
+            sleep 1
+          done
+      - name: smoke test
+        env:
+          VAULTSCAN_API_URL: http://localhost:8080
+          VAULTSCAN_TENANT_ID: 00000000-0000-0000-0000-000000000001
+        run: k6 run --quiet perf/scenarios/api_smoke.js
+      - name: stop api
+        if: always()
+        run: |
+          [ -f /tmp/api.pid ] && kill "$(cat /tmp/api.pid)" || true
+
+  baseline:
+    name: k6 full baseline (~12 min)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: github.event_name == 'workflow_dispatch' && inputs.tier == 'baseline'
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vaultscan
+          POSTGRES_PASSWORD: vaultscan
+          POSTGRES_DB: vaultscan
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U vaultscan"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: backend/go.sum
+      - name: install k6 + jq
+        run: |
+          curl -fsSL https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6 jq
+      - name: build + run api
+        env:
+          VAULTSCAN_DATABASE_URL: postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable
+          VAULTSCAN_ENV: development
+        working-directory: backend
+        run: |
+          go build -o /tmp/api ./cmd/api
+          for f in migrations/*.up.sql; do
+            psql "$VAULTSCAN_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f" || true
+          done
+          /tmp/api &
+          echo $! > /tmp/api.pid
+          for i in {1..30}; do
+            curl -sf http://localhost:8080/healthz && break
+            sleep 1
+          done
+      - name: full baseline
+        env:
+          VAULTSCAN_API_URL: http://localhost:8080
+          VAULTSCAN_TENANT_ID: 00000000-0000-0000-0000-000000000001
+        run: ./perf/run-baseline.sh local
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-baseline-${{ github.run_id }}
+          path: perf/results/
