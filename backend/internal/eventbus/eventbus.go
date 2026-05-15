@@ -69,6 +69,10 @@ type Bus struct {
 	// External sinks (NATS / Kafka / etc.) — see external.go.
 	extMu sync.RWMutex
 	ext   []ExternalSink
+	// extWg tracks in-flight external Forward goroutines so DrainExternal
+	// can block on shutdown until they complete (or the drain deadline
+	// trips).
+	extWg sync.WaitGroup
 }
 
 func New(pool *pgxpool.Pool) *Bus {

@@ -38,6 +38,17 @@ type Service struct {
 	// InitialBackoff is the wait before the second attempt. Each
 	// subsequent attempt doubles the wait. Default 1s.
 	InitialBackoff time.Duration
+
+	// pool is the worker pool used by the bus-fanout path. nil → falls
+	// back to legacy `go s.deliver(...)` (single-pod dev only).
+	workerPool *WorkerPool
+}
+
+// AttachWorkerPool installs a bounded worker pool on the service.
+// fanout will Submit() jobs to the pool; if the pool is full the job
+// is delivered inline (best-effort backpressure).
+func (s *Service) AttachWorkerPool(p *WorkerPool) {
+	s.workerPool = p
 }
 
 func New(pool *pgxpool.Pool, bus *eventbus.Bus, a *audit.Service) *Service {
@@ -266,11 +277,13 @@ func statusLabel(r *TestResult) string {
 }
 
 // Wire subscribes the integration service to every event in eventbus.AllEventTypes
-// and dispatches matching deliveries to enabled integrations.
+// and dispatches matching deliveries to enabled integrations. The
+// caller-provided context is propagated to the bus subscription so
+// shutdown cancels in-flight queries.
 func (s *Service) Wire(bus *eventbus.Bus) {
 	for _, et := range eventbus.AllEventTypes() {
 		bus.Subscribe(et, func(ctx context.Context, ev eventbus.Event) {
-			s.fanout(context.Background(), ev)
+			s.fanout(ctx, ev)
 		})
 	}
 }
@@ -302,7 +315,23 @@ func (s *Service) fanout(ctx context.Context, ev eventbus.Event) {
 		}
 		var config map[string]any
 		_ = json.Unmarshal(cfg, &config)
-		go s.deliver(context.Background(), id, itype, name, config, ev)
+		job := DeliveryJob{
+			IntegrationID: id, Type: itype, Name: name,
+			Config: config, Event: ev,
+		}
+		// Prefer the bounded pool. If unavailable or saturated, fall
+		// back to inline delivery (synchronously) so the caller
+		// experiences backpressure rather than an unbounded goroutine
+		// fan-out.
+		if s.workerPool != nil {
+			if s.workerPool.Submit(job) {
+				continue
+			}
+		}
+		// Backpressure path: deliver synchronously in the bus subscriber's
+		// goroutine. The bus already runs subscribers in their own
+		// goroutines so this doesn't pin the publisher.
+		s.deliver(ctx, id, itype, name, config, ev)
 	}
 }
 

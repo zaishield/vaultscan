@@ -41,17 +41,38 @@ func (b *Bus) AttachExternal(sink ExternalSink) {
 
 // publishExternal is invoked at the tail of Publish. Defined here so
 // the core eventbus.go doesn't grow a NATS dependency.
+//
+// Goroutine governance: each Forward runs in its own goroutine with a
+// 5s deadline. The Bus tracks them via b.extWg so DrainExternal can
+// block on shutdown until they all finish (or its own deadline trips).
 func (b *Bus) publishExternal(ev Event) {
 	b.extMu.RLock()
 	sinks := append([]ExternalSink(nil), b.ext...)
 	b.extMu.RUnlock()
 	for _, s := range sinks {
-		// Fire-and-forget; each adapter owns its own retry semantics.
+		b.extWg.Add(1)
 		go func(sink ExternalSink) {
+			defer b.extWg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			_ = sink.Forward(ctx, ev)
 		}(s)
+	}
+}
+
+// DrainExternal blocks until either every in-flight external publish
+// goroutine has returned, or the deadline elapses. Caller is expected
+// to invoke this from main's shutdown sequence after http.Server
+// has stopped accepting new requests.
+func (b *Bus) DrainExternal(deadline time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		b.extWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(deadline):
 	}
 }
 

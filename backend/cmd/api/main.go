@@ -132,6 +132,11 @@ func main() {
 	retestSvc := retesting.New(pool.Pool, auditSvc, bus, findSvc, orch)
 	reportSvc := reporting.New(pool.Pool, brand, vault, auditSvc, bus)
 	intSvc := integrations.New(pool.Pool, bus, auditSvc)
+	// Bounded worker pool for outbound deliveries. Replaces the prior
+	// `go s.deliver(...)` fan-out which (a) was unbounded and (b) used
+	// context.Background() so SIGTERM killed in-flight calls mid-DLQ-write.
+	deliverPool := integrations.NewWorkerPool(ctx, intSvc, 16, 256)
+	intSvc.AttachWorkerPool(deliverPool)
 	intSvc.Wire(bus)
 	dashSvc := dashboards.New(pool.Pool)
 	userSvc := users.New(pool.Pool, auditSvc)
@@ -224,5 +229,13 @@ func main() {
 	log.Info().Msg("shutdown requested")
 	shctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	// Drain HTTP first so no new outbound deliveries are queued; then
+	// drain the worker pool (10s grace) so in-flight DLQ writes land.
 	_ = srv.Shutdown(shctx)
+	deliverPool.Shutdown(10 * time.Second)
+	if n := deliverPool.OverflowCount(); n > 0 {
+		log.Warn().Int("dropped", n).Msg("integration deliveries dropped due to queue saturation")
+	}
+	// Drain in-flight external bus sinks (NATS Forward goroutines).
+	bus.DrainExternal(5 * time.Second)
 }
