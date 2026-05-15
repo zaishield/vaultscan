@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/zaishield/vaultscan/backend/internal/audit"
+	"github.com/zaishield/vaultscan/backend/internal/cosign"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
@@ -42,27 +43,31 @@ type Worker struct {
 }
 
 type Config struct {
-	Region        string
-	NodeID        *uuid.UUID
-	SignerPubPEM  string
-	Poll          time.Duration
-	MaxConcurrent int
+	Region            string
+	NodeID            *uuid.UUID
+	SignerPubPEM      string
+	Poll              time.Duration
+	MaxConcurrent     int
+	RequireSignatures bool // production: true. Refuses unsigned scanner images.
 }
 
 func NewWorker(log zerolog.Logger, pool *pgxpool.Pool, cfg Config,
-	vault *evidence.Vault, findSvc *findings.Service, auditSvc *audit.Service, bus *eventbus.Bus) *Worker {
+	vault *evidence.Vault, findSvc *findings.Service, auditSvc *audit.Service,
+	bus *eventbus.Bus, cosignSvc *cosign.Service) *Worker {
 	if cfg.Poll <= 0 {
 		cfg.Poll = 5 * time.Second
 	}
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 4
 	}
+	reg := NewRegistry(pool, cosignSvc)
+	reg.RequireSignatures = cfg.RequireSignatures
 	return &Worker{
 		log:           log.With().Str("component", "scanner-worker").Str("region", cfg.Region).Logger(),
 		pool:          pool,
 		region:        cfg.Region,
 		nodeID:        cfg.NodeID,
-		registry:      NewRegistry(pool),
+		registry:      reg,
 		runner:        NewRunner(),
 		vault:         vault,
 		findings:      findSvc,
@@ -205,12 +210,14 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 			w.log.Warn().Err(err).Str("tool", tool).Msg("tool not in image registry — skipping")
 			continue
 		}
-		// Image digest verification (Blueprint §12.3). Dev runner doesn't
-		// have a digest; production K8s gives us the digest of the image
-		// the pod actually ran.
-		if err := w.registry.VerifyDigest(img, ""); err != nil {
-			w.failJob(ctx, j, err.Error())
-			return
+		// Image digest + cosign verification (Blueprint §12.3). VerifyImage
+		// chains the cheap digest check with the expensive crypto check;
+		// the dev runner doesn't expose a runtime digest so VerifyDigest
+		// soft-passes there, but the cosign path runs unconditionally.
+		if _, err := w.registry.VerifyImage(ctx, img, "", "external", nil); err != nil {
+			w.log.Warn().Err(err).Str("tool", tool).Str("image", img.Reference).
+				Msg("image verification rejected — skipping tool")
+			continue
 		}
 
 		res, err := w.runner.Run(ctx, tool, j.Targets, 30*time.Minute)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/config"
+	"github.com/zaishield/vaultscan/backend/internal/cosign"
 	"github.com/zaishield/vaultscan/backend/internal/db"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
@@ -67,12 +68,19 @@ func main() {
 		log.Info().Int("pem_bytes", len(pubKey)).Msg("cloud public key cached")
 	}
 
+	cosignSvc := cosign.New(pool.Pool)
+	// Production deployments set VAULTSCAN_REQUIRE_SIGNED_IMAGES=true so the
+	// worker refuses any image that lacks a verified cosign bundle. Default
+	// off so first-boot demos don't break.
+	requireSigs := os.Getenv("VAULTSCAN_REQUIRE_SIGNED_IMAGES") == "true"
+
 	worker := scanner.NewWorker(log, pool.Pool, scanner.Config{
-		Region:        region,
-		SignerPubPEM:  pubKey,
-		Poll:          5 * time.Second,
-		MaxConcurrent: 4,
-	}, vault, findSvc, auditSvc, bus)
+		Region:            region,
+		SignerPubPEM:      pubKey,
+		Poll:              5 * time.Second,
+		MaxConcurrent:     4,
+		RequireSignatures: requireSigs,
+	}, vault, findSvc, auditSvc, bus, cosignSvc)
 
 	go worker.Run(ctx)
 

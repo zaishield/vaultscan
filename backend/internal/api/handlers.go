@@ -23,6 +23,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/authdocs"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
+	"github.com/zaishield/vaultscan/backend/internal/cosign"
 	"github.com/zaishield/vaultscan/backend/internal/dashboards"
 	"github.com/zaishield/vaultscan/backend/internal/email"
 	"github.com/zaishield/vaultscan/backend/internal/engagements"
@@ -2121,6 +2122,123 @@ func drillRecentScans(s *Services) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	}
+}
+
+// ----- Cosign trust policy handlers ----------------------------------------
+
+func listCosignKeys(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		keys, err := s.Cosign.ListKeys(r.Context())
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		// Strip the parsed public key field for JSON safety.
+		type out struct {
+			ID, KeyID, Algorithm, Plane, Subject, Issuer string
+			Enabled                                      bool
+		}
+		safe := make([]out, 0, len(keys))
+		for _, k := range keys {
+			safe = append(safe, out{
+				ID: k.ID.String(), KeyID: k.KeyID, Algorithm: k.Algorithm,
+				Plane: k.Plane, Subject: k.Subject, Issuer: k.Issuer, Enabled: k.Enabled,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": safe})
+	}
+}
+
+type registerCosignKeyReq struct {
+	KeyID        string `json:"key_id"`
+	Algorithm    string `json:"algorithm"` // ecdsa-p256-sha256 | rsa-pss-sha256
+	PublicKeyPEM string `json:"public_key_pem"`
+	Plane        string `json:"plane"`
+	Subject      string `json:"subject,omitempty"`
+	Issuer       string `json:"issuer,omitempty"`
+}
+
+func registerCosignKey(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req registerCosignKeyReq
+		if err := decode(r, &req); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		id, err := s.Cosign.Register(r.Context(), cosign.RegisterInput{
+			KeyID: req.KeyID, Algorithm: req.Algorithm,
+			PublicKeyPEM: req.PublicKeyPEM, Plane: req.Plane,
+			Subject: req.Subject, Issuer: req.Issuer,
+			RegisteredBy: &identity.UserID,
+		})
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]string{"id": id.String(), "key_id": req.KeyID})
+	}
+}
+
+func revokeCosignKey(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		keyID := chi.URLParam(r, "key_id")
+		if err := s.Cosign.Revoke(r.Context(), keyID); err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "revoked", "key_id": keyID})
+	}
+}
+
+// cosignVerifyTool dry-runs verification against the active trust policy
+// for the named tool's currently-registered image. Used by the ops
+// dashboard's "is my registry compliant?" indicator.
+func cosignVerifyTool(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tool := chi.URLParam(r, "tool")
+		plane := r.URL.Query().Get("plane")
+		if plane == "" {
+			plane = "both"
+		}
+		var (
+			ref, digest, payload, sig, keyID string
+			verifiedAt                       any
+		)
+		if err := s.Pool.QueryRow(r.Context(), `
+			SELECT image_ref, image_digest,
+			       COALESCE(cosign_payload,''), COALESCE(cosign_signature,''),
+			       COALESCE(cosign_key_id,''), cosign_verified_at
+			  FROM scanner_image_registry
+			 WHERE tool=$1 AND enabled=true
+			   AND (plane=$2 OR plane='both')
+			 ORDER BY registered_at DESC LIMIT 1`, tool, plane).
+			Scan(&ref, &digest, &payload, &sig, &keyID, &verifiedAt); err != nil {
+			notFound(w)
+			return
+		}
+		if payload == "" || sig == "" {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"tool": tool, "image_ref": ref, "digest": digest,
+				"decision": "no_signature_cached",
+				"reason":   "image has not been cosign-signed yet",
+			})
+			return
+		}
+		res, err := s.Cosign.VerifyImage(r.Context(), ref, digest,
+			cosign.Bundle{PayloadB64: payload, SignatureB64: sig, KeyID: keyID}, plane)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"tool": tool, "image_ref": ref, "digest": digest,
+			"decision":      res.Decision,
+			"reason":        res.Reason,
+			"matched_key":   res.MatchedKey,
+			"last_verified": verifiedAt,
+		})
 	}
 }
 

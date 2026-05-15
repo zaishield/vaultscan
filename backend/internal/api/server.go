@@ -19,6 +19,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/authdocs"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
 	"github.com/zaishield/vaultscan/backend/internal/config"
+	"github.com/zaishield/vaultscan/backend/internal/cosign"
 	"github.com/zaishield/vaultscan/backend/internal/dashboards"
 	"github.com/zaishield/vaultscan/backend/internal/email"
 	"github.com/zaishield/vaultscan/backend/internal/engagements"
@@ -62,6 +63,7 @@ type Services struct {
 	Dashboards   *dashboards.Service
 	Users        *users.Service
 	Email        *email.Service
+	Cosign       *cosign.Service
 }
 
 // Mount returns a fully wired HTTP router.

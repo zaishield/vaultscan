@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/zaishield/vaultscan/backend/internal/cosign"
 	"github.com/zaishield/vaultscan/backend/internal/scanner"
 	"github.com/zaishield/vaultscan/backend/internal/scanorch"
 )
@@ -72,7 +73,9 @@ func TestScannerWorker_EndToEnd(t *testing.T) {
 		SignerPubPEM:  pubPEM,
 		Poll:          200 * time.Millisecond,
 		MaxConcurrent: 1,
-	}, h.vault, h.findings, h.audit, h.bus)
+		// RequireSignatures stays false so this happy-path test exercises
+		// the legacy soft-pass: no cosign bundle cached on the registry rows.
+	}, h.vault, h.findings, h.audit, h.bus, cosign.New(h.pool))
 
 	ctx2, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -146,7 +149,7 @@ func TestScannerWorker_RejectsTamperedSignature(t *testing.T) {
 		SignerPubPEM:  wrongPub,
 		Poll:          200 * time.Millisecond,
 		MaxConcurrent: 1,
-	}, h.vault, h.findings, h.audit, h.bus)
+	}, h.vault, h.findings, h.audit, h.bus, cosign.New(h.pool))
 
 	ctx2, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
