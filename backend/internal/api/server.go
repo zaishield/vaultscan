@@ -145,6 +145,10 @@ func Mount(s *Services) http.Handler {
 			return s.Verifier.Parse(req.Context(), tok)
 		}))
 		r.Use(middleware.TenantScope("X-Tenant-Id"))
+		// TenantBinding pre-sets the Postgres GUC so RLS policies engage
+		// for the lifetime of this request. Must come AFTER Auth and
+		// TenantScope so the identity is resolved before we bind.
+		r.Use(middleware.TenantBinding(s.Pool))
 		rl := middleware.NewRateLimit(s.Cfg.RateLimitRPS)
 		r.Use(rl.Middleware())
 

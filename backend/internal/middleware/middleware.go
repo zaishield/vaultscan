@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/zaishield/vaultscan/backend/internal/auth"
+	"github.com/zaishield/vaultscan/backend/internal/db"
 )
 
 // AuthFunc is the JWT verifier injected by the API server.
@@ -85,6 +88,38 @@ func TenantScope(headerName string) func(http.Handler) http.Handler {
 				writeJSONError(w, http.StatusForbidden, "tenant_mismatch",
 					"identity is not bound to the requested tenant")
 				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// TenantBinding pre-sets the vaultscan.tenant_id GUC on the pool so the
+// RLS policies on every tenant-scoped table engage for the lifetime of
+// this request. The set_config(_, _, false) form sets at session scope;
+// pool connection reuse means a second request could inherit the GUC
+// briefly before this middleware overwrites it, so this is defense-in-
+// depth on top of the application's WHERE-clause filtering, not a sole
+// safety net.
+//
+// Behaviour:
+//   - identity has TenantID: SET vaultscan.tenant_id = '<uuid>' → RLS
+//     binds to that tenant.
+//   - identity has no TenantID (platform / partner role): leave GUC
+//     untouched (NULL → pass-through). If the previous request set a
+//     tenant, clear it explicitly to avoid leak between unrelated
+//     callers.
+//
+// Errors are logged-and-ignored: the WHERE-clause discipline still
+// applies, so a failed SET doesn't open a leak.
+func TenantBinding(pool *pgxpool.Pool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, _ := auth.FromContext(r.Context())
+			if id != nil && id.TenantID != nil {
+				_ = db.SetTenantContext(r.Context(), pool, *id.TenantID)
+			} else {
+				_ = db.ClearTenantContext(r.Context(), pool)
 			}
 			next.ServeHTTP(w, r)
 		})
