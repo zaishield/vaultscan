@@ -1,0 +1,43 @@
+{
+  "name": "vaultscan-mobile",
+  "version": "1.0.0",
+  "main": "expo/AppEntry.js",
+  "private": true,
+  "description": "ZAISHIELD VAULTSCAN mobile companion app (iOS + Android via Expo + React Native).",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "build:ios": "eas build --platform ios --profile production",
+    "build:android": "eas build --platform android --profile production",
+    "submit:ios": "eas submit --platform ios --profile production",
+    "submit:android": "eas submit --platform android --profile production",
+    "typecheck": "tsc --noEmit",
+    "test": "jest --watchAll=false"
+  },
+  "dependencies": {
+    "expo": "~52.0.0",
+    "expo-device": "~7.0.0",
+    "expo-notifications": "~0.29.0",
+    "expo-secure-store": "~14.0.0",
+    "expo-status-bar": "~2.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.0",
+    "@react-navigation/native": "^7.0.0",
+    "@react-navigation/native-stack": "^7.0.0",
+    "react-native-safe-area-context": "5.0.0",
+    "react-native-screens": "~4.4.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@types/jest": "^29.5.0",
+    "@types/react": "~18.3.0",
+    "jest": "^29.7.0",
+    "jest-expo": "~52.0.0",
+    "typescript": "^5.3.0"
+  },
+  "jest": {
+    "preset": "jest-expo"
+  }
+}
