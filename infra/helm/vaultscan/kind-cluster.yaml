@@ -1,0 +1,32 @@
+# kind-cluster.yaml — single-node kind cluster wired to a local
+# image registry on localhost:5000.
+#
+# Usage:
+#   docker run -d --restart=always -p 5000:5000 --name kind-registry registry:2
+#   kind create cluster --config infra/helm/vaultscan/kind-cluster.yaml
+#   docker network connect kind kind-registry
+#
+# After install, images pushed to localhost:5000 are pull-able by the
+# kubelet via the `containerdConfigPatches` block.
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: vaultscan-test
+
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5000"]
+      endpoint = ["http://kind-registry:5000"]
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP

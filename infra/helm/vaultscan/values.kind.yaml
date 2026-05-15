@@ -1,0 +1,93 @@
+# values.kind.yaml — overrides for a kind / k3d / ephemeral CI cluster.
+#
+# Strips the chart down to what fits in a single-node kind cluster:
+#   - 1 replica per workload (no PDB, no autoscaler)
+#   - In-cluster Postgres via the bitnami chart (or a sidecar — caller's
+#     choice; this file just wires the env var)
+#   - Image registry pointed at localhost:5000 (kind's local registry)
+#   - Disables ingress + NetworkPolicy so kind's default CNI doesn't
+#     have to support them
+#   - Fills the secret inline with non-production-but-non-default values
+#     that pass the production_guard validator (Env=development so guard
+#     is no-op anyway)
+#
+# Use:
+#   kind create cluster --config infra/helm/vaultscan/kind-cluster.yaml
+#   helm install vaultscan infra/helm/vaultscan -f infra/helm/vaultscan/values.kind.yaml \
+#     --set databases.external.postgresURL="postgres://..."
+
+global:
+  imageRegistry: localhost:5000
+  imageRepositoryPrefix: vaultscan
+  imageTag: kind-test
+  imagePullSecrets: []
+  env: development          # so the production_guard is bypassed
+  brandingDefaultPartnerSlug: zaishield-direct
+
+api:
+  replicaCount: 1
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi"   }
+  autoscaling:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+  ingress:
+    enabled: false
+
+agentGateway:
+  replicaCount: 1
+  service:
+    type: ClusterIP         # no LoadBalancer in kind
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
+
+portal:
+  replicaCount: 1
+  ingress:
+    enabled: false
+  resources:
+    requests: { cpu: "50m",  memory: "64Mi" }
+    limits:   { cpu: "200m", memory: "256Mi" }
+
+analyticsWorker:
+  replicaCount: 1
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
+
+databases:
+  external:
+    # Operator pre-creates a postgres in the cluster (bitnami helm
+    # chart, the kind script below uses a Pod manifest). The DSN is
+    # injected via --set on `helm install` so this file stays generic.
+    postgresURL: ""
+    opensearchURL: ""
+    objectStoreURL: ""
+    keycloakIssuer: ""
+    eventBusURL: ""
+
+# Use the inline secret block (not an external Secret resource) so the
+# kind installer doesn't need to pre-create anything.
+secrets:
+  existingSecret: ""
+  inline:
+    databaseURL: ""           # populated via --set on install
+    # Long, non-default values that would survive the production_guard
+    # if VAULTSCAN_ENV ever gets flipped to "production" by accident.
+    jwtSecret: "ci-kind-jwt-secret-deliberately-long-enough-to-pass-validator-zzzzzzzz"
+    evidenceMasterKey: "Ynl0ZXMtZ2VuZXJhdGVkLWZvci1raW5kLWNpLW9ubHktbm90LXByb2QwAA=="
+    jobSigningKey: ""
+    objectStoreKey: "kindminio"
+    objectStoreSecret: "kindminio-secret-please-rotate-in-prod"
+
+networkPolicies:
+  enabled: false
+
+serviceMonitor:
+  enabled: false
+
+backup:
+  enabled: false
