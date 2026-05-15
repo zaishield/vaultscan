@@ -33,10 +33,20 @@ type Orchestrator struct {
 	audit     *audit.Service
 	bus       *eventbus.Bus
 	signer    *Signer
+	// Nodes is optional — when set, the picker honors per-region quotas and
+	// auto-failover. nil falls back to the legacy "any online node" behaviour
+	// for callers that haven't wired the VS-05 op surface yet.
+	Nodes *NodeOps
 }
 
 func New(pool *pgxpool.Pool, g *scopeguard.Service, a *audit.Service, b *eventbus.Bus, s *Signer) *Orchestrator {
 	return &Orchestrator{pool: pool, guard: g, audit: a, bus: b, signer: s}
+}
+
+// WithNodeOps attaches the VS-05 health/quota service. Returns o for chain.
+func (o *Orchestrator) WithNodeOps(n *NodeOps) *Orchestrator {
+	o.Nodes = n
+	return o
 }
 
 type SubmitInput struct {
@@ -392,6 +402,21 @@ func (o *Orchestrator) recentJobsForTenantLastHour(ctx context.Context, tenant u
 }
 
 func (o *Orchestrator) pickScannerNode(ctx context.Context, region string) (uuid.UUID, error) {
+	// VS-05 path: respect heartbeat freshness, inflight load, and region
+	// quota. The legacy random pick stays as a fallback for partial wirings
+	// (e.g. unit tests that don't construct NodeOps).
+	if o.Nodes != nil {
+		atQuota, q, err := o.Nodes.IsRegionAtQuota(ctx, region, false)
+		if err == nil && atQuota {
+			return uuid.Nil, fmt.Errorf("%w: region=%s used %d/%d",
+				ErrRegionAtQuota, region, q.Inflight, q.MaxConcurrentJobs)
+		}
+		if id, err := o.Nodes.EligibleNode(ctx, region); err == nil {
+			return id, nil
+		}
+		// fall through to legacy path so the dev seed (which never
+		// heartbeats) still resolves.
+	}
 	var id uuid.UUID
 	q := `SELECT id FROM scanner_node_registry
 	       WHERE status='online'`

@@ -61,6 +61,7 @@ type harness struct {
 	assets      *assets.Service
 	scope       *scopeguard.Service
 	scanorch    *scanorch.Orchestrator
+	nodes       *scanorch.NodeOps
 	signer      *scanorch.Signer
 	agents      *agents.Service
 	findings    *findings.Service
@@ -154,7 +155,13 @@ func bootHarness(dsn string) (*harness, func(), error) {
 	docSvc := authdocs.New(pool.Pool, vault, auditSvc, bus)
 	assetSvc := assets.New(pool.Pool, auditSvc)
 	scope := scopeguard.New(pool.Pool)
-	orch := scanorch.New(pool.Pool, scope, auditSvc, bus, signer)
+	nodeOps, err := scanorch.NewNodeOps(pool.Pool,
+		"ZGV2LXNjYW5uZXItcHVsbC1tYXN0ZXIta2V5LTAwMDA=")
+	if err != nil {
+		pool.Close()
+		return nil, nil, fmt.Errorf("node ops: %w", err)
+	}
+	orch := scanorch.New(pool.Pool, scope, auditSvc, bus, signer).WithNodeOps(nodeOps)
 	agentSvc := agents.New(pool.Pool, auditSvc, bus)
 	findSvc := findings.New(pool.Pool, auditSvc, bus)
 	_ = log
@@ -162,8 +169,8 @@ func bootHarness(dsn string) (*harness, func(), error) {
 	h := &harness{
 		pool: pool.Pool, audit: auditSvc, bus: bus, branding: brand,
 		tenants: tenSvc, engagements: engSvc, authdocs: docSvc, assets: assetSvc,
-		scope: scope, scanorch: orch, signer: signer, agents: agentSvc, findings: findSvc,
-		vault: vault,
+		scope: scope, scanorch: orch, nodes: nodeOps, signer: signer,
+		agents: agentSvc, findings: findSvc, vault: vault,
 	}
 	cleanup := func() {
 		dropCtx, dropCancel := context.WithTimeout(context.Background(), 30*time.Second)
