@@ -211,9 +211,9 @@ func mobileEmergencyStop(s *Services) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		tid, err := uuid.Parse(req.TenantID)
-		if err != nil {
-			badRequest(w, "tenant_id required")
+		tid, terr := auth.AuthorizeTargetTenant(id, req.TenantID)
+		if terr != nil {
+			forbidden(w, terr.Error())
 			return
 		}
 		scope := scanorch.EmergencyScope{TenantID: &tid}

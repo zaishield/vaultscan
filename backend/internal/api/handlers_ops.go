@@ -604,7 +604,12 @@ func createRetestBatch(s *Services) http.HandlerFunc {
 			a := id.UserID
 			actor = &a
 		}
-		batchID, queued, err := s.Retests.CreateBatch(r.Context(), req.TenantID, actor, req.Reason, req.FindingIDs)
+		tid, terr := auth.AuthorizeTargetTenant(id, req.TenantID.String())
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
+		}
+		batchID, queued, err := s.Retests.CreateBatch(r.Context(), tid, actor, req.Reason, req.FindingIDs)
 		if err != nil {
 			badRequest(w, err.Error())
 			return
@@ -689,7 +694,13 @@ func setAutoRetest(s *Services) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		if err := s.Retests.SetAutoRetestEnabled(r.Context(), req.TenantID, req.Enabled); err != nil {
+		identity, _ := auth.FromContext(r.Context())
+		tid, terr := auth.AuthorizeTargetTenant(identity, req.TenantID.String())
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
+		}
+		if err := s.Retests.SetAutoRetestEnabled(r.Context(), tid, req.Enabled); err != nil {
 			internalErr(w, err)
 			return
 		}
@@ -877,7 +888,16 @@ func saveDashboardLayout(s *Services) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		rid, err := s.Dashboards.SaveLayout(r.Context(), id.UserID, req.TenantID, req.Name, req.Role, req.Widgets, req.IsDefault)
+		var requestedTenant string
+		if req.TenantID != nil {
+			requestedTenant = req.TenantID.String()
+		}
+		tid, terr := auth.AuthorizeOptionalTenant(id, requestedTenant)
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
+		}
+		rid, err := s.Dashboards.SaveLayout(r.Context(), id.UserID, tid, req.Name, req.Role, req.Widgets, req.IsDefault)
 		if err != nil {
 			badRequest(w, err.Error())
 			return

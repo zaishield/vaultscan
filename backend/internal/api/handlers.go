@@ -63,6 +63,11 @@ func notFound(w http.ResponseWriter) {
 		"error": map[string]string{"code": "not_found", "message": "resource not found"}})
 }
 
+func forbidden(w http.ResponseWriter, msg string) {
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error": map[string]string{"code": "forbidden", "message": msg}})
+}
+
 func decode(r *http.Request, v any) error {
 	if r.Body == nil {
 		return errors.New("missing body")
@@ -377,9 +382,13 @@ func createEngagement(s *Services) http.HandlerFunc {
 		}
 		id, _ := auth.FromContext(r.Context())
 		partnerID, err1 := uuid.Parse(req.PartnerID)
-		tenantID, err2 := uuid.Parse(req.TenantID)
-		if err1 != nil || err2 != nil {
-			badRequest(w, "partner_id and tenant_id required")
+		if err1 != nil {
+			badRequest(w, "partner_id required")
+			return
+		}
+		tenantID, err := auth.AuthorizeTargetTenant(id, req.TenantID)
+		if err != nil {
+			forbidden(w, err.Error())
 			return
 		}
 		var clientID *uuid.UUID
@@ -580,7 +589,11 @@ func createAsset(s *Services) http.HandlerFunc {
 		}
 		id, _ := auth.FromContext(r.Context())
 		partnerID, _ := uuid.Parse(req.PartnerID)
-		tenantID, _ := uuid.Parse(req.TenantID)
+		tenantID, err := auth.AuthorizeTargetTenant(id, req.TenantID)
+		if err != nil {
+			forbidden(w, err.Error())
+			return
+		}
 		var eng *uuid.UUID
 		if req.EngagementID != "" {
 			eid, err := uuid.Parse(req.EngagementID)
@@ -700,7 +713,11 @@ func submitScan(s *Services, plane string, w http.ResponseWriter, r *http.Reques
 	}
 	id, _ := auth.FromContext(r.Context())
 	partnerID, _ := uuid.Parse(req.PartnerID)
-	tenantID, _ := uuid.Parse(req.TenantID)
+	tenantID, terr := auth.AuthorizeTargetTenant(id, req.TenantID)
+	if terr != nil {
+		forbidden(w, terr.Error())
+		return
+	}
 	engagementID, err := uuid.Parse(req.EngagementID)
 	if err != nil {
 		badRequest(w, "engagement_id required")
@@ -806,10 +823,16 @@ func emergencyStop(s *Services) http.HandlerFunc {
 			id, _ := uuid.Parse(req.JobID)
 			scope.JobID = &id
 		}
-		if req.TenantID != "" {
-			id, _ := uuid.Parse(req.TenantID)
-			scope.TenantID = &id
+		// Tenant-scoped emergency stop must be authorized — otherwise a
+		// tenant_admin could halt every other tenant's jobs by passing
+		// their UUID. AuthorizeOptionalTenant lets platform admins pass
+		// nil (=halt everything), tenant admins to their own only.
+		tid, terr := auth.AuthorizeOptionalTenant(identity, req.TenantID)
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
 		}
+		scope.TenantID = tid
 		if req.AgentID != "" {
 			id, _ := uuid.Parse(req.AgentID)
 			scope.AgentID = &id
@@ -842,7 +865,11 @@ func provisionAgent(s *Services) http.HandlerFunc {
 		}
 		identity, _ := auth.FromContext(r.Context())
 		partnerID, _ := uuid.Parse(req.PartnerID)
-		tenantID, _ := uuid.Parse(req.TenantID)
+		tenantID, terr := auth.AuthorizeTargetTenant(identity, req.TenantID)
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
+		}
 		a, token, err := s.Agents.Provision(r.Context(), agents.CreateInput{
 			PlatformID: identity.PlatformID, PartnerID: partnerID, TenantID: tenantID,
 			Name: req.Name, Location: req.Location, FormFactor: req.FormFactor, CreatedBy: &identity.UserID,
@@ -1187,7 +1214,11 @@ func generateReport(s *Services) http.HandlerFunc {
 		}
 		identity, _ := auth.FromContext(r.Context())
 		partnerID, _ := uuid.Parse(req.PartnerID)
-		tenantID, _ := uuid.Parse(req.TenantID)
+		tenantID, terr := auth.AuthorizeTargetTenant(identity, req.TenantID)
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
+		}
 		engagementID, err := uuid.Parse(req.EngagementID)
 		if err != nil {
 			badRequest(w, "engagement_id required")
@@ -1264,11 +1295,12 @@ func createIntegration(s *Services) http.HandlerFunc {
 			return
 		}
 		identity, _ := auth.FromContext(r.Context())
-		var tid, pid *uuid.UUID
-		if req.TenantID != "" {
-			id, _ := uuid.Parse(req.TenantID)
-			tid = &id
+		tid, terr := auth.AuthorizeOptionalTenant(identity, req.TenantID)
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
 		}
+		var pid *uuid.UUID
 		if req.PartnerID != "" {
 			id, _ := uuid.Parse(req.PartnerID)
 			pid = &id
@@ -1507,12 +1539,12 @@ func bulkAssets(s *Services) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		tenantID, err := uuid.Parse(req.TenantID)
-		if err != nil {
-			badRequest(w, "tenant_id required")
+		identity, _ := auth.FromContext(r.Context())
+		tenantID, terr := auth.AuthorizeTargetTenant(identity, req.TenantID)
+		if terr != nil {
+			forbidden(w, terr.Error())
 			return
 		}
-		identity, _ := auth.FromContext(r.Context())
 		ids := make([]uuid.UUID, 0, len(req.IDs))
 		for _, s := range req.IDs {
 			id, err := uuid.Parse(s)
@@ -1575,12 +1607,12 @@ func bulkPatchFindings(s *Services) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		tenantID, err := uuid.Parse(req.TenantID)
-		if err != nil {
-			badRequest(w, "tenant_id required")
+		identity, _ := auth.FromContext(r.Context())
+		tenantID, terr := auth.AuthorizeTargetTenant(identity, req.TenantID)
+		if terr != nil {
+			forbidden(w, terr.Error())
 			return
 		}
-		identity, _ := auth.FromContext(r.Context())
 		ids := make([]uuid.UUID, 0, len(req.IDs))
 		for _, sid := range req.IDs {
 			id, err := uuid.Parse(sid)
@@ -1776,10 +1808,12 @@ func createUser(s *Services) http.HandlerFunc {
 			id, _ := uuid.Parse(req.PartnerID)
 			in.PartnerID = &id
 		}
-		if req.TenantID != "" {
-			id, _ := uuid.Parse(req.TenantID)
-			in.TenantID = &id
+		tid, terr := auth.AuthorizeOptionalTenant(identity, req.TenantID)
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
 		}
+		in.TenantID = tid
 		u, err := s.Users.Create(r.Context(), in)
 		if err != nil {
 			badRequest(w, err.Error())
