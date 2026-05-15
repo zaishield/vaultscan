@@ -125,7 +125,19 @@ func Mount(s *Services) http.Handler {
 				Post("/", createTenant(s))
 			r.Get("/", listTenants(s))
 			r.Get("/{tenant_id}", getTenant(s))
+			r.With(middleware.RequirePermission("create_tenant")).
+				Post("/{tenant_id}/suspend", suspendTenant(s))
+			r.With(middleware.RequirePermission("create_tenant")).
+				Post("/{tenant_id}/reactivate", reactivateTenant(s))
 		})
+
+		// Effective identity + session management (VS-01 hardening).
+		r.Get("/api/v1/auth/me", whoAmI(s))
+		r.Post("/api/v1/auth/logout", logoutAndRevoke(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Post("/api/v1/users/{user_id}/revoke-tokens", revokeUserTokens(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Post("/api/v1/users/{user_id}/unlock", unlockUser(s))
 		// Partners
 		r.Route("/api/v1/partners", func(r chi.Router) {
 			r.With(middleware.RequirePermission("create_partner")).

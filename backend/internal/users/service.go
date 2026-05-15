@@ -187,9 +187,59 @@ func (s *Service) RolesForUser(ctx context.Context, userID uuid.UUID) ([]string,
 	return out, rows.Err()
 }
 
-// RecordLogin writes both an audit_logs row (immutable, hash-chained) and
-// a login_events row (queryable analytics). MFA-verified sessions are
-// flagged so downstream consumers can gate sensitive actions.
+// RevokeAllTokens marks every JWT issued before now() for the given user
+// as invalid. The OIDC verifier checks token_revocations on every request,
+// so old tokens fail on next use.
+func (s *Service) RevokeAllTokens(ctx context.Context, userID uuid.UUID, actor *uuid.UUID, reason string) error {
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO token_revocations(user_id, min_iat, revoked_by, reason)
+		VALUES ($1, now(), $2, $3)
+		ON CONFLICT (user_id) DO UPDATE SET
+		  min_iat = now(), revoked_by = $2, revoked_at = now(), reason = $3`,
+		userID, actor, reason); err != nil {
+		return err
+	}
+	var platID uuid.UUID
+	_ = s.pool.QueryRow(ctx, `SELECT platform_id FROM users WHERE id=$1`, userID).Scan(&platID)
+	return s.audit.Record(ctx, audit.Entry{
+		PlatformID: platID, ActorID: actor, Event: "session.revoked",
+		TargetType: "user", TargetID: userID.String(),
+		Payload: map[string]any{"reason": reason},
+	})
+}
+
+// Suspend marks the user locked-out until `until`.
+func (s *Service) Suspend(ctx context.Context, userID uuid.UUID, until time.Time, actor *uuid.UUID, reason string) error {
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE users SET locked_until=$2, status='suspended' WHERE id=$1`, userID, until); err != nil {
+		return err
+	}
+	var platID uuid.UUID
+	_ = s.pool.QueryRow(ctx, `SELECT platform_id FROM users WHERE id=$1`, userID).Scan(&platID)
+	return s.audit.Record(ctx, audit.Entry{
+		PlatformID: platID, ActorID: actor, Event: "user.suspended",
+		TargetType: "user", TargetID: userID.String(),
+		Payload: map[string]any{"until": until, "reason": reason},
+	})
+}
+
+// Unlock clears the lockout flag.
+func (s *Service) Unlock(ctx context.Context, userID uuid.UUID, actor *uuid.UUID) error {
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE users SET locked_until=NULL, status='active', failed_login_count=0
+		  WHERE id=$1`, userID); err != nil {
+		return err
+	}
+	var platID uuid.UUID
+	_ = s.pool.QueryRow(ctx, `SELECT platform_id FROM users WHERE id=$1`, userID).Scan(&platID)
+	return s.audit.Record(ctx, audit.Entry{
+		PlatformID: platID, ActorID: actor, Event: "user.unlocked",
+		TargetType: "user", TargetID: userID.String(),
+	})
+}
+
+// RecordLogin writes login_events + an audit_logs row. On failure it
+// bumps users.failed_login_count and auto-locks the account at 5.
 func (s *Service) RecordLogin(ctx context.Context, in LoginEvent) error {
 	if _, err := s.pool.Exec(ctx, `
 		INSERT INTO login_events(user_id, email, success, ip, user_agent, mfa_used)
@@ -198,10 +248,19 @@ func (s *Service) RecordLogin(ctx context.Context, in LoginEvent) error {
 		return err
 	}
 	if in.Success && in.UserID != nil {
-		// Best-effort: update last_login_at; failure here doesn't block
-		// the audit event below.
 		_, _ = s.pool.Exec(ctx,
-			`UPDATE users SET last_login_at=now() WHERE id=$1`, *in.UserID)
+			`UPDATE users SET last_login_at=now(), failed_login_count=0
+			  WHERE id=$1`, *in.UserID)
+	}
+	if !in.Success && in.UserID != nil {
+		// Bump counter + auto-lock at 5 failures.
+		_, _ = s.pool.Exec(ctx, `
+			UPDATE users
+			   SET failed_login_count = failed_login_count + 1,
+			       locked_until = CASE WHEN failed_login_count + 1 >= 5
+			                           THEN now() + INTERVAL '15 minutes'
+			                           ELSE locked_until END
+			 WHERE id=$1`, *in.UserID)
 	}
 	event := audit.EventLoginSuccess
 	if !in.Success {

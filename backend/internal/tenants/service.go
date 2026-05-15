@@ -137,4 +137,52 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]models.Tenant, erro
 	return out, rows.Err()
 }
 
+// Suspend marks the tenant suspended (operationally: every authenticated
+// request that resolves this tenant returns 403 until Reactivate is called).
+func (s *Service) Suspend(ctx context.Context, id uuid.UUID, actor *uuid.UUID, reason string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tenants SET status='suspended', suspension_reason=$3,
+		                  suspended_at=now(), suspended_by=$2, updated_at=now()
+		 WHERE id=$1`, id, actor, reason)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("tenants: not found")
+	}
+	t, _ := s.Get(ctx, id)
+	if t != nil {
+		_ = s.audit.Record(ctx, audit.Entry{
+			PlatformID: t.PlatformID, PartnerID: &t.PartnerID, TenantID: &t.ID,
+			ActorID: actor, Event: "tenant.suspended",
+			TargetType: "tenant", TargetID: id.String(),
+			Payload: map[string]any{"reason": reason},
+		})
+	}
+	return nil
+}
+
+// Reactivate undoes Suspend.
+func (s *Service) Reactivate(ctx context.Context, id uuid.UUID, actor *uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tenants SET status='active', suspension_reason=NULL,
+		                  suspended_at=NULL, suspended_by=NULL, updated_at=now()
+		 WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("tenants: not found")
+	}
+	t, _ := s.Get(ctx, id)
+	if t != nil {
+		_ = s.audit.Record(ctx, audit.Entry{
+			PlatformID: t.PlatformID, PartnerID: &t.PartnerID, TenantID: &t.ID,
+			ActorID: actor, Event: "tenant.reactivated",
+			TargetType: "tenant", TargetID: id.String(),
+		})
+	}
+	return nil
+}
+
 var ErrNotFound = errors.New("tenant not found")

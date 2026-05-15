@@ -2125,6 +2125,120 @@ func drillRecentScans(s *Services) http.HandlerFunc {
 	}
 }
 
+// ----- VS-01 deepening: /me, suspend, revoke, unlock -----------------------
+
+func whoAmI(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := auth.FromContext(r.Context())
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		perms := make([]string, 0, len(id.Permissions))
+		for p := range id.Permissions {
+			perms = append(perms, p)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"user_id":      id.UserID,
+			"email":        id.Email,
+			"full_name":    id.FullName,
+			"platform_id":  id.PlatformID,
+			"partner_id":   id.PartnerID,
+			"tenant_id":    id.TenantID,
+			"roles":        id.Roles,
+			"permissions":  perms,
+			"mfa_verified": id.MFAVerified,
+		})
+	}
+}
+
+func logoutAndRevoke(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := auth.FromContext(r.Context())
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		if err := s.Users.RevokeAllTokens(r.Context(), id.UserID, &id.UserID, "self-logout"); err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+	}
+}
+
+func revokeUserTokens(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "user_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		_ = decode(r, &req)
+		identity, _ := auth.FromContext(r.Context())
+		if err := s.Users.RevokeAllTokens(r.Context(), id, &identity.UserID, req.Reason); err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+	}
+}
+
+func unlockUser(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "user_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		if err := s.Users.Unlock(r.Context(), id, &identity.UserID); err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "unlocked"})
+	}
+}
+
+func suspendTenant(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "tenant_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		_ = decode(r, &req)
+		identity, _ := auth.FromContext(r.Context())
+		if err := s.Tenants.Suspend(r.Context(), id, &identity.UserID, req.Reason); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "suspended"})
+	}
+}
+
+func reactivateTenant(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "tenant_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		if err := s.Tenants.Reactivate(r.Context(), id, &identity.UserID); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "active"})
+	}
+}
+
 // ----- Cosign trust policy handlers ----------------------------------------
 
 func listCosignKeys(s *Services) http.HandlerFunc {
