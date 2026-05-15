@@ -8,6 +8,13 @@
 # Production maps to: §26.1 control plane (3 nodes), §26.2 PostgreSQL HA,
 # §26.3 Ceph storage, §26.4 OpenSearch cluster, §26.5 scanner farm,
 # §27 network segmentation. See infra/helm/vaultscan for the production chart.
+#
+# Every published host port is overridable via env var so the stack can sit
+# next to other dev tools that grab the same ports. Either:
+#
+#   VAULTSCAN_OPENSEARCH_PORT=19200 make bootstrap
+#
+# or persist overrides in repo-root .env (see .env.example).
 
 name: vaultscan
 
@@ -22,7 +29,7 @@ x-api-env: &api-env
   VAULTSCAN_EVENTBUS_URL: nats://nats:4222
   VAULTSCAN_API_ADDR: ":8080"
   VAULTSCAN_AGENT_GATEWAY_ADDR: ":8443"
-  VAULTSCAN_CORS_ALLOWED_ORIGINS: "http://localhost:5173,http://localhost:3000"
+  VAULTSCAN_CORS_ALLOWED_ORIGINS: "http://localhost:${VAULTSCAN_PORTAL_PORT:-5173},http://localhost:3000"
   VAULTSCAN_JWT_SECRET: dev-only-shared-secret-change-me
   VAULTSCAN_EVIDENCE_MASTER_KEY: ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA=
 
@@ -34,7 +41,7 @@ services:
       POSTGRES_DB: vaultscan
       POSTGRES_USER: vaultscan
       POSTGRES_PASSWORD: vaultscan
-    ports: ["5432:5432"]
+    ports: ["${VAULTSCAN_POSTGRES_PORT:-5432}:5432"]
     volumes:
       - vaultscan-pg:/var/lib/postgresql/data
     healthcheck:
@@ -55,7 +62,7 @@ services:
       - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
     ulimits:
       memlock: { soft: -1, hard: -1 }
-    ports: ["9200:9200"]
+    ports: ["${VAULTSCAN_OPENSEARCH_PORT:-9200}:9200"]
     volumes:
       - vaultscan-os:/usr/share/opensearch/data
     healthcheck:
@@ -72,7 +79,9 @@ services:
     environment:
       MINIO_ROOT_USER: vaultscan
       MINIO_ROOT_PASSWORD: vaultscan-dev-secret
-    ports: ["9000:9000", "9001:9001"]
+    ports:
+      - "${VAULTSCAN_MINIO_PORT:-9000}:9000"
+      - "${VAULTSCAN_MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - vaultscan-minio:/data
     healthcheck:
@@ -88,14 +97,16 @@ services:
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
-    ports: ["8081:8080"]
+    ports: ["${VAULTSCAN_KEYCLOAK_PORT:-8081}:8080"]
     volumes:
       - ../keycloak:/opt/keycloak/data/import:ro
 
   nats:
     image: nats:2-alpine
     restart: unless-stopped
-    ports: ["4222:4222", "8222:8222"]
+    ports:
+      - "${VAULTSCAN_NATS_PORT:-4222}:4222"
+      - "${VAULTSCAN_NATS_MON_PORT:-8222}:8222"
 
   # ---- One-shot migration service -----------------------------------------
   # Runs the migrate binary inside the api image. Activated by `make migrate`
@@ -136,7 +147,7 @@ services:
     restart: unless-stopped
     environment:
       <<: *api-env
-    ports: ["8080:8080"]
+    ports: ["${VAULTSCAN_API_PORT:-8080}:8080"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,7 +170,7 @@ services:
     restart: unless-stopped
     environment:
       <<: *api-env
-    ports: ["8443:8443"]
+    ports: ["${VAULTSCAN_AGENT_GATEWAY_PORT:-8443}:8443"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -170,7 +181,7 @@ services:
       dockerfile: infra/compose/portal.Dockerfile
     image: vaultscan-portal:dev
     restart: unless-stopped
-    ports: ["5173:80"]
+    ports: ["${VAULTSCAN_PORTAL_PORT:-5173}:80"]
     depends_on: [api]
 
   # OpenSearch indexer that mirrors authoritative Postgres records into the

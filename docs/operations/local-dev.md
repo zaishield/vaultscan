@@ -34,17 +34,30 @@ tails everything.
 
 ## Default URLs
 
-| Surface           | URL                          | Notes |
-|-------------------|------------------------------|-------|
-| Portal            | http://localhost:5173        | Vite dev server (proxies `/api`) |
-| Portal (built)    | http://localhost:5173        | nginx container when running via compose |
-| API gateway       | http://localhost:8080        | `/healthz` + `/readyz` for probes |
-| Agent gateway     | http://localhost:8443        | outbound-only TLS endpoint (HTTP in dev) |
-| Keycloak admin    | http://localhost:8081/admin  | realm: `vaultscan` |
-| OpenSearch        | http://localhost:9200        | security plugin disabled in dev |
-| MinIO API         | http://localhost:9000        | S3-compatible |
-| MinIO Console     | http://localhost:9001        | web UI |
-| Postgres          | postgres://localhost:5432    | psql client |
+| Surface           | URL                          | Override env                       | Notes |
+|-------------------|------------------------------|-----------------------------------|-------|
+| Portal            | http://localhost:5173        | `VAULTSCAN_PORTAL_PORT`           | nginx-served Vite build |
+| API gateway       | http://localhost:8080        | `VAULTSCAN_API_PORT`              | `/healthz` + `/readyz` for probes |
+| Agent gateway     | http://localhost:8443        | `VAULTSCAN_AGENT_GATEWAY_PORT`    | outbound-only TLS endpoint |
+| Keycloak admin    | http://localhost:8081/admin  | `VAULTSCAN_KEYCLOAK_PORT`         | realm: `vaultscan` |
+| OpenSearch        | http://localhost:9200        | `VAULTSCAN_OPENSEARCH_PORT`       | security plugin disabled in dev |
+| MinIO API         | http://localhost:9000        | `VAULTSCAN_MINIO_PORT`            | S3-compatible |
+| MinIO Console     | http://localhost:9001        | `VAULTSCAN_MINIO_CONSOLE_PORT`    | web UI |
+| Postgres          | postgres://localhost:5432    | `VAULTSCAN_POSTGRES_PORT`         | psql client |
+
+### Port conflicts
+
+Every published host port is overridable. `make doctor` (run automatically by
+`make bootstrap`) flags conflicts before any container starts. To resolve:
+
+```bash
+# One-off override
+VAULTSCAN_OPENSEARCH_PORT=19200 make bootstrap
+
+# Or persist in .env (auto-generated from .env.example by `make env`)
+echo VAULTSCAN_OPENSEARCH_PORT=19200 >> .env
+make bootstrap
+```
 
 ---
 
