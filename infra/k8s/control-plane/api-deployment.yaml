@@ -1,0 +1,45 @@
+# VAULTSCAN API control plane (Blueprint §11, §26.1).
+# Apply: kubectl apply -f infra/k8s/control-plane/
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vaultscan-control
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: vaultscan-control
+  labels: { app: vaultscan, component: api }
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: vaultscan, component: api } }
+  template:
+    metadata:
+      labels: { app: vaultscan, component: api }
+    spec:
+      containers:
+        - name: api
+          image: registry.zaishield.com/vaultscan/api:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - secretRef: { name: vaultscan-api-env }
+            - configMapRef: { name: vaultscan-api-config }
+          resources:
+            requests: { cpu: "1",   memory: "1Gi" }
+            limits:   { cpu: "4",   memory: "8Gi" }
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8080 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: vaultscan-control
+spec:
+  selector: { app: vaultscan, component: api }
+  ports: [{ port: 8080, targetPort: 8080 }]

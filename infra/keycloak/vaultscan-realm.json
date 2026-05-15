@@ -1,0 +1,51 @@
+{
+  "realm": "vaultscan",
+  "enabled": true,
+  "displayName": "ZAISHIELD VAULTSCAN",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "passwordPolicy": "length(12) and upperCase(1) and digits(1) and specialChars(1)",
+  "otpPolicyType": "totp",
+  "browserSecurityHeaders": {
+    "contentSecurityPolicy": "default-src 'self'",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
+  },
+  "clients": [
+    {
+      "clientId": "vaultscan-portal",
+      "name": "VAULTSCAN Portal",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:5173/*", "https://vaultscan.zaishield.com/*"],
+      "webOrigins": ["+"],
+      "attributes": { "pkce.code.challenge.method": "S256" }
+    },
+    {
+      "clientId": "vaultscan-api",
+      "name": "VAULTSCAN API",
+      "publicClient": false,
+      "secret": "REPLACE_ME_AT_FIRST_BOOT",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false
+    }
+  ],
+  "roles": {
+    "realm": [
+      {"name": "zaishield_super_admin"},
+      {"name": "platform_security_admin"},
+      {"name": "distributor_admin"},
+      {"name": "reseller_admin"},
+      {"name": "mssp_manager"},
+      {"name": "mssp_analyst"},
+      {"name": "tenant_admin"},
+      {"name": "engagement_manager"},
+      {"name": "pentester"},
+      {"name": "analyst"},
+      {"name": "remediation_owner"},
+      {"name": "client_viewer"},
+      {"name": "auditor"},
+      {"name": "agent_installer"}
+    ]
+  }
+}

@@ -20,6 +20,8 @@ node_modules/
 # Frontend build
 frontend/dist/
 frontend/.vite/
+frontend/tsconfig.tsbuildinfo
+**/*.tsbuildinfo
 
 # Environment
 .env
