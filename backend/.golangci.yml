@@ -1,0 +1,41 @@
+run:
+  timeout: 5m
+  build-tags:
+    - integration
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - nilerr
+    - nilnil
+    - unconvert
+    - unparam
+
+linters-settings:
+  gosec:
+    excludes:
+      # G101: hard-coded base64 dev keys in tests are intentional
+      - G101
+      # G104: errcheck handles unhandled errors more granularly
+      - G104
+  errcheck:
+    exclude-functions:
+      - (*github.com/jackc/pgx/v5/pgxpool.Pool).Exec
+      - (github.com/zaishield/vaultscan/backend/internal/eventbus.Bus).Publish
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters: [errcheck, gosec, errorlint, bodyclose]
+    - path: test/integration/.*\.go
+      linters: [errcheck, gosec, errorlint, bodyclose]

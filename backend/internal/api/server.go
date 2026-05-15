@@ -29,6 +29,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/findings"
 	"github.com/zaishield/vaultscan/backend/internal/integrations"
 	"github.com/zaishield/vaultscan/backend/internal/middleware"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 	"github.com/zaishield/vaultscan/backend/internal/partners"
 	"github.com/zaishield/vaultscan/backend/internal/reporting"
 	"github.com/zaishield/vaultscan/backend/internal/retesting"
@@ -80,6 +81,7 @@ func Mount(s *Services) http.Handler {
 	r.Use(chiware.Recoverer)
 	r.Use(middleware.RequestID())
 	r.Use(middleware.SecurityHeaders())
+	r.Use(observability.HTTPDurationMiddleware)
 
 	cors := cors.New(cors.Options{
 		AllowedOrigins:   s.Cfg.CORSAllowedOrigins,
@@ -94,6 +96,11 @@ func Mount(s *Services) http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
+
+	// /metrics is mounted before the auth group so Prometheus can scrape
+	// without a token. Network policy restricts the scrape source to the
+	// monitoring namespace (Blueprint §27.1).
+	r.Handle("/metrics", observability.PromHandler())
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*1e9)
 		defer cancel()

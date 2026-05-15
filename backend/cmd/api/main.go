@@ -31,6 +31,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/guardrails"
 	"github.com/zaishield/vaultscan/backend/internal/integrations"
 	"github.com/zaishield/vaultscan/backend/internal/logging"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 	"github.com/zaishield/vaultscan/backend/internal/partners"
 	"github.com/zaishield/vaultscan/backend/internal/reporting"
 	"github.com/zaishield/vaultscan/backend/internal/retesting"
@@ -47,6 +48,20 @@ func main() {
 	log := logging.New(cfg.Env)
 
 	ctx := context.Background()
+
+	// Tracing. No-op when VAULTSCAN_OTEL_EXPORTER is unset; otherwise
+	// ships OTLP/HTTP to the configured endpoint (Tempo/Jaeger/Honeycomb).
+	shutdown, err := observability.InitTracing(ctx, "vaultscan-api", "1.0.0")
+	if err != nil {
+		log.Warn().Err(err).Msg("tracing init failed — continuing without traces")
+	}
+	defer func() {
+		if shutdown != nil {
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = shutdown(sctx)
+		}
+	}()
 	pool, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal().Err(err).Msg("open database")
