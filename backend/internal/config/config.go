@@ -32,9 +32,24 @@ type Config struct {
 	JobSigningKeyPEM   string  // RSA private key for cloud → agent job signing
 	JobSigningKeyID    string
 
-	SecretsBackend     string  // openbao | infisical | env
+	SecretsBackend     string  // env | memory | openbao | infisical | awskms
 	SecretsAddr        string
 	SecretsToken       string
+
+	// OpenBao / HashiCorp Vault.
+	SecretsOpenBaoMount     string
+	SecretsOpenBaoNamespace string
+
+	// Infisical.
+	SecretsInfisicalProjectID   string
+	SecretsInfisicalEnvironment string
+
+	// AWS KMS (uses ObjectStore* AWS creds for SigV4).
+	SecretsKMSRegion        string
+	SecretsKMSKeyID         string
+	SecretsKMSAccessKey     string
+	SecretsKMSSecretKey     string
+	SecretsKMSSessionToken  string
 
 	EvidenceMasterKey  string  // base64; AES-256 master key for evidence at-rest envelope encryption
 	EvidenceURLTTL     time.Duration
@@ -112,6 +127,15 @@ func Load() (*Config, error) {
 		SecretsBackend:    getenv("VAULTSCAN_SECRETS_BACKEND", "env"),
 		SecretsAddr:       os.Getenv("VAULTSCAN_SECRETS_ADDR"),
 		SecretsToken:      os.Getenv("VAULTSCAN_SECRETS_TOKEN"),
+		SecretsOpenBaoMount:     getenv("VAULTSCAN_SECRETS_OPENBAO_MOUNT", "kv"),
+		SecretsOpenBaoNamespace: os.Getenv("VAULTSCAN_SECRETS_OPENBAO_NAMESPACE"),
+		SecretsInfisicalProjectID:   os.Getenv("VAULTSCAN_SECRETS_INFISICAL_PROJECT_ID"),
+		SecretsInfisicalEnvironment: getenv("VAULTSCAN_SECRETS_INFISICAL_ENV", "prod"),
+		SecretsKMSRegion:       os.Getenv("VAULTSCAN_SECRETS_KMS_REGION"),
+		SecretsKMSKeyID:        os.Getenv("VAULTSCAN_SECRETS_KMS_KEY_ID"),
+		SecretsKMSAccessKey:    os.Getenv("VAULTSCAN_SECRETS_KMS_ACCESS_KEY"),
+		SecretsKMSSecretKey:    os.Getenv("VAULTSCAN_SECRETS_KMS_SECRET_KEY"),
+		SecretsKMSSessionToken: os.Getenv("VAULTSCAN_SECRETS_KMS_SESSION_TOKEN"),
 		EvidenceMasterKey: getenv("VAULTSCAN_EVIDENCE_MASTER_KEY",
 			"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA="),
 		EvidenceBackend:        getenv("VAULTSCAN_EVIDENCE_BACKEND", "filesystem"),
