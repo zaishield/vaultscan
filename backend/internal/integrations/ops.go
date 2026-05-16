@@ -192,12 +192,19 @@ func BuildLEEF(ev eventbus.Event) string {
 func cefEscapeHeader(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `|`, `\|`)
+	// Strip line terminators — CEF is single-line over syslog; an
+	// attacker-controlled newline would inject a forged event into
+	// the SIEM ingest pipeline.
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
 	return s
 }
 
 func cefEscapeValue(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `=`, `\=`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
 	return s
 }
 
@@ -223,9 +230,14 @@ func formatLEEFExtensions(exts map[string]string) string {
 	sort.Strings(keys)
 	var parts []string
 	for _, k := range keys {
-		// LEEF delimiter is ^ (specified in the header). Replace ^ in values
-		// with a Unicode escape so the parser doesn't break.
-		v := strings.ReplaceAll(exts[k], "^", `^`)
+		// LEEF delimiter is ^ (specified in the header). Replace ^ in
+		// values with a Unicode escape so the parser doesn't break.
+		// Also strip line terminators — LEEF is single-line over
+		// syslog and a smuggled newline would inject a forged event.
+		v := exts[k]
+		v = strings.ReplaceAll(v, "^", "\\u005e")
+		v = strings.ReplaceAll(v, "\n", "\\n")
+		v = strings.ReplaceAll(v, "\r", "\\r")
 		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
 	}
 	return strings.Join(parts, "^")

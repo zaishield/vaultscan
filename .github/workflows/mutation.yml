@@ -1,0 +1,69 @@
+name: mutation testing
+
+# Mutation testing finds gaps in our test suite that line coverage
+# can't see — a "covered" line whose mutated version still passes
+# tests is undertested. We run go-mutesting on the
+# security-critical packages where we already have ≥80% line
+# coverage, weekly + on demand.
+#
+# Cost: a full run is ~20 min for the targeted package list, so it's
+# scheduled, not on every PR. Output is a markdown summary uploaded
+# as an artifact; failing the build on a mutation-score drop would
+# block too many real-world PRs so we use it as a *signal*, not a
+# gate.
+
+on:
+  schedule:
+    - cron: "11 4 * * 1"   # weekly, Monday 04:11 UTC
+  workflow_dispatch:
+    inputs:
+      pattern:
+        description: "package pattern to target (e.g. ./internal/awssig/...)"
+        type: string
+        required: false
+        default: "./internal/awssig/... ./internal/findings/... ./internal/compliance/... ./internal/scopeguard/... ./internal/parsers/..."
+
+permissions:
+  contents: read
+
+jobs:
+  mutate:
+    name: go-mutesting weekly
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+      - name: install go-mutesting
+        run: go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest
+      - name: run mutesting
+        working-directory: backend
+        run: |
+          set +e
+          pkgs="${{ inputs.pattern }}"
+          if [ -z "$pkgs" ]; then
+            pkgs="./internal/awssig/... ./internal/findings/... ./internal/compliance/... ./internal/scopeguard/... ./internal/parsers/..."
+          fi
+          report=mutation-report.txt
+          : > "$report"
+          for p in $pkgs; do
+            echo "## $p" | tee -a "$report"
+            go-mutesting "$p" 2>&1 | tail -30 | tee -a "$report" || true
+            echo "" | tee -a "$report"
+          done
+          # Append to job summary so it's visible from the run page.
+          {
+            echo '## Mutation testing report'
+            echo ''
+            echo '```'
+            cat "$report"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: backend/mutation-report.txt
+          retention-days: 30
