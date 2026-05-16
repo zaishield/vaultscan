@@ -24,29 +24,22 @@
 
 BEGIN;
 
-CREATE TABLE compliance_controls (
-    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    framework          TEXT NOT NULL,           -- soc2 | iso27001 | pci_dss | hipaa
-    framework_version  TEXT NOT NULL,
-    control_code       TEXT NOT NULL,           -- CC6.1, A.5.1, 8.2, 164.312(a)(1)
-    title              TEXT NOT NULL,
-    description        TEXT,
-    -- evidence_query is a logical reference to the SQL / metric the
-    -- analytics worker runs to satisfy this control. NULL = manual.
-    --
-    -- Conventions:
-    --   findings:severity=high,age<30d
-    --   audit_logs:event=EvidenceDownloaded,actor_type=user,window=90d
-    --   scan_jobs:status=succeeded,window=7d
-    --   retention:event_prefix=evidence,retention_days>=2555
-    --   manual:reviewer-attests
-    evidence_query     TEXT,
-    automation_tier    TEXT NOT NULL,           -- automated | semi_automated | manual
-    UNIQUE (framework, framework_version, control_code)
-);
-
-CREATE INDEX compliance_controls_framework_idx
-    ON compliance_controls(framework, framework_version);
+-- compliance_controls was created by migration 0026 with the columns
+-- (id, framework, framework_version, control_code, title, description,
+-- finding_patterns, UNIQUE(framework, framework_version, control_code)).
+-- 0045 needs two additional columns to drive the analytics evaluator:
+--   evidence_query  — logical reference to the SQL/metric the worker runs
+--   automation_tier — automated | semi_automated | manual
+-- Both are nullable on existing rows; we backfill automation_tier with
+-- 'manual' so the NOT NULL contract still holds.
+ALTER TABLE compliance_controls
+    ADD COLUMN IF NOT EXISTS evidence_query  TEXT,
+    ADD COLUMN IF NOT EXISTS automation_tier TEXT;
+UPDATE compliance_controls
+    SET automation_tier = 'manual'
+    WHERE automation_tier IS NULL;
+ALTER TABLE compliance_controls
+    ALTER COLUMN automation_tier SET NOT NULL;
 
 CREATE TABLE compliance_evidence (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -114,7 +107,10 @@ INSERT INTO compliance_controls(framework, framework_version, control_code,
    'manual:reviewer-attests-privacy-notice', 'manual'),
   ('soc2', '2022', 'PI1.1', 'Processing integrity',
    'The entity obtains or generates, uses, and communicates relevant, quality information regarding processing.',
-   'audit_logs:chain_integrity=true,window=24h', 'automated');
+   'audit_logs:chain_integrity=true,window=24h', 'automated')
+ON CONFLICT (framework, framework_version, control_code) DO UPDATE
+   SET evidence_query  = EXCLUDED.evidence_query,
+       automation_tier = EXCLUDED.automation_tier;
 
 -- ---- Seed: ISO/IEC 27001:2022 (Annex A controls) ------------------------
 INSERT INTO compliance_controls(framework, framework_version, control_code,
@@ -154,7 +150,10 @@ INSERT INTO compliance_controls(framework, framework_version, control_code,
    'findings:severity>=high,window=7d', 'automated'),
   ('iso27001', '2022', 'A.8.24', 'Use of cryptography',
    'Rules for the effective use of cryptography, including cryptographic key management.',
-   'tenant_data_keys:kek_version>0', 'automated');
+   'tenant_data_keys:kek_version>0', 'automated')
+ON CONFLICT (framework, framework_version, control_code) DO UPDATE
+   SET evidence_query  = EXCLUDED.evidence_query,
+       automation_tier = EXCLUDED.automation_tier;
 
 -- ---- Seed: PCI-DSS v4.0 -------------------------------------------------
 INSERT INTO compliance_controls(framework, framework_version, control_code,
@@ -194,7 +193,10 @@ INSERT INTO compliance_controls(framework, framework_version, control_code,
    'scan_jobs:plane=external,status=succeeded,window=90d', 'automated'),
   ('pci_dss', '4.0', '12.10.1', 'Incident response plan exists',
    'Incident response plan exists, ready to be implemented.',
-   'manual:reviewer-attests-ir-plan-current', 'manual');
+   'manual:reviewer-attests-ir-plan-current', 'manual')
+ON CONFLICT (framework, framework_version, control_code) DO UPDATE
+   SET evidence_query  = EXCLUDED.evidence_query,
+       automation_tier = EXCLUDED.automation_tier;
 
 -- ---- Seed: HIPAA Security Rule (45 CFR 164.30x) -------------------------
 INSERT INTO compliance_controls(framework, framework_version, control_code,
@@ -234,6 +236,9 @@ INSERT INTO compliance_controls(framework, framework_version, control_code,
    'manual:reviewer-attests-tls-only', 'semi_automated'),
   ('hipaa', 'sec-rule-2013', '164.316(b)(2)(i)', 'Retention',
    'Retain documentation required for 6 years from the date of its creation.',
-   'retention:event_prefix=*,retention_days>=2190', 'automated');
+   'retention:event_prefix=*,retention_days>=2190', 'automated')
+ON CONFLICT (framework, framework_version, control_code) DO UPDATE
+   SET evidence_query  = EXCLUDED.evidence_query,
+       automation_tier = EXCLUDED.automation_tier;
 
 COMMIT;

@@ -206,6 +206,10 @@ type ScanJob struct {
 	RequestedBy       *uuid.UUID `json:"requested_by,omitempty"`
 	CancellationReason string    `json:"cancellation_reason,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
+	// Tools is populated from scan_tasks when the scan_job is fetched
+	// for an agent to execute — needed so the agent can rebuild the
+	// canonical manifest the orchestrator signed.
+	Tools             []string   `json:"tools,omitempty"`
 }
 
 type ScanProfile struct {

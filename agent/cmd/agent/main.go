@@ -212,16 +212,18 @@ type Agent struct {
 }
 
 type job struct {
-	ID            uuid.UUID `json:"id"`
-	PlatformID    uuid.UUID `json:"platform_id"`
-	PartnerID     uuid.UUID `json:"partner_id"`
-	TenantID      uuid.UUID `json:"tenant_id"`
-	EngagementID  uuid.UUID `json:"engagement_id"`
-	ProfileCode   string    `json:"profile_code"`
-	Plane         string    `json:"plane"`
-	Targets       []string  `json:"targets"`
-	JobSignature  string    `json:"job_signature"`
-	SigningKeyID  string    `json:"signing_key_id"`
+	ID            uuid.UUID  `json:"id"`
+	PlatformID    uuid.UUID  `json:"platform_id"`
+	PartnerID     uuid.UUID  `json:"partner_id"`
+	TenantID      uuid.UUID  `json:"tenant_id"`
+	EngagementID  uuid.UUID  `json:"engagement_id"`
+	AgentID       *uuid.UUID `json:"agent_id"`
+	ProfileCode   string     `json:"profile_code"`
+	Plane         string     `json:"plane"`
+	Tools         []string   `json:"tools"`
+	Targets       []string   `json:"targets"`
+	JobSignature  string     `json:"job_signature"`
+	SigningKeyID  string     `json:"signing_key_id"`
 }
 
 func (a *Agent) runJobLoop(ctx context.Context, every time.Duration) {
@@ -263,9 +265,17 @@ func (a *Agent) execute(ctx context.Context, j job) {
 	defer a.counters.BumpRunning(-1)
 
 	// Verify the cloud-issued signature before doing anything.
+	// Manifest shape MUST match scanorch.CanonicalManifest exactly —
+	// any divergence between cloud and agent fails RSA verification.
 	manifest, _ := json.Marshal(map[string]any{
-		"job_id": j.ID, "tenant_id": j.TenantID, "engagement_id": j.EngagementID,
-		"profile": j.ProfileCode, "targets": j.Targets, "plane": j.Plane,
+		"agent_id":      j.AgentID,
+		"engagement_id": j.EngagementID,
+		"job_id":        j.ID,
+		"plane":         j.Plane,
+		"profile":       j.ProfileCode,
+		"targets":       j.Targets,
+		"tenant_id":     j.TenantID,
+		"tools":         j.Tools,
 	})
 	if err := a.verifier.Verify(manifest, j.JobSignature, j.SigningKeyID); err != nil {
 		a.log.Error().Err(err).Msg("rejecting unsigned/tampered job")

@@ -254,6 +254,17 @@ func (s *Service) PollJobs(ctx context.Context, agentID uuid.UUID, n int) ([]mod
 			continue
 		}
 		_ = json.Unmarshal(targetsJSON, &j.Targets)
+		// Hydrate j.Tools from scan_profiles.tools — that's the SAME
+		// JSON the orchestrator passed into CanonicalManifest, so the
+		// agent can rebuild a byte-identical manifest for signature
+		// verification. Using scan_tasks here would reorder tools
+		// alphabetically and break the signature match.
+		var profileToolsJSON []byte
+		if err := s.pool.QueryRow(ctx,
+			`SELECT p.tools FROM scan_jobs j JOIN scan_profiles p ON p.id=j.profile_id
+			 WHERE j.id=$1`, id).Scan(&profileToolsJSON); err == nil {
+			_ = json.Unmarshal(profileToolsJSON, &j.Tools)
+		}
 		out = append(out, j)
 	}
 	return out, nil

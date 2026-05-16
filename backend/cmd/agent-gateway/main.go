@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"os"
@@ -187,6 +188,33 @@ func main() {
 	// network policies). See internal/agentgw/fleet_metrics.go.
 	fleet := agentgw.NewFleetMetrics(pool.Pool)
 	r.Get("/agent-fleet-metrics", fleet.Handler())
+
+	// Orchestrator public key — the agent's verifier needs this to
+	// validate per-job RSA-PSS signatures. We proxy the read to the
+	// API so the API stays the single source of truth for the
+	// signing key (and the gateway doesn't have to be re-signed
+	// when the key rotates).
+	apiBase := strings.TrimRight(cfg.APIPublicURL(), "/")
+	r.Get("/api/v1/orchestrator/public-key", func(w http.ResponseWriter, r *http.Request) {
+		if apiBase == "" {
+			writeJSON(w, 500, map[string]string{"error": "VAULTSCAN_API_PUBLIC_URL not configured"})
+			return
+		}
+		req, _ := http.NewRequestWithContext(r.Context(), "GET",
+			apiBase+"/api/v1/orchestrator/public-key", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			writeJSON(w, 502, map[string]string{"error": "upstream api unreachable: " + err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if ct := resp.Header.Get("Content-Type"); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(body)
+	})
 
 	// Enrollment uses the one-time token issued at provisioning.
 	r.Post("/api/v1/agents/{agent_id}/enroll", func(w http.ResponseWriter, r *http.Request) {

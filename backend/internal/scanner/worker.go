@@ -206,9 +206,11 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 
 	anyToolRan := false
 	for _, tool := range j.Tools {
+		w.markTaskState(ctx, j.ID, tool, "running", nil, nil)
 		img, err := w.registry.Lookup(ctx, tool, "external")
 		if err != nil {
 			w.log.Warn().Err(err).Str("tool", tool).Msg("tool not in image registry — skipping")
+			w.markTaskState(ctx, j.ID, tool, "skipped", nil, map[string]any{"reason": "no image in registry"})
 			continue
 		}
 		// Image digest + cosign verification (Blueprint §12.3). VerifyImage
@@ -218,6 +220,7 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 		if _, err := w.registry.VerifyImage(ctx, img, "", "external", nil); err != nil {
 			w.log.Warn().Err(err).Str("tool", tool).Str("image", img.Reference).
 				Msg("image verification rejected — skipping tool")
+			w.markTaskState(ctx, j.ID, tool, "skipped", nil, map[string]any{"reason": "image verification rejected"})
 			continue
 		}
 
@@ -229,10 +232,12 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 			if errors.Is(err, ErrSyntheticForbidden) {
 				w.log.Error().Err(err).Str("tool", tool).
 					Msg("scanner binary missing and synthetic output forbidden — failing job")
+				w.markTaskState(ctx, j.ID, tool, "failed", nil, map[string]any{"reason": "binary missing; synthetic forbidden"})
 				w.failJob(ctx, j, "scanner binary missing: "+tool)
 				return
 			}
 			w.log.Warn().Err(err).Str("tool", tool).Msg("tool run failed; continuing")
+			w.markTaskState(ctx, j.ID, tool, "failed", nil, map[string]any{"error": err.Error()})
 			continue
 		}
 		// Defense in depth: even if AllowSynthetic was true at runner
@@ -270,6 +275,7 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 		})
 
 		// Parse + ingest.
+		var ingestedCount int
 		if parser, ok := parsers.Registry[tool]; ok {
 			ingested, err := parser(parsers.Context{
 				PlatformID: j.PlatformID, PartnerID: j.PartnerID,
@@ -278,14 +284,26 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 			}, res.Output)
 			if err != nil {
 				w.log.Warn().Err(err).Str("tool", tool).Msg("parse output")
+				w.markTaskState(ctx, j.ID, tool, "failed",
+					intPtr(res.ExitCode),
+					map[string]any{"parse_error": err.Error(), "synthetic": res.Synthetic})
 				continue
 			}
 			for _, in := range ingested {
 				if _, _, err := w.findings.Upsert(ctx, in); err != nil {
 					w.log.Warn().Err(err).Str("tool", tool).Msg("ingest finding")
+				} else {
+					ingestedCount++
 				}
 			}
 		}
+		w.markTaskState(ctx, j.ID, tool, "succeeded",
+			intPtr(res.ExitCode),
+			map[string]any{
+				"synthetic":    res.Synthetic,
+				"output_bytes": len(res.Output),
+				"ingested":     ingestedCount,
+			})
 	}
 
 	if !anyToolRan {
@@ -309,6 +327,37 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 	})
 	w.log.Info().Str("job", j.ID.String()).Msg("scan job succeeded")
 }
+
+// markTaskState updates the scan_tasks row for (jobID, tool) with the
+// given status + optional exit code + JSON output summary. Used to give
+// ops a per-tool execution timeline (which binary ran, which were
+// skipped because the registry didn't know them, which crashed).
+//
+// The orchestrator pre-inserts the row at "queued" when it dispatches
+// the job, so this is always an UPDATE. Errors are logged + swallowed
+// — scan progress shouldn't fail because of an audit row write.
+func (w *Worker) markTaskState(ctx context.Context, jobID uuid.UUID, tool, status string, exitCode *int, summary map[string]any) {
+	var summaryJSON []byte
+	if summary != nil {
+		summaryJSON, _ = json.Marshal(summary)
+	}
+	var startCol, endCol string
+	switch status {
+	case "running":
+		startCol = ", started_at = now()"
+	case "succeeded", "failed", "skipped":
+		endCol = ", completed_at = now()"
+	}
+	q := `UPDATE scan_tasks
+	         SET status = $3, exit_code = $4, output_summary = $5::jsonb` +
+		startCol + endCol + `
+	       WHERE scan_job_id = $1 AND tool = $2`
+	if _, err := w.pool.Exec(ctx, q, jobID, tool, status, exitCode, summaryJSON); err != nil {
+		w.log.Warn().Err(err).Str("tool", tool).Msg("update scan_tasks state")
+	}
+}
+
+func intPtr(n int) *int { return &n }
 
 func (w *Worker) failJob(ctx context.Context, j *claimedJob, reason string) {
 	w.log.Warn().Str("job", j.ID.String()).Str("reason", reason).Msg("scan job failed")
