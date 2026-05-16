@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,6 +47,10 @@ type Orchestrator struct {
 	// FallbackRegistry is the registry hostname used when Digests is
 	// nil OR a tool isn't pinned. Defaults to the production registry.
 	FallbackRegistry string
+	// Failover is the cross-region failover ladder consulted when
+	// the primary region has no eligible node. Optional — nil = no
+	// failover, just error out per the legacy behaviour.
+	Failover *FailoverRegions
 }
 
 // WithDigests attaches an ImageDigestRegistry. main.go calls this
@@ -443,10 +448,92 @@ func (o *Orchestrator) recentJobsForTenantLastHour(ctx context.Context, tenant u
 	return n
 }
 
+// FailoverRegions defines the cross-region failover ladder consulted
+// by pickScannerNode when a job's primary region has no eligible
+// node (offline / quota-saturated / no nodes registered). Operators
+// configure this via VAULTSCAN_REGION_FAILOVER per-region:
+//
+//   us-east-1=us-west-2,us-east-2
+//   eu-west-1=eu-central-1,eu-west-2
+//
+// Lookups are case-insensitive. Empty / unset = no failover (current
+// region only).
+type FailoverRegions struct {
+	// ladder[primary] = ordered list of fallback regions to try.
+	ladder map[string][]string
+}
+
+// NewFailoverRegionsFromEnv parses VAULTSCAN_REGION_FAILOVER. The
+// env-var format is `primary=fb1,fb2;primary2=fb3` — semicolon-
+// separated entries, each "<primary>=<csv-fallbacks>".
+func NewFailoverRegionsFromEnv(spec string) *FailoverRegions {
+	f := &FailoverRegions{ladder: map[string][]string{}}
+	for _, entry := range strings.Split(spec, ";") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(k))
+		var list []string
+		for _, s := range strings.Split(v, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				list = append(list, s)
+			}
+		}
+		if len(list) > 0 {
+			f.ladder[key] = list
+		}
+	}
+	return f
+}
+
+// Fallbacks returns the ordered fallback list for primary, or nil if
+// none configured.
+func (f *FailoverRegions) Fallbacks(primary string) []string {
+	if f == nil {
+		return nil
+	}
+	return f.ladder[strings.ToLower(primary)]
+}
+
+// WithFailoverRegions attaches the cross-region failover ladder.
+// Returns o for fluent chaining alongside WithNodeOps / WithDigests.
+func (o *Orchestrator) WithFailoverRegions(f *FailoverRegions) *Orchestrator {
+	o.Failover = f
+	return o
+}
+
 func (o *Orchestrator) pickScannerNode(ctx context.Context, region string) (uuid.UUID, error) {
-	// VS-05 path: respect heartbeat freshness, inflight load, and region
-	// quota. The legacy random pick stays as a fallback for partial wirings
-	// (e.g. unit tests that don't construct NodeOps).
+	// Try the primary region first; on miss / saturation walk the
+	// configured failover ladder. Each attempt is logged via a
+	// scanner_failover_attempts row so operators can alert on
+	// chronic primary unavailability.
+	tried := []string{region}
+	if id, err := o.pickInRegion(ctx, region); err == nil {
+		return id, nil
+	} else if !errors.Is(err, ErrRegionAtQuota) && !isNoNodeErr(err) {
+		// Hard error (DB down) — don't fall back, surface it.
+		return uuid.Nil, err
+	}
+	for _, fb := range o.Failover.Fallbacks(region) {
+		tried = append(tried, fb)
+		id, err := o.pickInRegion(ctx, fb)
+		if err == nil {
+			o.recordFailover(ctx, region, fb)
+			return id, nil
+		}
+	}
+	return uuid.Nil, fmt.Errorf("scanorch: no scanner node available; tried regions=%v",
+		tried)
+}
+
+// pickInRegion is the original single-region picker, extracted so
+// pickScannerNode can call it once per ladder entry.
+func (o *Orchestrator) pickInRegion(ctx context.Context, region string) (uuid.UUID, error) {
 	if o.Nodes != nil {
 		atQuota, q, err := o.Nodes.IsRegionAtQuota(ctx, region, false)
 		if err == nil && atQuota {
@@ -472,6 +559,24 @@ func (o *Orchestrator) pickScannerNode(ctx context.Context, region string) (uuid
 		return uuid.Nil, fmt.Errorf("scanorch: no scanner node available for region %q", region)
 	}
 	return id, nil
+}
+
+// recordFailover writes one row per cross-region pick. Read by ops
+// dashboards + the scanner_region_failover_total Prometheus counter
+// (vaultscan_scanner_region_failover_total{from,to}).
+func (o *Orchestrator) recordFailover(ctx context.Context, from, to string) {
+	_, _ = o.pool.Exec(ctx, `
+		INSERT INTO scanner_failover_attempts(from_region, to_region, decided_at)
+		VALUES ($1, $2, now())
+		ON CONFLICT DO NOTHING`, from, to)
+	observability.ScanJobsCreated.WithLabelValues("region_failover").Inc()
+}
+
+// isNoNodeErr reports whether err is the "no scanner node available"
+// case (used by pickScannerNode to decide whether to walk the
+// failover ladder vs surface a hard infra error).
+func isNoNodeErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no scanner node available")
 }
 
 func summarizeTargets(t []string) string {

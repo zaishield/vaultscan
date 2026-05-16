@@ -166,6 +166,12 @@ func main() {
 	} else {
 		orch = orch.WithNodeOps(nodeOps)
 	}
+	// Cross-region failover ladder.
+	// Format: VAULTSCAN_REGION_FAILOVER="us-east-1=us-west-2,us-east-2;eu-west-1=eu-central-1"
+	if spec := os.Getenv("VAULTSCAN_REGION_FAILOVER"); spec != "" {
+		orch = orch.WithFailoverRegions(scanorch.NewFailoverRegionsFromEnv(spec))
+		log.Info().Str("spec", spec).Msg("scanner cross-region failover ladder configured")
+	}
 	liveStream := dashboards.NewLiveStream(bus)
 	guardrailSvc := guardrails.New(pool.Pool, auditSvc)
 	bruteforce := auth.NewBruteforceShield(pool.Pool)

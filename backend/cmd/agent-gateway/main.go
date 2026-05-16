@@ -180,6 +180,13 @@ func main() {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
 
+	// Fleet-wide telemetry exposition for Prometheus. Single scrape
+	// target aggregates per-agent state from the DB (rather than
+	// scraping each agent — which would punch through customer
+	// network policies). See internal/agentgw/fleet_metrics.go.
+	fleet := agentgw.NewFleetMetrics(pool.Pool)
+	r.Get("/agent-fleet-metrics", fleet.Handler())
+
 	// Enrollment uses the one-time token issued at provisioning.
 	r.Post("/api/v1/agents/{agent_id}/enroll", func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(chi.URLParam(r, "agent_id"))
