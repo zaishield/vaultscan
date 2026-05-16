@@ -32,6 +32,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/config"
 	"github.com/zaishield/vaultscan/backend/internal/db"
+	"github.com/zaishield/vaultscan/backend/internal/envmode"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
@@ -98,7 +99,7 @@ func main() {
 	//   (unset)      — Defaults to 'auto' for dev convenience, 'on' in
 	//                  production mode (fail-closed).
 	tlsMode := strings.ToLower(strings.TrimSpace(os.Getenv("VAULTSCAN_AGENT_GW_TLS")))
-	isProd := isProductionEnv(cfg.Env)
+	isProd := envmode.IsProduction(cfg.Env)
 	if tlsMode == "" {
 		if isProd {
 			tlsMode = "on"
@@ -487,12 +488,6 @@ func loadGatewayCertFromDisk(cfg *config.Config) ([]byte, []byte, error) {
 	return certPEM, keyPEM, nil
 }
 
-// isProductionEnv mirrors config.Config.isProductionMode to avoid
-// circular dependency. Normalizes case + whitespace.
-func isProductionEnv(env string) bool {
-	e := strings.ToLower(strings.TrimSpace(env))
-	return e == "production" || e == "prod"
-}
 
 func loadOrGenerateGatewayCert(cfg *config.Config) ([]byte, []byte, error) {
 	if cfg.AgentGatewayCertPath != "" && cfg.AgentGatewayKeyPath != "" {

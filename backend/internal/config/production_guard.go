@@ -24,6 +24,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/zaishield/vaultscan/backend/internal/envmode"
 )
 
 // devDefaults catalogs the literal values we ship in Load() so we can
@@ -151,11 +153,11 @@ func (c *Config) validateProduction() error {
 	return nil
 }
 
-// isProductionMode normalizes the env string so "prod", "production",
-// "PROD", etc all activate the guard.
+// isProductionMode delegates to envmode.IsProduction so the
+// predicate is identical across cmd/agent-gateway + internal/scanner
+// + this file. Single source of truth.
 func (c *Config) isProductionMode() bool {
-	e := strings.ToLower(strings.TrimSpace(c.Env))
-	return e == "production" || e == "prod"
+	return envmode.IsProduction(c.Env)
 }
 
 func isLocalhostURL(u string) bool {

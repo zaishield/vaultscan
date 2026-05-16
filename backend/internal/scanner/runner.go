@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/zaishield/vaultscan/backend/internal/envmode"
 )
 
 // Runner executes a scanner tool. The production runner is a Kubernetes Job
@@ -41,8 +42,7 @@ var ErrSyntheticForbidden = errors.New("scanner: host binary not found and synth
 // NewRunner returns a runner whose AllowSynthetic flag is set according
 // to VAULTSCAN_ENV. Production deployments boot with synthetics OFF.
 func NewRunner() *Runner {
-	allow := !isProductionEnv()
-	return &Runner{AllowSynthetic: allow}
+	return &Runner{AllowSynthetic: !envmode.FromEnv()}
 }
 
 // NewRunnerForTest returns a runner that always allows synthetic output.
@@ -57,11 +57,6 @@ func NewRunnerForTest() *Runner {
 // missing — staging, CI smoke against real images.
 func NewRunnerStrict() *Runner {
 	return &Runner{AllowSynthetic: false}
-}
-
-func isProductionEnv() bool {
-	e := strings.ToLower(strings.TrimSpace(os.Getenv("VAULTSCAN_ENV")))
-	return e == "production" || e == "prod"
 }
 
 // Result is what the runner returns for one tool invocation.
