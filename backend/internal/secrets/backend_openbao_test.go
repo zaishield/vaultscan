@@ -52,6 +52,7 @@ func newOpenBaoStub(t *testing.T, store map[string]map[string]any) *httptest.Ser
 }
 
 func TestOpenBaoBackend_GetSimpleValue(t *testing.T) {
+	t.Parallel()
 	store := map[string]map[string]any{
 		"integrations/jira/api-token": {"value": "abc123"},
 	}
@@ -74,6 +75,7 @@ func TestOpenBaoBackend_GetSimpleValue(t *testing.T) {
 }
 
 func TestOpenBaoBackend_GetMultiFieldReturnsJSON(t *testing.T) {
+	t.Parallel()
 	store := map[string]map[string]any{
 		"cloud/aws/prod": {
 			"access_key_id":     "AKIA...",
@@ -97,6 +99,7 @@ func TestOpenBaoBackend_GetMultiFieldReturnsJSON(t *testing.T) {
 }
 
 func TestOpenBaoBackend_RoundTrip(t *testing.T) {
+	t.Parallel()
 	store := map[string]map[string]any{}
 	srv := newOpenBaoStub(t, store)
 	defer srv.Close()
@@ -114,6 +117,7 @@ func TestOpenBaoBackend_RoundTrip(t *testing.T) {
 }
 
 func TestOpenBaoBackend_GetNotFound(t *testing.T) {
+	t.Parallel()
 	srv := newOpenBaoStub(t, map[string]map[string]any{})
 	defer srv.Close()
 	b, _ := NewOpenBaoBackend(OpenBaoConfig{
@@ -125,6 +129,7 @@ func TestOpenBaoBackend_GetNotFound(t *testing.T) {
 }
 
 func TestOpenBaoBackend_AuthFailure(t *testing.T) {
+	t.Parallel()
 	srv := newOpenBaoStub(t, map[string]map[string]any{})
 	defer srv.Close()
 	b, _ := NewOpenBaoBackend(OpenBaoConfig{
@@ -137,6 +142,7 @@ func TestOpenBaoBackend_AuthFailure(t *testing.T) {
 }
 
 func TestOpenBaoBackend_FileToken(t *testing.T) {
+	t.Parallel()
 	// Write a token to a temp file and use the file:/path scheme.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "token")
@@ -165,6 +171,7 @@ func TestOpenBaoBackend_FileToken(t *testing.T) {
 }
 
 func TestOpenBaoBackend_RejectsBadConfig(t *testing.T) {
+	t.Parallel()
 	if _, err := NewOpenBaoBackend(OpenBaoConfig{}); err == nil {
 		t.Error("empty config should error")
 	}
@@ -174,6 +181,7 @@ func TestOpenBaoBackend_RejectsBadConfig(t *testing.T) {
 }
 
 func TestSplitRef(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ in, path, key string }{
 		{"integrations/jira/api-token", "/integrations/jira", "api-token"},
 		{"flat", "/", "flat"},

@@ -6,6 +6,7 @@ import "testing"
 // every branch (domain/subdomain, exact IP, CIDR-in-CIDR, mismatch) so that
 // regressions in the legal gate are caught before they ship.
 func TestMatches(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name       string
 		scopeType  string

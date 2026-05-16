@@ -350,6 +350,9 @@ func parseSCIMFilter(filter string) (field, value string, err error) {
 	}
 	field = strings.ToLower(strings.TrimSpace(parts[0]))
 	value = strings.Trim(strings.TrimSpace(parts[1]), `"`)
+	if field == "" {
+		return "", "", errors.New("scim: empty field in filter")
+	}
 	return field, value, nil
 }
 

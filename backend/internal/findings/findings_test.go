@@ -7,6 +7,7 @@ import (
 )
 
 func TestDedupFingerprintStable(t *testing.T) {
+	t.Parallel()
 	a := IngestInput{
 		Title: "X-Frame-Options missing", Scanner: "zap",
 		AffectedEndpoint: "https://api.example.com",
@@ -24,6 +25,7 @@ func TestDedupFingerprintStable(t *testing.T) {
 }
 
 func TestAllowedTransitions(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		from, to string
 		allowed  bool
@@ -45,6 +47,7 @@ func TestAllowedTransitions(t *testing.T) {
 }
 
 func TestValidStatuses(t *testing.T) {
+	t.Parallel()
 	if len(ValidStatuses()) != 11 {
 		t.Fatalf("Blueprint §17.3 mandates 11 statuses, got %d", len(ValidStatuses()))
 	}
@@ -52,6 +55,7 @@ func TestValidStatuses(t *testing.T) {
 
 // IngestInput must include the fields needed for the canonical model in §17.2.
 func TestIngestInputShape(t *testing.T) {
+	t.Parallel()
 	in := IngestInput{TenantID: uuid.New(), Title: "X", Severity: "high", Scanner: "nuclei"}
 	fp := dedupFingerprint(in)
 	if fp == "" {

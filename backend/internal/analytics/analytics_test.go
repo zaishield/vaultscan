@@ -3,6 +3,7 @@ package analytics
 import "testing"
 
 func TestBucketCounts(t *testing.T) {
+	t.Parallel()
 	res := map[string]any{
 		"aggregations": map[string]any{
 			"by_severity": map[string]any{
@@ -20,6 +21,7 @@ func TestBucketCounts(t *testing.T) {
 }
 
 func TestBucketKV(t *testing.T) {
+	t.Parallel()
 	res := map[string]any{
 		"aggregations": map[string]any{
 			"by_asset": map[string]any{
@@ -36,6 +38,7 @@ func TestBucketKV(t *testing.T) {
 }
 
 func TestHistogramBuckets(t *testing.T) {
+	t.Parallel()
 	res := map[string]any{
 		"aggregations": map[string]any{
 			"by_day": map[string]any{
@@ -53,6 +56,7 @@ func TestHistogramBuckets(t *testing.T) {
 }
 
 func TestStringFromPayload(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in     map[string]any
 		key    string

@@ -8,6 +8,7 @@ import (
 )
 
 func TestAuthorizeTargetTenant_PlatformAdmin_AnyTenant(t *testing.T) {
+	t.Parallel()
 	id := &Identity{Roles: []string{"platform_admin"}}
 	target := uuid.New()
 	got, err := AuthorizeTargetTenant(id, target.String())
@@ -20,6 +21,7 @@ func TestAuthorizeTargetTenant_PlatformAdmin_AnyTenant(t *testing.T) {
 }
 
 func TestAuthorizeTargetTenant_PlatformAdmin_RequiresExplicit(t *testing.T) {
+	t.Parallel()
 	id := &Identity{Roles: []string{"platform_admin"}}
 	if _, err := AuthorizeTargetTenant(id, ""); !errors.Is(err, ErrTenantRequired) {
 		t.Errorf("platform admin needs explicit tenant; got %v", err)
@@ -27,6 +29,7 @@ func TestAuthorizeTargetTenant_PlatformAdmin_RequiresExplicit(t *testing.T) {
 }
 
 func TestAuthorizeTargetTenant_TenantAdmin_OwnTenantOnly(t *testing.T) {
+	t.Parallel()
 	own := uuid.New()
 	id := &Identity{Roles: []string{"tenant_admin"}, TenantID: &own}
 
@@ -43,6 +46,7 @@ func TestAuthorizeTargetTenant_TenantAdmin_OwnTenantOnly(t *testing.T) {
 }
 
 func TestAuthorizeTargetTenant_TenantViewer_OwnTenantOnly(t *testing.T) {
+	t.Parallel()
 	own := uuid.New()
 	id := &Identity{Roles: []string{"tenant_viewer"}, TenantID: &own}
 	other := uuid.New()
@@ -52,6 +56,7 @@ func TestAuthorizeTargetTenant_TenantViewer_OwnTenantOnly(t *testing.T) {
 }
 
 func TestAuthorizeTargetTenant_PartnerAdmin_AnyTenantWithExplicit(t *testing.T) {
+	t.Parallel()
 	pid := uuid.New()
 	id := &Identity{Roles: []string{"partner_admin"}, PartnerID: &pid}
 	target := uuid.New()
@@ -64,12 +69,14 @@ func TestAuthorizeTargetTenant_PartnerAdmin_AnyTenantWithExplicit(t *testing.T) 
 }
 
 func TestAuthorizeTargetTenant_NoIdentity(t *testing.T) {
+	t.Parallel()
 	if _, err := AuthorizeTargetTenant(nil, uuid.New().String()); err == nil {
 		t.Error("nil identity should reject")
 	}
 }
 
 func TestAuthorizeTargetTenant_RejectsMalformedUUID(t *testing.T) {
+	t.Parallel()
 	id := &Identity{Roles: []string{"platform_admin"}}
 	if _, err := AuthorizeTargetTenant(id, "not-a-uuid"); err == nil {
 		t.Error("malformed UUID should reject")
@@ -77,6 +84,7 @@ func TestAuthorizeTargetTenant_RejectsMalformedUUID(t *testing.T) {
 }
 
 func TestAuthorizeTargetTenant_RejectsNoRoles(t *testing.T) {
+	t.Parallel()
 	id := &Identity{Roles: nil}
 	if _, err := AuthorizeTargetTenant(id, uuid.New().String()); err == nil {
 		t.Error("no roles should reject")
@@ -84,6 +92,7 @@ func TestAuthorizeTargetTenant_RejectsNoRoles(t *testing.T) {
 }
 
 func TestAuthorizeOptionalTenant_TenantAdmin_CrossTenantRejected(t *testing.T) {
+	t.Parallel()
 	own := uuid.New()
 	other := uuid.New()
 	id := &Identity{Roles: []string{"tenant_admin"}, TenantID: &own}
@@ -93,6 +102,7 @@ func TestAuthorizeOptionalTenant_TenantAdmin_CrossTenantRejected(t *testing.T) {
 }
 
 func TestAuthorizeOptionalTenant_PlatformAdmin_NilAllowed(t *testing.T) {
+	t.Parallel()
 	id := &Identity{Roles: []string{"platform_admin"}}
 	got, err := AuthorizeOptionalTenant(id, "")
 	if err != nil {
@@ -104,6 +114,7 @@ func TestAuthorizeOptionalTenant_PlatformAdmin_NilAllowed(t *testing.T) {
 }
 
 func TestAuthorizeTargetTenant_SuperAdminCanCross(t *testing.T) {
+	t.Parallel()
 	id := &Identity{Roles: []string{"zaishield_super_admin"}}
 	target := uuid.New()
 	if got, err := AuthorizeTargetTenant(id, target.String()); err != nil || got != target {

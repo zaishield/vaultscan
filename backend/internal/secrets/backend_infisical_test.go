@@ -64,6 +64,7 @@ func newInfisicalStub(t *testing.T, store map[string]string) *httptest.Server {
 }
 
 func TestInfisicalBackend_RoundTrip(t *testing.T) {
+	t.Parallel()
 	store := map[string]string{}
 	srv := newInfisicalStub(t, store)
 	defer srv.Close()
@@ -88,6 +89,7 @@ func TestInfisicalBackend_RoundTrip(t *testing.T) {
 }
 
 func TestInfisicalBackend_NotFound(t *testing.T) {
+	t.Parallel()
 	srv := newInfisicalStub(t, map[string]string{})
 	defer srv.Close()
 	b, _ := NewInfisicalBackend(InfisicalConfig{
@@ -100,6 +102,7 @@ func TestInfisicalBackend_NotFound(t *testing.T) {
 }
 
 func TestInfisicalBackend_AuthFailure(t *testing.T) {
+	t.Parallel()
 	srv := newInfisicalStub(t, map[string]string{"a/b": "v"})
 	defer srv.Close()
 	b, _ := NewInfisicalBackend(InfisicalConfig{
@@ -112,12 +115,14 @@ func TestInfisicalBackend_AuthFailure(t *testing.T) {
 }
 
 func TestInfisicalBackend_RejectsBadConfig(t *testing.T) {
+	t.Parallel()
 	if _, err := NewInfisicalBackend(InfisicalConfig{}); err == nil {
 		t.Error("empty config should error")
 	}
 }
 
 func TestFactory_DispatchesByName(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		backend string

@@ -16,6 +16,7 @@ import (
 )
 
 func TestInMemoryLimiter_Basic(t *testing.T) {
+	t.Parallel()
 	l := NewInMemoryLimiter()
 	ctx := context.Background()
 	allowed := 0
@@ -33,6 +34,7 @@ func TestInMemoryLimiter_Basic(t *testing.T) {
 }
 
 func TestInMemoryLimiter_RefillOverTime(t *testing.T) {
+	t.Parallel()
 	l := NewInMemoryLimiter()
 	ctx := context.Background()
 	for i := 0; i < 1000; i++ {
@@ -47,6 +49,7 @@ func TestInMemoryLimiter_RefillOverTime(t *testing.T) {
 }
 
 func TestInMemoryLimiter_KeysAreIsolated(t *testing.T) {
+	t.Parallel()
 	l := NewInMemoryLimiter()
 	ctx := context.Background()
 	for i := 0; i < 1000; i++ {
@@ -151,6 +154,7 @@ func readArrayCommand(br *bufio.Reader) ([]string, error) {
 }
 
 func TestRedisLimiter_AllowsThenBlocks(t *testing.T) {
+	t.Parallel()
 	stub := newStubRedis(t)
 	defer stub.close()
 
@@ -180,6 +184,7 @@ func TestRedisLimiter_AllowsThenBlocks(t *testing.T) {
 }
 
 func TestRedisLimiter_AuthHandshake(t *testing.T) {
+	t.Parallel()
 	stub := newStubRedis(t)
 	defer stub.close()
 
@@ -207,12 +212,14 @@ func TestRedisLimiter_AuthHandshake(t *testing.T) {
 }
 
 func TestNewRedisLimiter_RejectsEmptyAddr(t *testing.T) {
+	t.Parallel()
 	if _, err := NewRedisLimiter("", "", 0); err == nil {
 		t.Error("expected error on empty addr")
 	}
 }
 
 func TestRateLimitMiddleware_FailOpenOnBackendError(t *testing.T) {
+	t.Parallel()
 	// Limiter that always errors → middleware should pass the request
 	// through (don't 503 the API when Redis is down).
 	mid := NewRateLimitMiddleware(brokenLimiter{}, 1, 1)
@@ -238,6 +245,7 @@ func (brokenLimiter) Allow(_ context.Context, _ string, _, _ int) (bool, error) 
 }
 
 func TestRateLimitMiddleware_429WhenBlocked(t *testing.T) {
+	t.Parallel()
 	// Limiter that always denies → middleware should 429.
 	mid := NewRateLimitMiddleware(denyLimiter{}, 1, 1)
 	srv := httptest.NewServer(mid.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

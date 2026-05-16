@@ -6,6 +6,7 @@ import (
 )
 
 func TestParseSQLMap(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{"target":"https://x/?id=1","vulnerable":true,"techniques":["B"],"place":"GET","parameter":"id","type":"boolean-based blind"}` + "\n")
 	out, _ := ParseSQLMap(testCtx(), raw)
 	if len(out) != 1 || out[0].Severity != "critical" || out[0].CWE != "CWE-89" {
@@ -14,6 +15,7 @@ func TestParseSQLMap(t *testing.T) {
 }
 
 func TestParseGobuster_FiltersAndBumps(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{"url":"https://x/admin","status":200,"size":1024}
 {"url":"https://x/missing","status":404,"size":0}
 {"url":"https://x/.env","status":403,"size":42}
@@ -35,6 +37,7 @@ func TestParseGobuster_FiltersAndBumps(t *testing.T) {
 }
 
 func TestParseDirsearch(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{"results":[
 		{"status":200,"path":"/admin","url":"https://x/admin","content-length":12,"redirect":""},
 		{"status":404,"path":"/no","url":"https://x/no","content-length":0,"redirect":""}
@@ -49,6 +52,7 @@ func TestParseDirsearch(t *testing.T) {
 }
 
 func TestParseSemgrep_SeverityMap(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{"results":[
 		{"check_id":"py.flask.security","path":"app.py","start":{"line":42},
 		 "extra":{"severity":"ERROR","message":"hardcoded secret",
@@ -69,6 +73,7 @@ func TestParseSemgrep_SeverityMap(t *testing.T) {
 }
 
 func TestParseGitleaks_AlwaysHigh(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`[{"Description":"AWS key","RuleID":"aws-key","File":"src/keys.yaml",
 	  "Commit":"abc","Author":"dev","Email":"d@x"}]`)
 	out, _ := ParseGitleaks(testCtx(), raw)
@@ -78,6 +83,7 @@ func TestParseGitleaks_AlwaysHigh(t *testing.T) {
 }
 
 func TestParseHydra_ExtractsHostAndIsCritical(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`[22][ssh] host: 10.0.0.5   login: admin   password: hunter2
 [80][http] host: 10.0.0.6   login: root    password: 12345
 `)
@@ -94,6 +100,7 @@ func TestParseHydra_ExtractsHostAndIsCritical(t *testing.T) {
 }
 
 func TestParseReconNG_RoutesByModule(t *testing.T) {
+	t.Parallel()
 	for module, want := range map[string]string{
 		"recon/hosts":           "Host discovered",
 		"recon/contacts":        "Contact discovered",
@@ -119,6 +126,7 @@ func TestParseReconNG_RoutesByModule(t *testing.T) {
 }
 
 func TestRegistry_DevSecToolsPresent(t *testing.T) {
+	t.Parallel()
 	for _, tool := range []string{"sqlmap", "gobuster", "dirsearch", "semgrep", "gitleaks", "hydra", "recon-ng"} {
 		if _, ok := Registry[tool]; !ok {
 			t.Fatalf("parsers.Registry[%q] missing", tool)

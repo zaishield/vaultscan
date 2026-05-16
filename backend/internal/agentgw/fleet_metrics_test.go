@@ -6,6 +6,7 @@ import (
 )
 
 func TestEscapeHelp(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"plain":         "plain",
 		"with\nnewline": "with newline",
@@ -20,6 +21,7 @@ func TestEscapeHelp(t *testing.T) {
 }
 
 func TestNewFleetMetrics_DefaultsMaxAgents(t *testing.T) {
+	t.Parallel()
 	f := NewFleetMetrics(nil)
 	if f.MaxAgents != 5000 {
 		t.Errorf("MaxAgents default = %d, want 5000", f.MaxAgents)
@@ -30,6 +32,7 @@ func TestNewFleetMetrics_DefaultsMaxAgents(t *testing.T) {
 // "vaultscan_agent_<thing>" pattern. Brittle on purpose — operators'
 // PromQL alerts pin these names.
 func TestMetricNamesAreStable(t *testing.T) {
+	t.Parallel()
 	// We can't easily exercise the handler without a real DB; instead
 	// we sanity-check that the strings we'd emit start with the
 	// vaultscan_agent_ prefix via a sentinel constant.

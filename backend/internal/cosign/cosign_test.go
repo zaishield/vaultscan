@@ -15,6 +15,7 @@ import (
 // TestVerifyPubKey_ECDSARoundTrip ensures the ECDSA-P256 verifier accepts
 // a signature it produces itself and rejects a tampered payload.
 func TestVerifyPubKey_ECDSARoundTrip(t *testing.T) {
+	t.Parallel()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +40,7 @@ func TestVerifyPubKey_ECDSARoundTrip(t *testing.T) {
 
 // TestParsePublicKey accepts PKIX and PKCS1 PEM encodings.
 func TestParsePublicKey(t *testing.T) {
+	t.Parallel()
 	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	der, _ := x509.MarshalPKIXPublicKey(&priv.PublicKey)
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
@@ -54,6 +56,7 @@ func TestParsePublicKey(t *testing.T) {
 // TestVerifyImage_PayloadShape covers the JSON envelope checks: wrong type,
 // wrong digest, malformed b64 all reject before crypto runs.
 func TestVerifyImage_PayloadShape(t *testing.T) {
+	t.Parallel()
 	s := &Service{}
 	// Build a payload covering a different digest than we ask about.
 	payload := map[string]any{

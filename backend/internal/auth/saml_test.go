@@ -10,6 +10,7 @@ import (
 )
 
 func TestAuthnRequestURL_Shape(t *testing.T) {
+	t.Parallel()
 	c := &SAMLConfig{
 		SPEntityID: "urn:vaultscan:sp:tenant-XYZ",
 		SPACSURL:   "https://api.vaultscan.zaishield.com/saml/acs",
@@ -55,12 +56,14 @@ func TestAuthnRequestURL_Shape(t *testing.T) {
 }
 
 func TestAuthnRequestURL_RejectsEmptyConfig(t *testing.T) {
+	t.Parallel()
 	if _, err := (&SAMLConfig{}).AuthnRequestURL(""); err == nil {
 		t.Error("empty config should error")
 	}
 }
 
 func TestAudienceMatches(t *testing.T) {
+	t.Parallel()
 	if !samlAudienceMatches("urn:x", "urn:x") {
 		t.Error("equal should match")
 	}
@@ -76,6 +79,7 @@ func TestAudienceMatches(t *testing.T) {
 }
 
 func TestIsEmailAttr(t *testing.T) {
+	t.Parallel()
 	cases := map[string]bool{
 		"mail":            true,
 		"email":           true,
@@ -92,6 +96,7 @@ func TestIsEmailAttr(t *testing.T) {
 }
 
 func TestParseAndValidateResponse_RejectsNoCert(t *testing.T) {
+	t.Parallel()
 	c := &SAMLConfig{SPEntityID: "x"}
 	if _, err := c.ParseAndValidateResponse(base64.StdEncoding.EncodeToString(
 		[]byte(`<Response><Assertion></Assertion></Response>`))); err == nil {
@@ -100,6 +105,7 @@ func TestParseAndValidateResponse_RejectsNoCert(t *testing.T) {
 }
 
 func TestStripWhitespace(t *testing.T) {
+	t.Parallel()
 	if got := stripWhitespace(" a  b\nc\r\nd "); got != "abcd" {
 		t.Errorf("got %q", got)
 	}

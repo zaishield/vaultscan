@@ -5,6 +5,7 @@ import (
 )
 
 func TestJobKey_StableAcrossInvocations(t *testing.T) {
+	t.Parallel()
 	a := jobKey("foo")
 	b := jobKey("foo")
 	if a != b {
@@ -13,6 +14,7 @@ func TestJobKey_StableAcrossInvocations(t *testing.T) {
 }
 
 func TestJobKey_DistinctPerName(t *testing.T) {
+	t.Parallel()
 	names := []string{
 		"audit_verify_deep", "report_schedules_run_due",
 		"agent_telemetry_rollup", "siem_audit_shipping",
@@ -31,6 +33,7 @@ func TestJobKey_DistinctPerName(t *testing.T) {
 }
 
 func TestJobKey_PrefixIsolatesFromOtherSystems(t *testing.T) {
+	t.Parallel()
 	// If two services share the same DB and both compute jobKey("foo"),
 	// the prefix in our hash should make them collide-resistant.
 	// Confirms the FNV input includes the "vaultscan-cron-" prefix.

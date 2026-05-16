@@ -6,6 +6,7 @@ import (
 )
 
 func TestParseFilters(t *testing.T) {
+	t.Parallel()
 	f := parseFilters("status=open,severity>=high,age<30d")
 	if f["status"] != "open" {
 		t.Errorf("status: %q", f["status"])
@@ -19,6 +20,7 @@ func TestParseFilters(t *testing.T) {
 }
 
 func TestParseWindow(t *testing.T) {
+	t.Parallel()
 	cases := map[string]time.Duration{
 		"24h":  24 * time.Hour,
 		"30d":  30 * 24 * time.Hour,
@@ -37,6 +39,7 @@ func TestParseWindow(t *testing.T) {
 }
 
 func TestParseAge(t *testing.T) {
+	t.Parallel()
 	d, op, ok := parseAge("<30d")
 	if !ok || op != ">" || d != 30*24*time.Hour {
 		t.Errorf("got %v %s %v", d, op, ok)
@@ -51,6 +54,7 @@ func TestParseAge(t *testing.T) {
 }
 
 func TestSeveritiesGTE(t *testing.T) {
+	t.Parallel()
 	got := severitiesGTE("high")
 	want := []string{"high", "critical"}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
@@ -67,6 +71,7 @@ func TestSeveritiesGTE(t *testing.T) {
 }
 
 func TestVerdictForFindings(t *testing.T) {
+	t.Parallel()
 	// "open + high + age>30d" → ANY hit = fail.
 	if verdictForFindings(filters{"status": "open"}, 0) != "pass" {
 		t.Error("0 open findings should pass")

@@ -14,6 +14,7 @@ import (
 // verifies the parsed control results.
 
 func TestAzureAdapter_PassPath(t *testing.T) {
+	t.Parallel()
 	a := newAzureStub(t, azureStubData{
 		storage:   `{"value":[{"id":"/sub/sa1","name":"sa1","location":"westus","properties":{"supportsHttpsTrafficOnly":true}}]}`,
 		nsgs:      `{"value":[{"id":"/sub/nsg1","name":"nsg1","location":"westus","properties":{"securityRules":[{"name":"corp-ssh","properties":{"direction":"Inbound","access":"Allow","protocol":"Tcp","destinationPortRange":"22","sourceAddressPrefix":"10.0.0.0/8"}}]}}]}`,
@@ -55,6 +56,7 @@ func TestAzureAdapter_PassPath(t *testing.T) {
 }
 
 func TestAzureAdapter_FailPath(t *testing.T) {
+	t.Parallel()
 	a := newAzureStub(t, azureStubData{
 		storage:   `{"value":[{"id":"/sub/insecure","name":"insecure","location":"westus","properties":{"supportsHttpsTrafficOnly":false}}]}`,
 		nsgs:      `{"value":[{"id":"/sub/badnsg","name":"badnsg","location":"westus","properties":{"securityRules":[{"name":"open-ssh","properties":{"direction":"Inbound","access":"Allow","protocol":"Tcp","destinationPortRange":"22","sourceAddressPrefix":"0.0.0.0/0"}}]}}]}`,
@@ -83,6 +85,7 @@ func TestAzureAdapter_FailPath(t *testing.T) {
 }
 
 func TestAzureAdapter_NSGPortRangeIncludesSSH(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		single string
 		list   []string
@@ -103,6 +106,7 @@ func TestAzureAdapter_NSGPortRangeIncludesSSH(t *testing.T) {
 }
 
 func TestAzureAdapter_TokenCachedSecondCall(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	tokSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++

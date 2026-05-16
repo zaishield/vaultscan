@@ -540,7 +540,14 @@ func parseFilters(s string) filters {
 			continue
 		}
 		if k, v, ok := strings.Cut(part, "="); ok {
-			out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+			k = strings.TrimSpace(k)
+			if k == "" {
+				// Skip `=`-prefixed garbage like `=value` so we never
+				// emit an empty key (which would later match every
+				// filter loop with ambiguous semantics).
+				continue
+			}
+			out[k] = strings.TrimSpace(v)
 		}
 	}
 	return out

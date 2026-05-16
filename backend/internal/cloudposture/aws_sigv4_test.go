@@ -16,6 +16,7 @@ import (
 // signature derivation match the spec.
 
 func TestSignRequestSigV4_DerivesCorrectAuthorizationHeader(t *testing.T) {
+	t.Parallel()
 	// Fixed timestamp/key so the signature is deterministic. Uses the
 	// AWS-published test fixture for SigV4 (sts.amazonaws.com).
 	creds := AWSCredentials{
@@ -45,6 +46,7 @@ func TestSignRequestSigV4_DerivesCorrectAuthorizationHeader(t *testing.T) {
 }
 
 func TestSignRequestSigV4_PayloadHashCorrect(t *testing.T) {
+	t.Parallel()
 	creds := AWSCredentials{AccessKeyID: "k", SecretAccessKey: "s"}
 	body := "Action=Foo&Version=1"
 	req, _ := http.NewRequest("POST", "https://example.amazonaws.com/", strings.NewReader(body))
@@ -59,6 +61,7 @@ func TestSignRequestSigV4_PayloadHashCorrect(t *testing.T) {
 }
 
 func TestSignRequestSigV4_EmptyBodyHash(t *testing.T) {
+	t.Parallel()
 	creds := AWSCredentials{AccessKeyID: "k", SecretAccessKey: "s"}
 	req, _ := http.NewRequest("GET", "https://s3.amazonaws.com/?list-type=2", nil)
 	if err := signRequestSigV4(req, "us-east-1", "s3", creds); err != nil {
@@ -70,6 +73,7 @@ func TestSignRequestSigV4_EmptyBodyHash(t *testing.T) {
 }
 
 func TestSignRequestSigV4_SessionTokenHeader(t *testing.T) {
+	t.Parallel()
 	creds := AWSCredentials{
 		AccessKeyID: "k", SecretAccessKey: "s",
 		SessionToken: "FwoGZXIvYXdzEN3//////////wEaDBQ...",
@@ -84,6 +88,7 @@ func TestSignRequestSigV4_SessionTokenHeader(t *testing.T) {
 }
 
 func TestCanonicalURI_EncodesAndPreservesSlashes(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"":                      "/",
 		"/":                     "/",
@@ -100,6 +105,7 @@ func TestCanonicalURI_EncodesAndPreservesSlashes(t *testing.T) {
 }
 
 func TestCanonicalQueryString_SortsAndEncodes(t *testing.T) {
+	t.Parallel()
 	v := map[string][]string{
 		"b": {"2"},
 		"a": {"1"},
@@ -113,6 +119,7 @@ func TestCanonicalQueryString_SortsAndEncodes(t *testing.T) {
 }
 
 func TestHmacSHA256_MatchesStdlib(t *testing.T) {
+	t.Parallel()
 	key := []byte("k")
 	msg := []byte("m")
 	got := hex.EncodeToString(hmacSHA256(key, msg))

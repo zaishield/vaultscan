@@ -30,9 +30,58 @@ jobs:
       - name: build
         working-directory: backend
         run: go build ./...
-      - name: unit tests
+      - name: unit tests with coverage
         working-directory: backend
-        run: go test -race -count=1 ./...
+        run: |
+          go test -race -count=1 -covermode=atomic \
+            -coverprofile=coverage.out -coverpkg=./internal/... ./...
+          go tool cover -func=coverage.out | tee coverage-summary.txt
+          # Per-package coverage table for the CI summary panel.
+          {
+            echo '## Backend coverage'
+            echo ''
+            echo '| Package | Coverage |'
+            echo '| --- | --- |'
+            go tool cover -func=coverage.out \
+              | grep -v "^total" \
+              | awk -F'\t+' '{print $1, $NF}' \
+              | sed -E 's@github.com/zaishield/vaultscan/backend/@@' \
+              | awk '{pkg=$1; sub(/[^/]+:[0-9]+:$/, "", pkg); cov[pkg]=$NF; n[pkg]++}
+                     END {for (p in cov) printf "| %s | %s |\n", p, cov[p]}' \
+              | sort -t '|' -k2
+            echo ''
+            echo '### Total'
+            grep "^total" coverage-summary.txt | awk '{print "Total:", $NF}'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: enforce coverage floor
+        working-directory: backend
+        run: |
+          # Unit-only floor — the integration suite carries the api +
+          # scanorch + reports coverage; this gate guards the pure
+          # business-logic packages (auth, awssig, parsers, compliance,
+          # findings, …). Bump COVERAGE_FLOOR in the same change that
+          # earns the lift; never decrease it as a workaround.
+          COVERAGE_FLOOR="18.0"
+          got=$(grep "^total" coverage-summary.txt | awk '{print $NF}' | tr -d '%')
+          echo "coverage=$got floor=$COVERAGE_FLOOR"
+          # bash float compare via awk
+          awk -v g="$got" -v f="$COVERAGE_FLOOR" 'BEGIN { if (g+0 < f+0) { print "FAIL: coverage", g, "below floor", f; exit 1 } }'
+      - name: upload coverage artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: |
+            backend/coverage.out
+            backend/coverage-summary.txt
+          retention-days: 14
+      - name: upload to codecov
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: backend/coverage.out
+          flags: backend
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   agent:
     name: agent build + unit tests
@@ -50,9 +99,33 @@ jobs:
       - name: build
         working-directory: agent
         run: go build ./...
-      - name: unit tests
+      - name: unit tests with coverage
         working-directory: agent
-        run: go test -race -count=1 ./...
+        run: |
+          go test -race -count=1 -covermode=atomic \
+            -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out | tee coverage-summary.txt
+          {
+            echo '## Agent coverage'
+            echo ''
+            grep "^total" coverage-summary.txt | awk '{print "Total:", $NF}'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: upload agent coverage artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-coverage
+          path: |
+            agent/coverage.out
+            agent/coverage-summary.txt
+          retention-days: 14
+      - name: upload agent coverage to codecov
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: agent/coverage.out
+          flags: agent
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   integration:
     name: backend integration tests
@@ -79,11 +152,38 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: backend/go.sum
-      - name: integration suite
+      - name: integration suite with coverage
         working-directory: backend
         env:
           VAULTSCAN_TEST_DATABASE_URL: postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable
-        run: go test -tags=integration -count=1 -timeout=10m ./test/integration/...
+        run: |
+          go test -tags=integration -count=1 -timeout=10m \
+            -covermode=atomic \
+            -coverpkg=./internal/...,./cmd/... \
+            -coverprofile=integration-coverage.out \
+            ./test/integration/...
+          go tool cover -func=integration-coverage.out | tee integration-coverage-summary.txt
+          {
+            echo '## Backend integration coverage'
+            echo ''
+            grep "^total" integration-coverage-summary.txt | awk '{print "Total:", $NF}'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: upload integration coverage artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-integration-coverage
+          path: |
+            backend/integration-coverage.out
+            backend/integration-coverage-summary.txt
+          retention-days: 14
+      - name: upload integration coverage to codecov
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: backend/integration-coverage.out
+          flags: integration
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   frontend:
     name: frontend build + type-check
@@ -126,6 +226,34 @@ jobs:
           version: v1.61
           working-directory: agent
           args: --timeout=5m
+
+  fuzz:
+    name: fuzz parsers + security-critical surfaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+      - name: fuzz suite (smoke, 20s per target)
+        working-directory: backend
+        # Each fuzz target gets a short budget on every CI run — long
+        # campaigns belong on a scheduled workflow. The goal here is to
+        # exercise the corpus seeds + spend a few seconds finding fresh
+        # interesting inputs so regressions caught between releases.
+        run: |
+          set -e
+          # Iterate per-package; fuzz targets are package-local and
+          # `go test -fuzz` accepts only one package at a time.
+          for p in awssig audit auth compliance parsers; do
+            for f in $(go test -list '^Fuzz' ./internal/$p/... 2>/dev/null | grep '^Fuzz' || true); do
+              echo "== fuzzing $p::$f for 20s =="
+              go test -run='^$' -fuzz="^$f\$" -fuzztime=20s ./internal/$p/...
+            done
+          done
 
   helm:
     name: helm chart lint

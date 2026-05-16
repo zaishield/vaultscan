@@ -3,6 +3,7 @@ package auth
 import "testing"
 
 func TestParseSCIMFilter(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		filter, field, value string
 		wantErr              bool
@@ -29,6 +30,7 @@ func TestParseSCIMFilter(t *testing.T) {
 }
 
 func TestStatusActiveRoundTrip(t *testing.T) {
+	t.Parallel()
 	for _, b := range []bool{true, false} {
 		if activeFromStatus(statusFromActive(b)) != b {
 			t.Errorf("roundtrip %v failed", b)

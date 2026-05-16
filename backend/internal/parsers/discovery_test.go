@@ -15,6 +15,7 @@ func testCtx() Context {
 }
 
 func TestParseAmass(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{"name":"api.globex.example","domain":"globex.example","sources":["crtsh","cert"]}
 {"name":"static.globex.example","domain":"globex.example","sources":["dnsdumpster"]}
 `)
@@ -34,6 +35,7 @@ func TestParseAmass(t *testing.T) {
 }
 
 func TestParseSubfinder(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{"host":"api.globex.example","input":"globex.example","source":"crtsh"}
 {"host":"www.globex.example","input":"globex.example","source":"dns"}
 `)
@@ -50,6 +52,7 @@ func TestParseSubfinder(t *testing.T) {
 }
 
 func TestParseDNSx_FlagsWildcard(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{"host":"a.example","a":["1.2.3.4"],"wildcard":false,"resp_code":"NOERROR"}
 {"host":"b.example","a":["5.6.7.8"],"wildcard":true,"resp_code":"NOERROR"}
 `)
@@ -71,6 +74,7 @@ func TestParseDNSx_FlagsWildcard(t *testing.T) {
 }
 
 func TestParseHTTPX_FlagsAdminInterfaces(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{"url":"https://api.example/","status_code":200,"title":"Welcome","tech":["nginx"]}
 {"url":"https://api.example/admin","status_code":200,"title":"Admin","tech":["wordpress"]}
 {"url":"https://api.example/admin","status_code":401,"title":"Admin Login","tech":["wordpress"]}
@@ -106,6 +110,7 @@ func TestParseHTTPX_FlagsAdminInterfaces(t *testing.T) {
 }
 
 func TestParseNaabu_FlagsHighRiskPorts(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{"ip":"10.0.0.1","port":443,"protocol":"tcp","host":"app","service":"https"}
 {"ip":"10.0.0.1","port":3389,"protocol":"tcp","host":"dc01","service":"rdp"}
 {"ip":"10.0.0.1","port":6379,"protocol":"tcp","host":"cache","service":"redis"}
@@ -132,6 +137,7 @@ func TestParseNaabu_FlagsHighRiskPorts(t *testing.T) {
 }
 
 func TestParseKatana_EmitsURLsCrawled(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{"request":{"endpoint":"https://app/login","method":"GET"},"response":{"status_code":200}}
 {"request":{"endpoint":"https://app/api/users","method":"GET"},"response":{"status_code":401}}
 `)
@@ -148,6 +154,7 @@ func TestParseKatana_EmitsURLsCrawled(t *testing.T) {
 }
 
 func TestParseFFUF_SeverityByStatusCode(t *testing.T) {
+	t.Parallel()
 	raw := []byte(`{
 		"results": [
 			{"url":"https://app/admin","status":200,"length":1234,"input":{"FUZZ":"admin"}},
@@ -180,6 +187,7 @@ func TestParseFFUF_SeverityByStatusCode(t *testing.T) {
 }
 
 func TestParseFFUF_MalformedRejected(t *testing.T) {
+	t.Parallel()
 	if _, err := ParseFFUF(testCtx(), []byte(`not json`)); err == nil {
 		t.Fatal("malformed JSON must error")
 	}
@@ -187,6 +195,7 @@ func TestParseFFUF_MalformedRejected(t *testing.T) {
 
 // TestJSONLinesTolerantOfNoise: blank lines, comments, trailing newline.
 func TestJSONLinesTolerantOfNoise(t *testing.T) {
+	t.Parallel()
 	raw := []byte("\n  \n# a comment that's not json\n{\"host\":\"a\"}\n\n{\"host\":\"b\"}\n")
 	lines := jsonLines(raw)
 	if len(lines) != 2 {
@@ -198,6 +207,7 @@ func TestJSONLinesTolerantOfNoise(t *testing.T) {
 // silently if a tool isn't registered, so this regression test makes
 // sure none of the seven new parsers get accidentally unregistered.
 func TestRegistry_DiscoveryToolsPresent(t *testing.T) {
+	t.Parallel()
 	for _, tool := range []string{"amass", "subfinder", "dnsx", "httpx", "naabu", "katana", "ffuf"} {
 		if _, ok := Registry[tool]; !ok {
 			t.Fatalf("parsers.Registry[%q] missing — scanner-worker will skip %s output", tool, tool)

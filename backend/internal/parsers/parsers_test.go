@@ -16,6 +16,7 @@ func ctxFor() Context {
 }
 
 func TestParseNmap(t *testing.T) {
+	t.Parallel()
 	xml := `<?xml version="1.0"?><nmaprun>
 		<host><address addr="10.0.0.1" addrtype="ipv4"/>
 		  <ports>
@@ -36,6 +37,7 @@ func TestParseNmap(t *testing.T) {
 }
 
 func TestParseNuclei(t *testing.T) {
+	t.Parallel()
 	body := `{"template-id":"test","info":{"name":"Test Vuln","severity":"high"},"host":"https://x","matched-at":"https://x"}`
 	out, err := ParseNuclei(ctxFor(), []byte(body))
 	if err != nil {
@@ -47,6 +49,7 @@ func TestParseNuclei(t *testing.T) {
 }
 
 func TestParseZAP(t *testing.T) {
+	t.Parallel()
 	body := `{"site":[{"@host":"x","@port":"443","alerts":[
 	  {"alert":"XSS","riskcode":"3","confidence":"3","desc":"d","solution":"s","reference":"r","cweid":"79",
 	   "instances":[{"uri":"https://x","param":"q","method":"GET"}]}]}]}`
@@ -60,6 +63,7 @@ func TestParseZAP(t *testing.T) {
 }
 
 func TestParseTestSSL(t *testing.T) {
+	t.Parallel()
 	body := `[{"id":"weak_cipher","ip":"10.0.0.1","port":"443","severity":"high","finding":"weak"}]`
 	out, err := ParseTestSSL(ctxFor(), []byte(body))
 	if err != nil {
@@ -71,6 +75,7 @@ func TestParseTestSSL(t *testing.T) {
 }
 
 func TestSeverityFromCVSS(t *testing.T) {
+	t.Parallel()
 	cases := map[float64]string{9.5: "critical", 7.5: "high", 5.0: "medium", 1.0: "low", 0: "info"}
 	for s, want := range cases {
 		if got := severityFromCVSS(s); got != want {

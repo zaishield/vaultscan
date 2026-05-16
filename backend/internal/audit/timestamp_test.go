@@ -13,6 +13,7 @@ import (
 )
 
 func TestTimestamp_RejectsBadHashLength(t *testing.T) {
+	t.Parallel()
 	c := NewTSAClient("http://x")
 	_, err := c.Timestamp(context.Background(), []byte("short"))
 	if err == nil || !strings.Contains(err.Error(), "32 bytes") {
@@ -21,6 +22,7 @@ func TestTimestamp_RejectsBadHashLength(t *testing.T) {
 }
 
 func TestTimestamp_TSAReturns200_ParsesSuccessReply(t *testing.T) {
+	t.Parallel()
 	// Build a minimal valid TimeStampResp: status=0, TimeStampToken
 	// is an opaque CMS-shaped blob we just drop in as RawValue.
 	dummyToken := asn1.RawValue{
@@ -64,6 +66,7 @@ func TestTimestamp_TSAReturns200_ParsesSuccessReply(t *testing.T) {
 }
 
 func TestTimestamp_TSARejection(t *testing.T) {
+	t.Parallel()
 	resp := tsResp{Status: pkiStatusInfo{Status: 2}} // rejection
 	respDER, _ := asn1.Marshal(resp)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +81,7 @@ func TestTimestamp_TSARejection(t *testing.T) {
 }
 
 func TestTimestamp_TSAHTTP500(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "down", 500)
 	}))
@@ -89,6 +93,7 @@ func TestTimestamp_TSAHTTP500(t *testing.T) {
 }
 
 func TestBuildTSReq_Roundtrip(t *testing.T) {
+	t.Parallel()
 	hash := sha256.Sum256([]byte("hello"))
 	der, err := buildTSReq(hash[:])
 	if err != nil {
@@ -113,6 +118,7 @@ func TestBuildTSReq_Roundtrip(t *testing.T) {
 }
 
 func TestNewTSAClient_DefaultURL(t *testing.T) {
+	t.Parallel()
 	c := NewTSAClient("")
 	if c.URL == "" {
 		t.Error("default URL should not be empty")

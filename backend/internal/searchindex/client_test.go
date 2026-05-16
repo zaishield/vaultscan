@@ -93,6 +93,7 @@ func (h *stubHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestClient_Health(t *testing.T) {
+	t.Parallel()
 	c, _, cleanup := newOSStub(t)
 	defer cleanup()
 	status, err := c.Health(context.Background())
@@ -105,6 +106,7 @@ func TestClient_Health(t *testing.T) {
 }
 
 func TestClient_EnsureIndex_CreatesNewSkipsExisting(t *testing.T) {
+	t.Parallel()
 	c, h, cleanup := newOSStub(t)
 	defer cleanup()
 	if err := c.EnsureIndex(context.Background(), "vaultscan-findings",
@@ -122,6 +124,7 @@ func TestClient_EnsureIndex_CreatesNewSkipsExisting(t *testing.T) {
 }
 
 func TestClient_IndexAndSearch(t *testing.T) {
+	t.Parallel()
 	c, _, cleanup := newOSStub(t)
 	defer cleanup()
 	doc := map[string]any{"title": "SQL injection in /login", "severity": "high"}
@@ -144,6 +147,7 @@ func TestClient_IndexAndSearch(t *testing.T) {
 }
 
 func TestClient_BulkSucceeds(t *testing.T) {
+	t.Parallel()
 	c, _, cleanup := newOSStub(t)
 	defer cleanup()
 	ops := []BulkOp{
@@ -157,12 +161,14 @@ func TestClient_BulkSucceeds(t *testing.T) {
 }
 
 func TestClient_RejectsEmptyURL(t *testing.T) {
+	t.Parallel()
 	if _, err := New(Config{}); err == nil {
 		t.Error("expected error on empty URL")
 	}
 }
 
 func TestFindingsIndexMapping_HasRequiredFields(t *testing.T) {
+	t.Parallel()
 	m := FindingsIndexMapping()
 	props := m["mappings"].(map[string]any)["properties"].(map[string]any)
 	for _, want := range []string{"tenant_id", "title", "severity", "scanner"} {

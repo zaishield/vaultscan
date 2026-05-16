@@ -13,6 +13,7 @@ import (
 )
 
 func TestFilesystemStorage_Roundtrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	s, err := NewFilesystemStorage(dir)
 	if err != nil {
@@ -40,6 +41,7 @@ func TestFilesystemStorage_Roundtrip(t *testing.T) {
 }
 
 func TestFilesystemStorage_DeleteMissing_NotError(t *testing.T) {
+	t.Parallel()
 	s, _ := NewFilesystemStorage(t.TempDir())
 	if err := s.Delete(context.Background(), uuid.New(), uuid.New()); err != nil {
 		t.Errorf("delete missing should be ok; got %v", err)
@@ -47,6 +49,7 @@ func TestFilesystemStorage_DeleteMissing_NotError(t *testing.T) {
 }
 
 func TestFilesystemStorage_TenantIsolation(t *testing.T) {
+	t.Parallel()
 	s, _ := NewFilesystemStorage(t.TempDir())
 	tenantA := uuid.New()
 	tenantB := uuid.New()
@@ -112,6 +115,7 @@ func newStubS3(t *testing.T) *stubS3Server {
 func (s *stubS3Server) Close() { s.srv.Close() }
 
 func TestS3Storage_Roundtrip(t *testing.T) {
+	t.Parallel()
 	stub := newStubS3(t)
 	defer stub.Close()
 	s, err := NewS3Storage(S3Config{
@@ -148,6 +152,7 @@ func TestS3Storage_Roundtrip(t *testing.T) {
 }
 
 func TestS3Storage_RequestsAreSigV4Signed(t *testing.T) {
+	t.Parallel()
 	stub := newStubS3(t)
 	defer stub.Close()
 	s, _ := NewS3Storage(S3Config{
@@ -170,6 +175,7 @@ func TestS3Storage_RequestsAreSigV4Signed(t *testing.T) {
 }
 
 func TestS3Storage_GetAbsentReturnsErrObjectNotFound(t *testing.T) {
+	t.Parallel()
 	stub := newStubS3(t)
 	defer stub.Close()
 	s, _ := NewS3Storage(S3Config{
@@ -184,6 +190,7 @@ func TestS3Storage_GetAbsentReturnsErrObjectNotFound(t *testing.T) {
 }
 
 func TestS3Storage_DeleteMissingIsOk(t *testing.T) {
+	t.Parallel()
 	stub := newStubS3(t)
 	defer stub.Close()
 	s, _ := NewS3Storage(S3Config{
@@ -197,6 +204,7 @@ func TestS3Storage_DeleteMissingIsOk(t *testing.T) {
 }
 
 func TestS3Storage_RejectsBadConfig(t *testing.T) {
+	t.Parallel()
 	cases := map[string]S3Config{
 		"no endpoint": {Bucket: "b", AccessKeyID: "AK", SecretAccessKey: "SK"},
 		"no bucket":   {Endpoint: "https://x", AccessKeyID: "AK", SecretAccessKey: "SK"},
@@ -212,6 +220,7 @@ func TestS3Storage_RejectsBadConfig(t *testing.T) {
 }
 
 func TestVault_WithStorage_S3(t *testing.T) {
+	t.Parallel()
 	// Ensures NewVault honors WithStorage and round-trips through the
 	// S3 backend end-to-end (encrypt → s3.Put → s3.Get → decrypt).
 	stub := newStubS3(t)

@@ -16,6 +16,7 @@ import (
 // substitute a no-op service + a counted side effect.
 
 func TestWorkerPool_OverflowCountStartsAtZero(t *testing.T) {
+	t.Parallel()
 	p := newCountingPool(t, 1, 4, nil)
 	defer p.Shutdown(time.Second)
 	if got := p.OverflowCount(); got != 0 {
@@ -24,6 +25,7 @@ func TestWorkerPool_OverflowCountStartsAtZero(t *testing.T) {
 }
 
 func TestWorkerPool_AcceptsJobsUpToCapacity(t *testing.T) {
+	t.Parallel()
 	delivered := atomic.Int32{}
 	block := make(chan struct{})
 	p := newCountingPool(t, 1, 2, func() {
@@ -60,6 +62,7 @@ func TestWorkerPool_AcceptsJobsUpToCapacity(t *testing.T) {
 }
 
 func TestWorkerPool_ShutdownDrainsInFlight(t *testing.T) {
+	t.Parallel()
 	delivered := atomic.Int32{}
 	p := newCountingPool(t, 4, 8, func() {
 		time.Sleep(10 * time.Millisecond)
@@ -82,6 +85,7 @@ func TestWorkerPool_ShutdownDrainsInFlight(t *testing.T) {
 }
 
 func TestWorkerPool_ShutdownCancelsStuckWorkers(t *testing.T) {
+	t.Parallel()
 	// Stuck-forever delivery — shutdown should still return after
 	// the grace period.
 	p := newCountingPool(t, 2, 4, func() {

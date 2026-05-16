@@ -3,6 +3,7 @@ package evidence
 import "testing"
 
 func TestEncryptDecryptRoundTrip(t *testing.T) {
+	t.Parallel()
 	v := &Vault{masterKey: []byte("01234567890123456789012345678901")} // 32 bytes
 	plain := []byte("scanner output goes here, do not lose it")
 	ct, nonce, err := v.encrypt(plain)
@@ -22,6 +23,7 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 }
 
 func TestSignedURLTamperRejected(t *testing.T) {
+	t.Parallel()
 	v := &Vault{masterKey: []byte("01234567890123456789012345678901")}
 	if !constantTimeEqualString("abc", "abc") {
 		t.Fatal("constantTimeEqualString broken")

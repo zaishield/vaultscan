@@ -110,6 +110,7 @@ func newStubK8s(t *testing.T, status, log string) (*K8sJobRunner, *stubK8s) {
 }
 
 func TestK8sJobRunner_HappyPath(t *testing.T) {
+	t.Parallel()
 	r, s := newStubK8s(t, "succeeded", "<nmaprun><host/></nmaprun>")
 	res, err := r.Run(context.Background(), "nmap", []string{"127.0.0.1"}, 5*time.Second)
 	if err != nil {
@@ -135,6 +136,7 @@ func TestK8sJobRunner_HappyPath(t *testing.T) {
 }
 
 func TestK8sJobRunner_FailedJobReturnsNonzero(t *testing.T) {
+	t.Parallel()
 	r, _ := newStubK8s(t, "failed", "scanner ran out of memory")
 	res, err := r.Run(context.Background(), "nuclei", []string{"x.example"}, 5*time.Second)
 	if err != nil {
@@ -146,6 +148,7 @@ func TestK8sJobRunner_FailedJobReturnsNonzero(t *testing.T) {
 }
 
 func TestK8sJobRunner_SendsBearerAuth(t *testing.T) {
+	t.Parallel()
 	r, s := newStubK8s(t, "succeeded", "")
 	_, _ = r.Run(context.Background(), "nmap", []string{"x"}, 5*time.Second)
 	s.mu.Lock()
@@ -161,6 +164,7 @@ func TestK8sJobRunner_SendsBearerAuth(t *testing.T) {
 }
 
 func TestK8sJobRunner_JobNameIsDNS1123Safe(t *testing.T) {
+	t.Parallel()
 	cases := []string{"nmap", "kube-bench", "test/ssl", "  weird  "}
 	for _, c := range cases {
 		n := jobNameFor(c)
@@ -177,6 +181,7 @@ func TestK8sJobRunner_JobNameIsDNS1123Safe(t *testing.T) {
 }
 
 func TestK8sJobRunner_ManifestSecurityContext(t *testing.T) {
+	t.Parallel()
 	body := buildJobManifest("vs-test-x", "scanner-test", "scanner-tool",
 		"registry/scanners/nmap:latest", "nmap",
 		[]string{"-sV", "127.0.0.1"}, 30*time.Second)
@@ -211,6 +216,7 @@ func TestK8sJobRunner_ManifestSecurityContext(t *testing.T) {
 }
 
 func TestK8sJobRunner_AllowsSyntheticAlwaysFalseByDefault(t *testing.T) {
+	t.Parallel()
 	r, _ := newStubK8s(t, "succeeded", "")
 	if r.AllowsSynthetic() {
 		t.Error("K8sJobRunner.AllowsSynthetic should default false")

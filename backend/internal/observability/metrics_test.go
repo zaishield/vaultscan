@@ -9,6 +9,7 @@ import (
 )
 
 func TestPromHandlerExposesMetrics(t *testing.T) {
+	t.Parallel()
 	HTTPRequestsTotal.WithLabelValues("/api/v1/healthz", "GET", "200").Inc()
 	srv := httptest.NewServer(PromHandler())
 	defer srv.Close()
@@ -24,6 +25,7 @@ func TestPromHandlerExposesMetrics(t *testing.T) {
 }
 
 func TestRouteLabel_NormalisesIDs(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in, want string
 	}{
@@ -41,6 +43,7 @@ func TestRouteLabel_NormalisesIDs(t *testing.T) {
 }
 
 func TestHTTPDurationMiddleware_CountsRequests(t *testing.T) {
+	t.Parallel()
 	before := readCounter(t, "/api/v1/healthz", "GET", "200")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/healthz", func(w http.ResponseWriter, r *http.Request) {

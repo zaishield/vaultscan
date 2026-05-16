@@ -28,6 +28,7 @@ func generateTestSAKey(t *testing.T) string {
 }
 
 func TestGCPAdapter_PassPath(t *testing.T) {
+	t.Parallel()
 	a := newGCPStub(t, gcpStubData{
 		storage:   `{"items":[{"name":"my-bucket","location":"US","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}]}`,
 		instances: `{"items":{"zones/us-central1-a":{"instances":[{"name":"web-1","zone":"https://compute/zones/us-central1-a","serviceAccounts":[{"email":"custom-sa@my-project.iam.gserviceaccount.com"}]}]}}}`,
@@ -54,6 +55,7 @@ func TestGCPAdapter_PassPath(t *testing.T) {
 }
 
 func TestGCPAdapter_FailPath(t *testing.T) {
+	t.Parallel()
 	a := newGCPStub(t, gcpStubData{
 		storage:   `{"items":[{"name":"public-bucket","location":"US","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":false}}}]}`,
 		instances: `{"items":{"zones/us-central1-a":{"instances":[{"name":"vm-default","zone":"https://compute/zones/us-central1-a","serviceAccounts":[{"email":"123456-compute@developer.gserviceaccount.com"}]}]}}}`,
@@ -79,6 +81,7 @@ func TestGCPAdapter_FailPath(t *testing.T) {
 }
 
 func TestGCPAdapter_FirewallPortRange(t *testing.T) {
+	t.Parallel()
 	// Port range 20-25 includes SSH (22) → must fail.
 	a := newGCPStub(t, gcpStubData{
 		storage:   `{"items":[]}`,
@@ -96,6 +99,7 @@ func TestGCPAdapter_FirewallPortRange(t *testing.T) {
 }
 
 func TestGCPAdapter_ParseRSAPrivateKey_Roundtrip(t *testing.T) {
+	t.Parallel()
 	pem := generateTestSAKey(t)
 	priv, err := parseRSAPrivateKey(pem)
 	if err != nil {
@@ -107,6 +111,7 @@ func TestGCPAdapter_ParseRSAPrivateKey_Roundtrip(t *testing.T) {
 }
 
 func TestGCPAdapter_TokenCachedSecondCall(t *testing.T) {
+	t.Parallel()
 	keyPEM := generateTestSAKey(t)
 	tokCalls := 0
 	tokSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

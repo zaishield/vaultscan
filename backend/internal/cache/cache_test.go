@@ -7,6 +7,7 @@ import (
 )
 
 func TestLRU_HitMissEvict(t *testing.T) {
+	t.Parallel()
 	c := New[int](3, 0)
 	c.Set("a", 1)
 	c.Set("b", 2)
@@ -27,6 +28,7 @@ func TestLRU_HitMissEvict(t *testing.T) {
 }
 
 func TestLRU_TTLExpires(t *testing.T) {
+	t.Parallel()
 	c := New[string](10, 10*time.Millisecond)
 	c.Set("k", "v")
 	if _, ok := c.Get("k"); !ok {
@@ -39,6 +41,7 @@ func TestLRU_TTLExpires(t *testing.T) {
 }
 
 func TestLRU_HitRate(t *testing.T) {
+	t.Parallel()
 	c := New[int](100, 0)
 	for i := 0; i < 100; i++ {
 		c.Set(strconv.Itoa(i), i)

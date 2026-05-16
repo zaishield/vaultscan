@@ -120,6 +120,7 @@ func (rt *rewriteTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func TestAWSAdapter_RootKeysAndMFA(t *testing.T) {
+	t.Parallel()
 	a := newStubAWS(t, &stubAWS{
 		getAcctSum: `<GetAccountSummaryResponse><GetAccountSummaryResult><SummaryMap>
 			<entry><key>AccountAccessKeysPresent</key><value>1</value></entry>
@@ -148,6 +149,7 @@ func TestAWSAdapter_RootKeysAndMFA(t *testing.T) {
 }
 
 func TestAWSAdapter_Pass(t *testing.T) {
+	t.Parallel()
 	a := newStubAWS(t, &stubAWS{
 		getAcctSum: `<GetAccountSummaryResponse><GetAccountSummaryResult><SummaryMap>
 			<entry><key>AccountAccessKeysPresent</key><value>0</value></entry>
@@ -181,6 +183,7 @@ func TestAWSAdapter_Pass(t *testing.T) {
 }
 
 func TestAWSAdapter_S3PublicBlock_Failures(t *testing.T) {
+	t.Parallel()
 	a := newStubAWS(t, &stubAWS{
 		getAcctSum: `<GetAccountSummaryResponse><GetAccountSummaryResult><SummaryMap>
 			<entry><key>AccountAccessKeysPresent</key><value>0</value></entry>
@@ -216,6 +219,7 @@ func TestAWSAdapter_S3PublicBlock_Failures(t *testing.T) {
 }
 
 func TestAWSAdapter_CloudTrailFailWhenNoMultiRegion(t *testing.T) {
+	t.Parallel()
 	a := newStubAWS(t, &stubAWS{
 		getAcctSum: `<GetAccountSummaryResponse><GetAccountSummaryResult><SummaryMap>
 			<entry><key>AccountAccessKeysPresent</key><value>0</value></entry>
@@ -238,6 +242,7 @@ func TestAWSAdapter_CloudTrailFailWhenNoMultiRegion(t *testing.T) {
 }
 
 func TestAWSAdapter_EBSEncryptionPerRegion(t *testing.T) {
+	t.Parallel()
 	a := newStubAWS(t, &stubAWS{
 		getAcctSum: `<GetAccountSummaryResponse><GetAccountSummaryResult><SummaryMap>
 			<entry><key>AccountAccessKeysPresent</key><value>0</value></entry>
@@ -277,6 +282,7 @@ func indexByID(rs []ControlResult) map[string]ControlResult {
 
 // Sanity: provider() returns "aws".
 func TestAWSAdapter_Provider(t *testing.T) {
+	t.Parallel()
 	a := NewAWSAdapter("us-east-1", nil)
 	if a.Provider() != "aws" {
 		t.Error("Provider() != aws")
@@ -284,6 +290,7 @@ func TestAWSAdapter_Provider(t *testing.T) {
 }
 
 func TestSecretsBackedAWSResolver_RejectsBadJSON(t *testing.T) {
+	t.Parallel()
 	// We don't import secrets here heavily; rely on a tiny inline helper.
 	_ = json.Marshal
 }

@@ -6,6 +6,7 @@ import (
 )
 
 func TestSeverityRank(t *testing.T) {
+	t.Parallel()
 	if severityRank("low") >= severityRank("high") {
 		t.Error("low should rank below high")
 	}
@@ -18,6 +19,7 @@ func TestSeverityRank(t *testing.T) {
 }
 
 func TestMatchesPrefix(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		prefix, eventType string
 		want              bool
@@ -39,6 +41,7 @@ func TestMatchesPrefix(t *testing.T) {
 }
 
 func TestInQuietHours_SameDayWindow(t *testing.T) {
+	t.Parallel()
 	// Business hours 9-17 UTC; quiet OUTSIDE that window.
 	spec := []byte(`{"timezone":"UTC","start_hour":9,"end_hour":17}`)
 	cases := []struct {
@@ -61,6 +64,7 @@ func TestInQuietHours_SameDayWindow(t *testing.T) {
 }
 
 func TestInQuietHours_WrapAroundMidnight(t *testing.T) {
+	t.Parallel()
 	// Quiet 22-06 UTC (overnight).
 	spec := []byte(`{"timezone":"UTC","start_hour":22,"end_hour":6}`)
 	cases := []struct {
@@ -83,6 +87,7 @@ func TestInQuietHours_WrapAroundMidnight(t *testing.T) {
 }
 
 func TestInQuietHours_WeekdayOnly(t *testing.T) {
+	t.Parallel()
 	spec := []byte(`{"timezone":"UTC","start_hour":9,"end_hour":17,"weekday_only":true}`)
 	// 2026-05-16 is a Saturday — entire day is quiet.
 	sat := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
@@ -97,6 +102,7 @@ func TestInQuietHours_WeekdayOnly(t *testing.T) {
 }
 
 func TestInQuietHours_TimezoneApplies(t *testing.T) {
+	t.Parallel()
 	spec := []byte(`{"timezone":"America/New_York","start_hour":9,"end_hour":17}`)
 	// 2026-05-15 14:00 UTC = 10:00 ET — inside business hours, not quiet.
 	when := time.Date(2026, 5, 15, 14, 0, 0, 0, time.UTC)
@@ -111,12 +117,14 @@ func TestInQuietHours_TimezoneApplies(t *testing.T) {
 }
 
 func TestInQuietHours_BadJSONIsNotQuiet(t *testing.T) {
+	t.Parallel()
 	if inQuietHours([]byte("not json"), time.Now()) {
 		t.Error("bad JSON should default to NOT quiet (don't silence by accident)")
 	}
 }
 
 func TestInQuietHours_EmptyTimezoneIsNotQuiet(t *testing.T) {
+	t.Parallel()
 	if inQuietHours([]byte(`{}`), time.Now()) {
 		t.Error("empty quiet hours config = no quiet window")
 	}

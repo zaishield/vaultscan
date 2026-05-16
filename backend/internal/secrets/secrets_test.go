@@ -6,6 +6,7 @@ import (
 )
 
 func TestEnvBackend_KeyEncoding(t *testing.T) {
+	t.Parallel()
 	b := EnvBackend{}
 	cases := map[string]string{
 		"integrations/jira/api-token": "VAULTSCAN_SECRET_INTEGRATIONS_JIRA_API_TOKEN",
@@ -20,6 +21,7 @@ func TestEnvBackend_KeyEncoding(t *testing.T) {
 }
 
 func TestMemoryBackend_RoundTrip(t *testing.T) {
+	t.Parallel()
 	b := NewMemoryBackend()
 	ctx := context.Background()
 	if err := b.Put(ctx, "foo/bar", "secret"); err != nil {
@@ -35,6 +37,7 @@ func TestMemoryBackend_RoundTrip(t *testing.T) {
 }
 
 func TestService_NilSafe(t *testing.T) {
+	t.Parallel()
 	var s *Service
 	if _, err := s.Get(context.Background(), "x"); err == nil {
 		t.Fatal("nil Service must error, not panic")

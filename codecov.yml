@@ -1,0 +1,77 @@
+# Codecov config — controls how coverage data uploaded from the
+# `unit tests with coverage` and `integration suite with coverage`
+# CI steps gets combined into a single project view.
+#
+# We track three flags:
+#   * backend     — Go unit tests in backend/internal/*
+#   * integration — Go tagged integration tests against live Postgres
+#   * agent       — Go unit tests for the standalone scanner agent
+#
+# Coverage on a PR must not drop by more than 1 percentage point per
+# flag; that gives space for genuinely added-but-untested helpers
+# while still catching whole-package regressions.
+
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  precision: 1
+  round: down
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        if_ci_failed: error
+      backend:
+        flags:
+          - backend
+        target: auto
+        threshold: 1%
+      integration:
+        flags:
+          - integration
+        target: auto
+        threshold: 1%
+      agent:
+        flags:
+          - agent
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        # New code added in a PR must have at least 60% line coverage
+        # of its own — keeps quality high without blocking on
+        # pre-existing untested code.
+        target: 60%
+        threshold: 5%
+
+flags:
+  backend:
+    paths:
+      - backend/internal/
+      - backend/cmd/
+    carryforward: true
+  integration:
+    paths:
+      - backend/internal/
+      - backend/cmd/
+    carryforward: true
+  agent:
+    paths:
+      - agent/
+    carryforward: true
+
+ignore:
+  - "backend/test/**"
+  - "backend/migrations/**"
+  - "backend/internal/models/**"
+  - "**/*_test.go"
+  - "**/fuzz_test.go"
+  - "**/*_bench_test.go"
+  - "**/mock_*.go"
+
+comment:
+  layout: "header, diff, flags, files, footer"
+  behavior: default
+  require_changes: true

@@ -22,6 +22,7 @@ func writeDigestsFile(t *testing.T, dir, version, registry string, digests map[s
 }
 
 func TestRegistry_LoadsAndPinsImage(t *testing.T) {
+	t.Parallel()
 	path := writeDigestsFile(t, t.TempDir(), "v1.4.0",
 		"ghcr.io/zaishield/vaultscan/scanners",
 		map[string]string{
@@ -46,6 +47,7 @@ func TestRegistry_LoadsAndPinsImage(t *testing.T) {
 }
 
 func TestRegistry_FallbackToLatestWhenUnpinned(t *testing.T) {
+	t.Parallel()
 	path := writeDigestsFile(t, t.TempDir(), "v1.4.0",
 		"ghcr.io/zaishield/vaultscan/scanners",
 		map[string]string{"nmap": "sha256:aaa"})
@@ -57,6 +59,7 @@ func TestRegistry_FallbackToLatestWhenUnpinned(t *testing.T) {
 }
 
 func TestRegistry_MissingFileReturnsEmptyRegistry(t *testing.T) {
+	t.Parallel()
 	reg, err := NewImageDigestRegistry("/nonexistent/path/digests.json")
 	if err != nil {
 		t.Fatalf("missing file should not error; got %v", err)
@@ -71,6 +74,7 @@ func TestRegistry_MissingFileReturnsEmptyRegistry(t *testing.T) {
 }
 
 func TestRegistry_StrictModeErrorsOnMiss(t *testing.T) {
+	t.Parallel()
 	path := writeDigestsFile(t, t.TempDir(), "v1", "registry",
 		map[string]string{"nmap": "sha256:x"})
 	reg, _ := NewImageDigestRegistry(path)
@@ -87,6 +91,7 @@ func TestRegistry_StrictModeErrorsOnMiss(t *testing.T) {
 }
 
 func TestRegistry_AllReturnsCopy(t *testing.T) {
+	t.Parallel()
 	path := writeDigestsFile(t, t.TempDir(), "v1", "reg",
 		map[string]string{"nmap": "sha256:x"})
 	reg, _ := NewImageDigestRegistry(path)
@@ -99,6 +104,7 @@ func TestRegistry_AllReturnsCopy(t *testing.T) {
 }
 
 func TestRegistry_InvalidJSONIsError(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "digests.json")
 	_ = os.WriteFile(path, []byte("not json"), 0o600)
 	if _, err := NewImageDigestRegistry(path); err == nil {
