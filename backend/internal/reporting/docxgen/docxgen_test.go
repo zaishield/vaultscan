@@ -83,3 +83,89 @@ func TestBuild_NoBlocksStillValid(t *testing.T) {
 		t.Errorf("empty Build did not produce a valid zip: %v", err)
 	}
 }
+
+func TestBuild_TableRendersAsRealOOXML(t *testing.T) {
+	t.Parallel()
+	body, err := Build("", []Block{
+		Tbl(
+			[]string{"id", "severity", "title"},
+			[][]string{
+				{"F-1", "critical", "RCE in foo"},
+				{"F-2", "high", "XSS in bar"},
+			},
+		),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := readPart(t, body, "word/document.xml")
+	// Real <w:tbl> element (not a fake monospace paragraph).
+	if !strings.Contains(doc, `<w:tbl>`) {
+		t.Errorf("table not rendered as <w:tbl>: %s", doc)
+	}
+	// Header cell should be bold.
+	// Find the first <w:tc> ... first run ... <w:b/>.
+	tblStart := strings.Index(doc, "<w:tbl>")
+	tblEnd := strings.Index(doc, "</w:tbl>")
+	if tblStart < 0 || tblEnd < 0 {
+		t.Fatal("table tags missing")
+	}
+	tblBody := doc[tblStart:tblEnd]
+	if !strings.Contains(tblBody, "<w:b/>") {
+		t.Errorf("header row not bold: %s", tblBody)
+	}
+	// Both data rows should appear with their content.
+	if !strings.Contains(tblBody, "RCE in foo") || !strings.Contains(tblBody, "XSS in bar") {
+		t.Errorf("data rows missing from table body")
+	}
+}
+
+func TestBuild_TableWithExplicitWidths(t *testing.T) {
+	t.Parallel()
+	body, _ := Build("", []Block{
+		TblWithWidths(
+			[]string{"a", "b"},
+			[]int{1440, 2880},
+			[][]string{{"x", "y"}},
+		),
+	})
+	doc := readPart(t, body, "word/document.xml")
+	if !strings.Contains(doc, `<w:gridCol w:w="1440"/>`) ||
+		!strings.Contains(doc, `<w:gridCol w:w="2880"/>`) {
+		t.Errorf("explicit column widths not emitted: %s", doc)
+	}
+	if !strings.Contains(doc, `w:type="dxa" w:w="1440"`) {
+		t.Errorf("per-cell width not emitted: %s", doc)
+	}
+}
+
+func TestBuild_TableCellWithNewlinesUsesSoftBreaks(t *testing.T) {
+	t.Parallel()
+	body, _ := Build("", []Block{
+		Tbl(
+			[]string{"col"},
+			[][]string{{"line1\nline2"}},
+		),
+	})
+	doc := readPart(t, body, "word/document.xml")
+	if !strings.Contains(doc, `<w:br/>`) {
+		t.Errorf("expected <w:br/> for newline inside table cell: %s", doc)
+	}
+}
+
+func TestBuild_TableEscapesXMLSpecials(t *testing.T) {
+	t.Parallel()
+	body, _ := Build("", []Block{
+		Tbl(
+			[]string{"col"},
+			[][]string{{`<script>`}},
+		),
+	})
+	doc := readPart(t, body, "word/document.xml")
+	if strings.Contains(doc, "<script>") {
+		t.Errorf("raw <script> leaked into table cell: %s", doc)
+	}
+	if !strings.Contains(doc, "&lt;script&gt;") {
+		t.Errorf("expected escaped <script>: %s", doc)
+	}
+}

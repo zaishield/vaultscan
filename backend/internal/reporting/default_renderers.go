@@ -47,10 +47,32 @@ func (defaultXLSXRenderer) Render(_ context.Context, d *Dataset) ([]byte, error)
 			xlsxgen.S(formatTimeXLSX(f.LastSeen)),
 		})
 	}
+	// Default workbook UX: column widths so titles don't wrap to
+	// one-char columns, conditional-format severities + statuses
+	// for at-a-glance triage, and an autoFilter on the header row
+	// so the reader can sort+filter in Excel without retyping the
+	// data into a "Format as Table".
 	return xlsxgen.Build([]xlsxgen.Sheet{{
 		Name:   "Findings",
 		Header: header,
 		Rows:   rows,
+		ColumnWidths: []float64{
+			36, 60, 11, 8, 17, 10, 14, 32, 7, 12, 22, 22,
+		},
+		AutoFilter: true,
+		ConditionalFormats: []xlsxgen.CondRule{
+			// Severity column (col=2).
+			{Col: 2, Match: "critical", Fill: "FF6B6B", Bold: true},
+			{Col: 2, Match: "high", Fill: "FFA64D", Bold: true},
+			{Col: 2, Match: "medium", Fill: "FFD56B"},
+			{Col: 2, Match: "low", Fill: "BDE7BD"},
+			{Col: 2, Match: "info", Fill: "D9D9D9"},
+			// Status column (col=9).
+			{Col: 9, Match: "open", Fill: "FFE5E5", Bold: true},
+			{Col: 9, Match: "in_progress", Fill: "FFF1CC"},
+			{Col: 9, Match: "resolved", Fill: "D6F5D6"},
+			{Col: 9, Match: "closed", Fill: "D9D9D9"},
+		},
 	}})
 }
 
@@ -98,7 +120,32 @@ func (defaultDOCXRenderer) Render(_ context.Context, d *Dataset) ([]byte, error)
 			))
 		}
 	}
-	blocks = append(blocks, docxgen.H2("Findings"))
+	// Findings table first (the at-a-glance compliance summary),
+	// then per-finding detail sections (the audit-grade context).
+	// Two-phase layout matches the format compliance binders expect.
+	blocks = append(blocks, docxgen.H2("Findings summary"))
+	if len(d.Findings) > 0 {
+		header := []string{"ID", "Severity", "CVSS", "Title", "Affected"}
+		// Twentieths-of-a-point widths sum to ~14000 (~9.7 inches),
+		// fitting a portrait page with default margins.
+		widths := []int{2200, 1400, 1100, 5800, 3500}
+		rows := make([][]string, 0, len(d.Findings))
+		for _, f := range d.Findings {
+			cvss := ""
+			if f.CVSSScore > 0 {
+				cvss = fmt.Sprintf("%.1f", f.CVSSScore)
+			}
+			rows = append(rows, []string{
+				shortID(f.ID.String()),
+				titleCase(f.Severity),
+				cvss,
+				f.Title,
+				f.AffectedEndpoint,
+			})
+		}
+		blocks = append(blocks, docxgen.TblWithWidths(header, widths, rows))
+	}
+	blocks = append(blocks, docxgen.H2("Findings detail"))
 	for _, f := range d.Findings {
 		blocks = append(blocks,
 			docxgen.H3(fmt.Sprintf("[%s] %s", titleCase(f.Severity), f.Title)),
@@ -135,6 +182,16 @@ func (defaultDOCXRenderer) Render(_ context.Context, d *Dataset) ([]byte, error)
 		}
 	}
 	return docxgen.Build(title, blocks)
+}
+
+// shortID returns the first 8 chars of a UUID. UUIDs are 36 chars
+// which is too wide for a summary-table cell; the short form is
+// still locally unique within a single report.
+func shortID(s string) string {
+	if len(s) <= 8 {
+		return s
+	}
+	return s[:8]
 }
 
 // titleCase upper-cases the first rune of s; cheap stand-in for

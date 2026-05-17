@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -126,6 +127,112 @@ func TestBuild_HandlesEmptyInput(t *testing.T) {
 	// Should still be a valid zip with all the structural parts.
 	if _, err := zip.NewReader(bytes.NewReader(body), int64(len(body))); err != nil {
 		t.Errorf("empty Build did not produce a valid zip: %v", err)
+	}
+}
+
+func TestBuild_ConditionalFormatPaintsCells(t *testing.T) {
+	t.Parallel()
+	body, err := Build([]Sheet{{
+		Header: []string{"id", "severity"},
+		Rows: [][]Cell{
+			{S("F-1"), S("critical")},
+			{S("F-2"), S("low")},
+			{S("F-3"), S("info")}, // no rule for "info" — should get default
+		},
+		ConditionalFormats: []CondRule{
+			{Col: 1, Match: "critical", Fill: "FF6B6B", Bold: true},
+			{Col: 1, Match: "low", Fill: "BDE7BD"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sheet := readPart(t, body, "xl/worksheets/sheet1.xml")
+	// "critical" cell should reference a non-default style ID
+	// (s="N" with N > 1, since 0=default + 1=header).
+	if !strings.Contains(sheet, `s="2"`) && !strings.Contains(sheet, `s="3"`) {
+		t.Errorf("expected styled cell for critical/low, got: %s", sheet)
+	}
+	styles := readPart(t, body, "xl/styles.xml")
+	// Both fills should appear in the styles table.
+	if !strings.Contains(styles, "FF6B6B") {
+		t.Errorf("critical fill color not in styles: %s", styles)
+	}
+	if !strings.Contains(styles, "BDE7BD") {
+		t.Errorf("low fill color not in styles: %s", styles)
+	}
+}
+
+func TestBuild_ConditionalFormatCaseInsensitive(t *testing.T) {
+	t.Parallel()
+	// Rule matches "critical" but the cell value is "CRITICAL".
+	body, _ := Build([]Sheet{{
+		Header: []string{"sev"},
+		Rows:   [][]Cell{{S("CRITICAL")}},
+		ConditionalFormats: []CondRule{
+			{Col: 0, Match: "critical", Fill: "FF6B6B"},
+		},
+	}})
+	sheet := readPart(t, body, "xl/worksheets/sheet1.xml")
+	// Data row should carry a styled cell (s="N" with N >= 2).
+	// Header is s="1", default is s="0" — anything else means the
+	// rule matched.
+	if !regexpMatchesStyle(sheet) {
+		t.Errorf("expected styled cell for case-insensitive match, got: %s", sheet)
+	}
+}
+
+func regexpMatchesStyle(sheet string) bool {
+	// Look for any s="N" with N >= 2 (rule styles start at 2).
+	for n := 2; n < 20; n++ {
+		if strings.Contains(sheet, `s="`+strconv.Itoa(n)+`"`) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestBuild_ColumnWidthsEmitted(t *testing.T) {
+	t.Parallel()
+	body, _ := Build([]Sheet{{
+		Header:       []string{"a", "b"},
+		Rows:         [][]Cell{{S("x"), S("y")}},
+		ColumnWidths: []float64{20, 40.5},
+	}})
+	sheet := readPart(t, body, "xl/worksheets/sheet1.xml")
+	if !strings.Contains(sheet, `<cols>`) {
+		t.Errorf("<cols> block missing: %s", sheet)
+	}
+	if !strings.Contains(sheet, `width="20"`) || !strings.Contains(sheet, `width="40.5"`) {
+		t.Errorf("column widths not preserved: %s", sheet)
+	}
+}
+
+func TestBuild_AutoFilterEmitted(t *testing.T) {
+	t.Parallel()
+	body, _ := Build([]Sheet{{
+		Header:     []string{"id", "sev", "title"},
+		Rows:       [][]Cell{{S("1"), S("high"), S("foo")}, {S("2"), S("low"), S("bar")}},
+		AutoFilter: true,
+	}})
+	sheet := readPart(t, body, "xl/worksheets/sheet1.xml")
+	if !strings.Contains(sheet, `<autoFilter ref="A1:C3"`) {
+		t.Errorf("autoFilter range A1:C3 not emitted: %s", sheet)
+	}
+}
+
+func TestBuild_AutoFilterPositionedAfterSheetData(t *testing.T) {
+	t.Parallel()
+	body, _ := Build([]Sheet{{
+		Header:     []string{"x"},
+		Rows:       [][]Cell{{S("v")}},
+		AutoFilter: true,
+	}})
+	sheet := readPart(t, body, "xl/worksheets/sheet1.xml")
+	idxData := strings.Index(sheet, "</sheetData>")
+	idxFilter := strings.Index(sheet, "<autoFilter")
+	if idxData < 0 || idxFilter < 0 || idxFilter < idxData {
+		t.Errorf("autoFilter must come AFTER </sheetData> per OOXML schema: %s", sheet)
 	}
 }
 

@@ -26,12 +26,14 @@ import (
 	"fmt"
 )
 
-// Block is one document block — either a heading or a paragraph of
-// inline runs.
+// Block is one document block. Most callers stick to Heading or
+// Paragraph; Table is for tabular content that Word renders as a
+// real native table (not a fake monospace grid in a paragraph).
 type Block struct {
 	Kind  BlockKind
 	Text  string // used for Heading
 	Runs  []Run  // used for Paragraph; if empty, no content
+	Table *Table // used for Table
 }
 
 type BlockKind int
@@ -41,7 +43,35 @@ const (
 	BlockHeading1
 	BlockHeading2
 	BlockHeading3
+	BlockTable
 )
+
+// Table is a simple m×n grid of cell text. The first row is rendered
+// bold (table header convention). Cells with newlines render as
+// soft line breaks within the cell.
+type Table struct {
+	Header []string
+	Rows   [][]string
+	// ColumnWidths is optional. Values are twentieths-of-a-point
+	// (Word's unit, 1/1440 of an inch); len(ColumnWidths) must
+	// match len(Header) when non-nil. Set to nil to let Word
+	// auto-size.
+	ColumnWidths []int
+}
+
+// Tbl is a concise constructor.
+func Tbl(header []string, rows [][]string) Block {
+	return Block{Kind: BlockTable, Table: &Table{Header: header, Rows: rows}}
+}
+
+// TblWithWidths constructs a Table with explicit column widths in
+// twentieths-of-a-point. Useful for compliance reports that need
+// stable column sizing across renders.
+func TblWithWidths(header []string, widths []int, rows [][]string) Block {
+	return Block{Kind: BlockTable, Table: &Table{
+		Header: header, Rows: rows, ColumnWidths: widths,
+	}}
+}
 
 // Run is one styled span within a paragraph. Use Heading() / Para()
 // helpers for the common case; reach for Run for mixed-style lines.
@@ -145,6 +175,10 @@ func documentXML(title string, blocks []Block) string {
 			writeHeading(&b, "Heading3", blk.Text)
 		case BlockParagraph:
 			writeParagraph(&b, blk.Runs)
+		case BlockTable:
+			if blk.Table != nil {
+				writeTable(&b, blk.Table)
+			}
 		}
 	}
 	// sectPr is required for Word to consider the body valid.
@@ -158,6 +192,100 @@ func writeHeading(b *bytes.Buffer, styleID, text string) {
 		styleID)
 	xml.EscapeText(b, []byte(text))
 	b.WriteString(`</w:t></w:r></w:p>`)
+}
+
+// writeTable emits a <w:tbl> element with a header row in bold,
+// optional explicit column widths, and a 1pt border on every side
+// + cell. Word and LibreOffice both render this as a real table.
+func writeTable(b *bytes.Buffer, t *Table) {
+	b.WriteString(`<w:tbl>`)
+	// Table properties: full-width, borders.
+	b.WriteString(`<w:tblPr>`)
+	b.WriteString(`<w:tblW w:type="auto" w:w="0"/>`)
+	b.WriteString(`<w:tblBorders>`)
+	for _, side := range []string{"top", "left", "bottom", "right", "insideH", "insideV"} {
+		fmt.Fprintf(b, `<w:%s w:val="single" w:sz="4" w:color="888888"/>`, side)
+	}
+	b.WriteString(`</w:tblBorders></w:tblPr>`)
+	// Column-grid: required for Word to size columns when explicit
+	// widths are supplied (otherwise it auto-sizes).
+	if len(t.ColumnWidths) == len(t.Header) {
+		b.WriteString(`<w:tblGrid>`)
+		for _, w := range t.ColumnWidths {
+			fmt.Fprintf(b, `<w:gridCol w:w="%d"/>`, w)
+		}
+		b.WriteString(`</w:tblGrid>`)
+	}
+	// Header row — bold.
+	if len(t.Header) > 0 {
+		b.WriteString(`<w:tr>`)
+		for i, cellText := range t.Header {
+			width := 0
+			if len(t.ColumnWidths) == len(t.Header) {
+				width = t.ColumnWidths[i]
+			}
+			writeTableCell(b, cellText, true, width)
+		}
+		b.WriteString(`</w:tr>`)
+	}
+	for _, row := range t.Rows {
+		b.WriteString(`<w:tr>`)
+		for i, cellText := range row {
+			width := 0
+			if len(t.ColumnWidths) == len(t.Header) && i < len(t.ColumnWidths) {
+				width = t.ColumnWidths[i]
+			}
+			writeTableCell(b, cellText, false, width)
+		}
+		b.WriteString(`</w:tr>`)
+	}
+	b.WriteString(`</w:tbl>`)
+	// Word treats a table as a single block. Append an empty
+	// paragraph after so the next content has spacing room and the
+	// document body is well-formed for the spec parser.
+	b.WriteString(`<w:p/>`)
+}
+
+// writeTableCell emits a single <w:tc>. text may contain newlines;
+// they're rendered as soft breaks (<w:br/>) inside one paragraph.
+func writeTableCell(b *bytes.Buffer, text string, bold bool, width int) {
+	b.WriteString(`<w:tc>`)
+	if width > 0 {
+		fmt.Fprintf(b, `<w:tcPr><w:tcW w:type="dxa" w:w="%d"/></w:tcPr>`, width)
+	}
+	b.WriteString(`<w:p>`)
+	parts := splitLines(text)
+	for i, line := range parts {
+		if i > 0 {
+			b.WriteString(`<w:r><w:br/></w:r>`)
+		}
+		b.WriteString(`<w:r>`)
+		if bold {
+			b.WriteString(`<w:rPr><w:b/></w:rPr>`)
+		}
+		b.WriteString(`<w:t xml:space="preserve">`)
+		xml.EscapeText(b, []byte(line))
+		b.WriteString(`</w:t></w:r>`)
+	}
+	b.WriteString(`</w:p></w:tc>`)
+}
+
+// splitLines is a strings.Split shim that doesn't require the
+// `strings` import (kept the import set minimal so this file is
+// self-contained).
+func splitLines(s string) []string {
+	out := []string{}
+	cur := []byte{}
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			out = append(out, string(cur))
+			cur = cur[:0]
+			continue
+		}
+		cur = append(cur, s[i])
+	}
+	out = append(out, string(cur))
+	return out
 }
 
 func writeParagraph(b *bytes.Buffer, runs []Run) {

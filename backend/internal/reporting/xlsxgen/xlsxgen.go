@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -46,12 +47,38 @@ func S(s string) Cell { return Cell{String: s} }
 // N returns a numeric cell.
 func N(n float64) Cell { return Cell{Number: n, IsNum: true} }
 
-// Sheet is a single worksheet with optional name, header row, and
-// data rows. Header row gets bold styling.
+// Sheet is a single worksheet with optional name, header row, data
+// rows, and optional column widths / conditional-formatting rules /
+// auto-filter. Header row gets bold styling.
 type Sheet struct {
 	Name   string
 	Header []string
 	Rows   [][]Cell
+	// ColumnWidths is optional. Values are Excel "character widths"
+	// (the same unit Format Columns / Width dialog reports). Empty
+	// slice or nil → Excel auto-sizes.
+	ColumnWidths []float64
+	// AutoFilter, when true, adds a filter dropdown across the
+	// header row. Lets readers sort + filter the table in Excel.
+	AutoFilter bool
+	// ConditionalFormats is an ordered list of severity-style rules
+	// applied AFTER the cell is written. The rule's column index
+	// must be 0-based into the row. Rule order matters — first
+	// match wins.
+	ConditionalFormats []CondRule
+}
+
+// CondRule is a "if cell in COL matches VALUE, paint it COLOR" rule.
+// Excel supports CEL-style formulas but we keep this narrow: exact
+// case-insensitive string match. Sufficient for severity columns
+// ("critical" → red, "high" → orange, etc.) — the most common case.
+type CondRule struct {
+	Col   int    // 0-based column index
+	Match string // case-insensitive exact match against the cell string
+	Fill  string // 6-char hex RGB, no leading # (e.g. "FF6B6B")
+	Bold  bool   // bold the cell as well
+	// styleID is populated by Build() — internal; do not set.
+	styleID int
 }
 
 // Build returns the XLSX bytes for the given sheets. Sheets are
@@ -75,6 +102,18 @@ func Build(sheets []Sheet) ([]byte, error) {
 					pool.intern(c.String)
 				}
 			}
+		}
+	}
+
+	// Build the style table. Each distinct (fill, bold) combination
+	// across all conditional-format rules becomes one cellXf entry;
+	// the worksheet writer looks up the right s="N" attribute via
+	// rule.styleID.
+	st := newStyles()
+	for si := range sheets {
+		for ri := range sheets[si].ConditionalFormats {
+			rule := &sheets[si].ConditionalFormats[ri]
+			rule.styleID = st.addRule(rule.Fill, rule.Bold)
 		}
 	}
 
@@ -102,7 +141,7 @@ func Build(sheets []Sheet) ([]byte, error) {
 	if err := writeFile("xl/_rels/workbook.xml.rels", workbookRels(len(sheets))); err != nil {
 		return nil, err
 	}
-	if err := writeFile("xl/styles.xml", stylesXML); err != nil {
+	if err := writeFile("xl/styles.xml", st.xml()); err != nil {
 		return nil, err
 	}
 	if err := writeFile("xl/sharedStrings.xml", pool.xml()); err != nil {
@@ -118,6 +157,120 @@ func Build(sheets []Sheet) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// styleID is the index into cellXfs; assigned by Build before any
+// worksheet is written so sheetXML can reference it via s="N".
+// Stored unexported so callers can't set it directly.
+//
+//nolint:unused // referenced via field name on CondRule above
+type _unusedCondRuleField int
+
+// styles accumulates fonts/fills/cellXfs across the workbook so the
+// styles.xml emitted at the top of the zip is the source of truth.
+type styles struct {
+	// fontIDs: 0 = normal, 1 = bold (header). Conditional-format
+	// rules with Bold=true reuse fontID 1.
+	// fills: 0 = none (default), 1 = "gray125" (Excel reserves this),
+	// then one entry per unique conditional-format fill.
+	fills []string
+	// xfs: 0 = default (no fill, fontID 0), 1 = header (fontID 1),
+	// then one per (fillIdx, bold) tuple.
+	xfs []xfEntry
+}
+
+type xfEntry struct {
+	fontID, fillID int
+}
+
+func newStyles() *styles {
+	return &styles{
+		fills: []string{"none", "gray125"}, // Excel quirk: gray125 must be index 1
+		xfs: []xfEntry{
+			{0, 0}, // default
+			{1, 0}, // bold header
+		},
+	}
+}
+
+// addRule registers a (fill, bold) pair and returns the resulting
+// cellXfs index. Duplicate calls with the same args dedupe.
+func (s *styles) addRule(fillHex string, bold bool) int {
+	// Normalise fill: empty → default fill 0.
+	if fillHex == "" {
+		// No fill, optionally bold. Still need a distinct xf.
+		fid := 0 // default font
+		if bold {
+			fid = 1
+		}
+		return s.findOrAddXf(xfEntry{fontID: fid, fillID: 0})
+	}
+	// Find or add the fill.
+	fillIdx := -1
+	for i, f := range s.fills {
+		if f == fillHex {
+			fillIdx = i
+			break
+		}
+	}
+	if fillIdx < 0 {
+		s.fills = append(s.fills, fillHex)
+		fillIdx = len(s.fills) - 1
+	}
+	fid := 0
+	if bold {
+		fid = 1
+	}
+	return s.findOrAddXf(xfEntry{fontID: fid, fillID: fillIdx})
+}
+
+func (s *styles) findOrAddXf(e xfEntry) int {
+	for i, x := range s.xfs {
+		if x == e {
+			return i
+		}
+	}
+	s.xfs = append(s.xfs, e)
+	return len(s.xfs) - 1
+}
+
+func (s *styles) xml() string {
+	var b bytes.Buffer
+	fmt.Fprintf(&b, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
+	b.WriteString(`<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`)
+	// Two fonts: regular + bold (header / rule-bold).
+	b.WriteString(`<fonts count="2">`)
+	b.WriteString(`<font><sz val="11"/><name val="Calibri"/></font>`)
+	b.WriteString(`<font><b/><sz val="11"/><name val="Calibri"/></font>`)
+	b.WriteString(`</fonts>`)
+	// Fills: none, gray125, then each conditional-format fill as a
+	// solid pattern.
+	fmt.Fprintf(&b, `<fills count="%d">`, len(s.fills))
+	b.WriteString(`<fill><patternFill patternType="none"/></fill>`)
+	b.WriteString(`<fill><patternFill patternType="gray125"/></fill>`)
+	for _, f := range s.fills[2:] {
+		fmt.Fprintf(&b, `<fill><patternFill patternType="solid"><fgColor rgb="FF%s"/></patternFill></fill>`, f)
+	}
+	b.WriteString(`</fills>`)
+	b.WriteString(`<borders count="1"><border/></borders>`)
+	b.WriteString(`<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>`)
+	fmt.Fprintf(&b, `<cellXfs count="%d">`, len(s.xfs))
+	for _, x := range s.xfs {
+		applyFont := ""
+		if x.fontID != 0 {
+			applyFont = ` applyFont="1"`
+		}
+		applyFill := ""
+		if x.fillID != 0 {
+			applyFill = ` applyFill="1"`
+		}
+		fmt.Fprintf(&b, `<xf numFmtId="0" fontId="%d" fillId="%d" borderId="0" xfId="0"%s%s/>`,
+			x.fontID, x.fillID, applyFont, applyFill)
+	}
+	b.WriteString(`</cellXfs>`)
+	b.WriteString(`<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>`)
+	b.WriteString(`</styleSheet>`)
+	return b.String()
 }
 
 // stringPool deduplicates strings and assigns each a stable index.
@@ -217,27 +370,22 @@ func workbookRels(numSheets int) string {
 	return b.String()
 }
 
-// stylesXML defines two cell formats:
-//   0 — default
-//   1 — bold (used for header row)
-const stylesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-	`<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-	`<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>` +
-	`<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>` +
-	`<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
-	`<borders count="1"><border/></borders>` +
-	`<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
-	`<cellXfs count="2">` +
-	`<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
-	`<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>` +
-	`</cellXfs>` +
-	`<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
-	`</styleSheet>`
-
 func sheetXML(s Sheet, pool *stringPool) string {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
 	b.WriteString(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`)
+	// <cols> must come before <sheetData> per the OOXML schema.
+	if len(s.ColumnWidths) > 0 {
+		b.WriteString(`<cols>`)
+		for i, w := range s.ColumnWidths {
+			if w <= 0 {
+				continue
+			}
+			fmt.Fprintf(&b, `<col min="%d" max="%d" width="%s" customWidth="1"/>`,
+				i+1, i+1, strconv.FormatFloat(w, 'f', -1, 64))
+		}
+		b.WriteString(`</cols>`)
+	}
 	b.WriteString(`<sheetData>`)
 	rowNum := 1
 	if len(s.Header) > 0 {
@@ -252,18 +400,42 @@ func sheetXML(s Sheet, pool *stringPool) string {
 	for _, row := range s.Rows {
 		fmt.Fprintf(&b, `<row r="%d">`, rowNum)
 		for col, c := range row {
+			styleAttr := ""
+			// Apply matching conditional-format rule. First match wins.
+			if !c.IsNum {
+				for _, rule := range s.ConditionalFormats {
+					if rule.Col == col && strings.EqualFold(rule.Match, c.String) {
+						styleAttr = fmt.Sprintf(` s="%d"`, rule.styleID)
+						break
+					}
+				}
+			}
 			if c.IsNum {
-				fmt.Fprintf(&b, `<c r="%s%d" t="n"><v>%s</v></c>`,
-					colLetter(col), rowNum, strconv.FormatFloat(c.Number, 'f', -1, 64))
+				fmt.Fprintf(&b, `<c r="%s%d" t="n"%s><v>%s</v></c>`,
+					colLetter(col), rowNum, styleAttr,
+					strconv.FormatFloat(c.Number, 'f', -1, 64))
 			} else {
-				fmt.Fprintf(&b, `<c r="%s%d" t="s"><v>%d</v></c>`,
-					colLetter(col), rowNum, pool.intern(c.String))
+				fmt.Fprintf(&b, `<c r="%s%d" t="s"%s><v>%d</v></c>`,
+					colLetter(col), rowNum, styleAttr, pool.intern(c.String))
 			}
 		}
 		b.WriteString(`</row>`)
 		rowNum++
 	}
-	b.WriteString(`</sheetData></worksheet>`)
+	b.WriteString(`</sheetData>`)
+	// autoFilter is OUTSIDE sheetData. Ref spans the header row
+	// across all defined columns. Excel needs the inclusive A1:Xn
+	// notation. If there's a header AND data, the filter ranges
+	// the entire used area so the dropdown applies sort-as-table.
+	if s.AutoFilter && len(s.Header) > 0 {
+		lastCol := colLetter(len(s.Header) - 1)
+		lastRow := 1
+		if len(s.Rows) > 0 {
+			lastRow = len(s.Rows) + 1
+		}
+		fmt.Fprintf(&b, `<autoFilter ref="A1:%s%d"/>`, lastCol, lastRow)
+	}
+	b.WriteString(`</worksheet>`)
 	return b.String()
 }
 
