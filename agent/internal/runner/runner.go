@@ -13,9 +13,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -100,9 +102,20 @@ type Output struct {
 	ExitCode int
 }
 
-// Execute runs `tool` against `targets` with rough CPU/memory caps. The dev
-// implementation respects the contract but will produce a synthetic stub if
-// the tool isn't installed locally.
+// Execute runs `tool` against `targets` with rough CPU/memory caps.
+//
+// Resource caps:
+//   - maxCPU is interpreted as a wall-clock cap in seconds. The
+//     context inherits a tighter deadline so a tool that goes
+//     runaway is killed by CommandContext. 0 means use the default
+//     30-minute cap.
+//   - maxMem is interpreted as a soft cap in MiB. A watchdog
+//     goroutine polls /proc/<pid>/status on Linux every 2s and
+//     sends SIGKILL to the process group if RSS exceeds the cap.
+//     On non-Linux platforms the watchdog is a no-op and ops should
+//     enforce limits via cgroups / systemd-run wrapping the agent
+//     binary. The previous version of this code did `_ = maxCPU;
+//     _ = maxMem`, silently discarding policy limits.
 func (r *Runner) Execute(ctx context.Context, tool string, targets []string, maxCPU, maxMem int) (*Output, error) {
 	if !allowedTools[tool] {
 		return nil, fmt.Errorf("%w: %q", ErrToolNotAllowed, tool)
@@ -115,9 +128,6 @@ func (r *Runner) Execute(ctx context.Context, tool string, targets []string, max
 	if path, err := exec.LookPath(tool); err == nil {
 		bin = path
 	} else {
-		// Host binary missing. In production we refuse to substitute
-		// synthetic output — fail the job and let ops investigate
-		// rather than poison findings with fabricated data.
 		if !r.AllowSynthetic {
 			return nil, fmt.Errorf("%w: tool=%s", ErrSyntheticForbidden, tool)
 		}
@@ -128,22 +138,64 @@ func (r *Runner) Execute(ctx context.Context, tool string, targets []string, max
 			ExitCode: 0,
 		}, nil
 	}
-	cctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	wallCap := 30 * time.Minute
+	if maxCPU > 0 {
+		wallCap = time.Duration(maxCPU) * time.Second
+	}
+	cctx, cancel := context.WithTimeout(ctx, wallCap)
 	defer cancel()
 	start := time.Now()
 	cmd := exec.CommandContext(cctx, bin, args...)
-	stdout, err := cmd.Output()
-	out := &Output{Tool: tool, Command: bin + " " + strings.Join(args, " "),
-		Stdout: stdout, Took: time.Since(start)}
-	if err != nil {
-		if e, ok := err.(*exec.ExitError); ok {
-			out.Stderr = e.Stderr
+	// Put the child in its own process group so the watchdog can
+	// SIGKILL the entire tree (nuclei / nmap fork helpers).
+	cmd.SysProcAttr = newProcAttr()
+	stdoutPipe, _ := cmd.StdoutPipe()
+	stderrBuf := &outputBuffer{}
+	cmd.Stderr = stderrBuf
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("runner: start %s: %w", tool, err)
+	}
+	if maxMem > 0 {
+		go watchMem(cctx, cmd.Process.Pid, maxMem)
+	}
+	stdout, _ := io.ReadAll(stdoutPipe)
+	waitErr := cmd.Wait()
+	out := &Output{
+		Tool:    tool,
+		Command: bin + " " + strings.Join(args, " "),
+		Stdout:  stdout,
+		Stderr:  stderrBuf.Bytes(),
+		Took:    time.Since(start),
+	}
+	if waitErr != nil {
+		if e, ok := waitErr.(*exec.ExitError); ok {
 			out.ExitCode = e.ExitCode()
+		} else {
+			out.ExitCode = -1
 		}
 	}
-	_ = maxCPU
-	_ = maxMem
 	return out, nil
+}
+
+// outputBuffer is a tiny goroutine-safe byte sink used in place of
+// cmd.Output()'s implicit buffering so we can read stderr after Wait.
+type outputBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (b *outputBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+func (b *outputBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]byte, len(b.buf))
+	copy(out, b.buf)
+	return out
 }
 
 func buildArgs(tool string, targets []string) []string {

@@ -87,20 +87,40 @@ func main() {
 		client = mClient
 		log.Info().Msg("agent using mTLS client transport")
 	}
+	// Size the in-flight-execution semaphore from policy. A zero or
+	// negative MaxConcurrent (misconfigured policy) defaults to 1
+	// rather than unbounded — failing safe on the side of
+	// under-utilisation rather than fork-bombing the host.
+	maxConc := localPolicy.MaxConcurrent()
+	if maxConc <= 0 {
+		maxConc = 1
+	}
+	// Packager HMAC key — generated on first boot, persisted under
+	// dataDir/packager.key (mode 0600). The gateway recomputes the
+	// HMAC over each envelope and refuses mismatches.
+	packKey, err := packager.LoadOrCreateKey(*dataDir)
+	if err != nil {
+		log.Fatal().Err(err).Msg("packager key bootstrap")
+	}
+	pkg, err := packager.NewWithKey(packKey)
+	if err != nil {
+		log.Fatal().Err(err).Msg("packager init")
+	}
 	ag := &Agent{
-		log:        log,
-		gateway:    *gateway,
-		agentID:    agentID,
-		dataDir:    *dataDir,
-		client:     client,
-		cache:      cstore,
-		policy:     localPolicy,
-		runner:     runner.New().WithPolicy(localPolicy),
-		packager:   packager.New(),
-		uploader:   uploader.New(),
-		verifier:   verifierWithEmbedded(),
-		emergency:  emergency.New(),
-		counters:   &heartbeat.Counters{},
+		log:       log,
+		gateway:   *gateway,
+		agentID:   agentID,
+		dataDir:   *dataDir,
+		client:    client,
+		cache:     cstore,
+		policy:    localPolicy,
+		runner:    runner.New().WithPolicy(localPolicy),
+		packager:  pkg,
+		uploader:  uploader.New(),
+		verifier:  verifierWithEmbedded(),
+		emergency: emergency.New(),
+		counters:  &heartbeat.Counters{},
+		execSem:   make(chan struct{}, maxConc),
 	}
 
 	if *enrollToken != "" {
@@ -209,6 +229,14 @@ type Agent struct {
 	emergency   *emergency.Listener
 	counters    *heartbeat.Counters
 	rotator     *rotation.Rotator
+
+	// execSem caps how many job goroutines can be in flight at once.
+	// Previously pollAndRun did `go a.execute(...)` per polled job
+	// with no bound — a poll that returned 1000 jobs spawned 1000
+	// goroutines, ignoring policy.MaxConcurrent() (which was only
+	// passed to the gateway as a `?max=` query hint). The semaphore
+	// is sized at construction time from policy.MaxConcurrent().
+	execSem chan struct{}
 }
 
 type job struct {
@@ -255,7 +283,26 @@ func (a *Agent) pollAndRun(ctx context.Context) {
 		return
 	}
 	for _, j := range doc.Items {
-		go a.execute(ctx, j)
+		// Acquire a slot or skip the job for this poll tick. The
+		// gateway gets a `?max=` hint matched to MaxConcurrent so
+		// it shouldn't routinely return more than we can run; this
+		// guard handles the race where two pollers see the same
+		// queue, or where the operator lowers MaxConcurrent at
+		// runtime via a policy push.
+		select {
+		case a.execSem <- struct{}{}:
+			j := j
+			go func() {
+				defer func() { <-a.execSem }()
+				a.execute(ctx, j)
+			}()
+		case <-ctx.Done():
+			return
+		default:
+			a.log.Warn().Str("job", j.ID.String()).
+				Int("max_concurrent", cap(a.execSem)).
+				Msg("agent: at MaxConcurrent — deferring job to next poll")
+		}
 	}
 }
 
@@ -326,12 +373,14 @@ func (a *Agent) execute(ctx context.Context, j job) {
 			}
 			continue
 		}
-		pkg, err := a.packager.Package(out)
-		if err == nil {
-			if err := a.uploader.UploadResult(ctx, a.client, a.gateway, j.ID, tool, pkg,
-				a.agentID, a.fingerprint); err != nil {
-				a.log.Warn().Err(err).Msg("upload failed")
-			}
+		pkg, envelopeHMAC, err := a.packager.Package(out)
+		if err != nil {
+			a.log.Warn().Err(err).Str("tool", tool).Msg("packager: failed to build envelope")
+			continue
+		}
+		if err := a.uploader.UploadResult(ctx, a.client, a.gateway, j.ID, tool, pkg,
+			a.agentID, a.fingerprint, envelopeHMAC); err != nil {
+			a.log.Warn().Err(err).Str("tool", tool).Msg("upload failed")
 		}
 	}
 
