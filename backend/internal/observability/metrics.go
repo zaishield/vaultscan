@@ -102,6 +102,61 @@ var (
 		},
 		[]string{"job", "outcome"}, // outcome: ok | error
 	)
+
+	// Pool stats — populated by observability.StartPoolStatsExporter.
+	// Operators alert on:
+	//   * pool_acquired ≈ pool_max  → saturating; requests queueing
+	//   * pool_waiting > 0 for >30s → hard saturation; bump MAX_CONNS
+	//   * pool_idle == 0 for sustained periods → undersized pool
+	DBPoolAcquired = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "vaultscan_db_pool_acquired",
+		Help: "Number of connections currently checked out from the pool.",
+	})
+	DBPoolIdle = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "vaultscan_db_pool_idle",
+		Help: "Number of connections sitting idle in the pool.",
+	})
+	DBPoolWaiting = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "vaultscan_db_pool_waiting",
+		Help: "Number of goroutines currently blocked waiting for a connection.",
+	})
+	DBPoolMax = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "vaultscan_db_pool_max",
+		Help: "Configured MaxConns ceiling for the pool.",
+	})
+	DBPoolAcquireCount = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "vaultscan_db_pool_acquire_total",
+		Help: "Cumulative successful pool acquisitions.",
+	})
+	DBPoolAcquireDuration = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "vaultscan_db_pool_acquire_wait_seconds_total",
+		Help: "Cumulative wait time spent acquiring connections (s).",
+	})
+	DBPoolCanceledAcquires = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "vaultscan_db_pool_acquire_canceled_total",
+		Help: "Acquisitions that returned an error (ctx cancel, pool closed).",
+	})
+
+	// Rate-limit hits (per-identity OR per-tenant). Surfaces noisy
+	// neighbors and tenant-level abuse separately so on-call can act.
+	RateLimitHits = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "vaultscan_rate_limit_hits_total",
+			Help: "Requests rejected by the rate limiter, by scope.",
+		},
+		[]string{"scope"}, // identity | tenant
+	)
+
+	// Idempotency-Key middleware metrics. replayed = the cached
+	// response served from the store; missed = the key was new
+	// (fresh request execution).
+	IdempotencyHits = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "vaultscan_idempotency_hits_total",
+			Help: "Idempotency-Key lookups by outcome.",
+		},
+		[]string{"outcome"}, // replayed | new | conflict | inflight
+	)
 )
 
 // init registers everything in Reg so the /metrics endpoint exports
@@ -122,6 +177,15 @@ func init() {
 		IntegrationDeadLetterDepth,
 		EmergencyStopSLAms,
 		WorkerTickDuration,
+		DBPoolAcquired,
+		DBPoolIdle,
+		DBPoolWaiting,
+		DBPoolMax,
+		DBPoolAcquireCount,
+		DBPoolAcquireDuration,
+		DBPoolCanceledAcquires,
+		RateLimitHits,
+		IdempotencyHits,
 	)
 }
 

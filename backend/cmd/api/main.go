@@ -25,6 +25,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/config"
 	"github.com/zaishield/vaultscan/backend/internal/dashboards"
 	"github.com/zaishield/vaultscan/backend/internal/db"
+	"github.com/zaishield/vaultscan/backend/internal/debugserver"
 	"github.com/zaishield/vaultscan/backend/internal/engagements"
 	"github.com/zaishield/vaultscan/backend/internal/envmode"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
@@ -33,6 +34,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/guardrails"
 	"github.com/zaishield/vaultscan/backend/internal/integrations"
 	"github.com/zaishield/vaultscan/backend/internal/logging"
+	"github.com/zaishield/vaultscan/backend/internal/middleware"
 	"github.com/zaishield/vaultscan/backend/internal/observability"
 	"github.com/zaishield/vaultscan/backend/internal/partners"
 	"github.com/zaishield/vaultscan/backend/internal/reporting"
@@ -52,6 +54,16 @@ func main() {
 
 	ctx := context.Background()
 
+	// Wire the per-scope rate-limit hit counter so /metrics shows
+	// identity vs tenant trips separately. middleware.SetRateLimitHitSink
+	// avoids an import cycle (middleware can't import observability).
+	middleware.SetRateLimitHitSink(func(scope string) {
+		observability.RateLimitHits.WithLabelValues(scope).Inc()
+	})
+	middleware.SetIdempotencyHitSink(func(outcome string) {
+		observability.IdempotencyHits.WithLabelValues(outcome).Inc()
+	})
+
 	// Tracing. No-op when VAULTSCAN_OTEL_EXPORTER is unset; otherwise
 	// ships OTLP/HTTP to the configured endpoint (Tempo/Jaeger/Honeycomb).
 	shutdown, err := observability.InitTracing(ctx, "vaultscan-api", "1.0.0")
@@ -70,6 +82,11 @@ func main() {
 		log.Fatal().Err(err).Msg("open database")
 	}
 	defer pool.Close()
+	// Pool stats → Prometheus every 10s. Lets ops alert on saturation
+	// (acquired ≈ max, sustained waiting > 0) before user-visible
+	// latency spikes.
+	stopPoolStats := observability.StartPoolStatsExporter(ctx, pool.Pool, 10*time.Second)
+	defer stopPoolStats()
 
 	if applied, err := pool.Migrate(ctx, "backend/migrations"); err != nil {
 		log.Warn().Err(err).Msg("migrations failed (continuing if already applied)")
@@ -285,6 +302,22 @@ func main() {
 		}
 	}()
 
+	// Debug / pprof server on a dedicated port — production network
+	// policy locks this down independently of the public API. Empty
+	// VAULTSCAN_DEBUG_ADDR disables the server entirely (default).
+	var debugSrv *http.Server
+	if cfg.DebugAddr != "" {
+		debugSrv = debugserver.New(cfg.DebugAddr, cfg.DebugToken)
+		go func() {
+			log.Info().Str("addr", cfg.DebugAddr).
+				Bool("token_required", cfg.DebugToken != "").
+				Msg("vaultscan debug server listening")
+			if err := debugSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Warn().Err(err).Msg("debug server")
+			}
+		}()
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
@@ -294,6 +327,9 @@ func main() {
 	// Drain HTTP first so no new outbound deliveries are queued; then
 	// drain the worker pool (10s grace) so in-flight DLQ writes land.
 	_ = srv.Shutdown(shctx)
+	if debugSrv != nil {
+		_ = debugSrv.Shutdown(shctx)
+	}
 	deliverPool.Shutdown(10 * time.Second)
 	if n := deliverPool.OverflowCount(); n > 0 {
 		log.Warn().Int("dropped", n).Msg("integration deliveries dropped due to queue saturation")

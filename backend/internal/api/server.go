@@ -87,6 +87,10 @@ func Mount(s *Services) http.Handler {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.MaxBodySize(32 << 20)) // 32 MiB cap on any request body
+	// Gzip responses ≥1 KiB when the client asks via Accept-Encoding.
+	// Saves 70-90% bytes on the JSON-heavy audit / findings / dashboard
+	// endpoints; passes SSE / pre-encoded responses through unchanged.
+	r.Use(middleware.Gzip(1024))
 	r.Use(observability.HTTPDurationMiddleware)
 
 	cors := cors.New(cors.Options{
@@ -187,6 +191,18 @@ func Mount(s *Services) http.Handler {
 		// RPS × window = total requests allowed in the rolling window.
 		mid := middleware.NewRateLimitMiddleware(limiter, s.Cfg.RateLimitRPS*windowSec, windowSec)
 		r.Use(mid.Wrap)
+		// Second layer: per-tenant cap, applied above the per-identity
+		// cap. Stops a single noisy tenant from collectively exhausting
+		// DB pool conns while keeping per-user limits in place.
+		tenantMid := middleware.NewTenantRateLimitMiddleware(
+			limiter, s.Cfg.RateLimitRPS*windowSec, windowSec,
+			s.Cfg.PerTenantRateLimitMultiplier)
+		r.Use(tenantMid.Wrap)
+		// Idempotency-Key middleware: clients that send the header
+		// get safe-retry semantics. Mounted AFTER auth so we can
+		// scope keys per-tenant; OPTIONAL — no key, no behaviour
+		// change.
+		r.Use(middleware.Idempotency(s.Pool))
 
 		// Tenants
 		r.Route("/api/v1/tenants", func(r chi.Router) {

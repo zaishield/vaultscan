@@ -101,6 +101,17 @@ type Config struct {
 	// RateLimitWindowSec is the rolling window for the Redis sliding-
 	// window backend. Memory backend always treats limit as RPS.
 	RateLimitWindowSec     int
+
+	// Debug / pprof server. Mounted on a separate addr so the
+	// production network policy can lock it down independently of
+	// the public API. Empty addr disables the server entirely.
+	DebugAddr  string
+	DebugToken string
+
+	// PerTenantRateLimitMultiplier scales the per-identity RPS to
+	// build a per-tenant ceiling (e.g. 5x means a tenant collectively
+	// gets 5× the single-user limit). 0 disables the per-tenant cap.
+	PerTenantRateLimitMultiplier int
 }
 
 func Load() (*Config, error) {
@@ -159,6 +170,14 @@ func Load() (*Config, error) {
 		RateLimitRedisPassword: os.Getenv("VAULTSCAN_RATE_LIMIT_REDIS_PASSWORD"),
 		RateLimitRedisDB:       parseInt("VAULTSCAN_RATE_LIMIT_REDIS_DB", 0),
 		RateLimitWindowSec:     parseInt("VAULTSCAN_RATE_LIMIT_WINDOW_SEC", 60),
+
+		// Empty addr → debug server disabled. localhost-only is the
+		// safe default: ops port-forwards into the pod when they need
+		// pprof. Set to ":6060" in production once a non-empty token
+		// is in place.
+		DebugAddr:                    getenv("VAULTSCAN_DEBUG_ADDR", ""),
+		DebugToken:                   os.Getenv("VAULTSCAN_DEBUG_TOKEN"),
+		PerTenantRateLimitMultiplier: parseInt("VAULTSCAN_RATE_LIMIT_TENANT_MULTIPLIER", 10),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("VAULTSCAN_DATABASE_URL is required")

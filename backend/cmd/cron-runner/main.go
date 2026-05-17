@@ -44,6 +44,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/integrations"
 	"github.com/zaishield/vaultscan/backend/internal/leader"
 	"github.com/zaishield/vaultscan/backend/internal/logging"
+	"github.com/zaishield/vaultscan/backend/internal/middleware"
 	"github.com/zaishield/vaultscan/backend/internal/observability"
 	"github.com/zaishield/vaultscan/backend/internal/reporting"
 	"github.com/zaishield/vaultscan/backend/internal/scanorch"
@@ -132,6 +133,13 @@ func main() {
 		}},
 		{name: "auth_ip_lockouts_sweep", interval: 5 * time.Minute, fn: func(ctx context.Context) error {
 			_, _, err := bruteforce.SweepExpired(ctx)
+			return err
+		}},
+		{name: "idempotency_keys_sweep", interval: 15 * time.Minute, fn: func(ctx context.Context) error {
+			n, err := middleware.SweepIdempotencyKeys(ctx, pool.Pool)
+			if err == nil && n > 0 {
+				log.Info().Int("purged", n).Msg("idempotency keys swept")
+			}
 			return err
 		}},
 		{name: "findings_sla_breach_sweep", interval: time.Hour, fn: func(ctx context.Context) error {

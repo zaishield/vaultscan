@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zaishield/vaultscan/backend/internal/auth"
 )
 
 // Limiter is the contract every backend implements.
@@ -371,7 +373,99 @@ func (m *RateLimitMiddleware) Wrap(next http.Handler) http.Handler {
 			return
 		}
 		if !ok {
+			rateLimitHits("identity")
 			writeJSONError(w, 429, "rate_limited", "slow down")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// rateLimitHits is set by the api package's wiring to bump the
+// vaultscan_rate_limit_hits_total{scope=...} counter. Package
+// middleware can't import observability without a cycle (audit /
+// observability both touch middleware indirectly), so this stays
+// as a sink the API wires at startup.
+var rateLimitHits = func(scope string) {}
+
+// SetRateLimitHitSink lets the API wire in a counter increment so
+// per-scope rate-limit hits show up in /metrics. Called once during
+// process startup.
+func SetRateLimitHitSink(f func(scope string)) {
+	if f != nil {
+		rateLimitHits = f
+	}
+}
+
+// TenantKey returns the per-tenant bucket key for a request, or ""
+// when the request has no tenant binding (platform-admin or
+// unauthenticated). Empty key signals the tenant rate limiter to
+// pass the request through.
+func TenantKey(r *http.Request) string {
+	if id, err := auth.FromContext(r.Context()); err == nil && id.TenantID != nil {
+		return "tenant:" + id.TenantID.String()
+	}
+	return ""
+}
+
+// TenantRateLimitMiddleware applies a SECOND, tenant-wide rate cap
+// on top of the per-identity limit. Stops a single noisy tenant
+// (e.g. CI bot doing aggressive scan submission) from collectively
+// exhausting DB pool conns while keeping per-user limits in place.
+//
+// `multiplier` is how many times the per-identity RPS the tenant
+// can collectively use. 10× is a sane default: lets 10 active users
+// per tenant operate normally without the tenant cap kicking in,
+// but stops one tenant from monopolising a pod.
+type TenantRateLimitMiddleware struct {
+	limiter    Limiter
+	limit      int
+	window     int
+	multiplier int
+}
+
+func NewTenantRateLimitMiddleware(l Limiter, perIdentityLimit, windowSec, multiplier int) *TenantRateLimitMiddleware {
+	if perIdentityLimit <= 0 {
+		perIdentityLimit = 100
+	}
+	if windowSec <= 0 {
+		windowSec = 60
+	}
+	if multiplier <= 0 {
+		// 0 = feature disabled; the Wrap will pass through.
+		multiplier = 0
+	}
+	return &TenantRateLimitMiddleware{
+		limiter:    l,
+		limit:      perIdentityLimit,
+		window:     windowSec,
+		multiplier: multiplier,
+	}
+}
+
+func (m *TenantRateLimitMiddleware) Wrap(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if m.multiplier == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		key := TenantKey(r)
+		if key == "" {
+			// No tenant binding (platform admin, unauthenticated
+			// public route). Per-identity limit still applies.
+			next.ServeHTTP(w, r)
+			return
+		}
+		tenantLimit := m.limit * m.multiplier
+		ok, err := m.limiter.Allow(r.Context(), key, tenantLimit, m.window)
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !ok {
+			rateLimitHits("tenant")
+			writeJSONError(w, 429, "rate_limited",
+				"tenant rate limit exceeded; slow down")
 			return
 		}
 		next.ServeHTTP(w, r)

@@ -139,6 +139,17 @@ func (c *Config) validateProduction() error {
 		v = append(v, "VAULTSCAN_RATE_LIMIT_REDIS_ADDR required when backend=redis")
 	}
 
+	// --- Debug / pprof server must be token-gated if enabled ---
+	// Empty addr (server disabled) is fine in production — many
+	// deployments rely on profile-via-port-forward only. But if the
+	// server IS enabled, it MUST have a token.
+	if c.DebugAddr != "" && c.DebugToken == "" {
+		v = append(v, "VAULTSCAN_DEBUG_ADDR set without VAULTSCAN_DEBUG_TOKEN — pprof would be reachable by anyone with network access to the addr")
+	}
+	if c.DebugAddr != "" && c.DebugToken != "" && len(c.DebugToken) < 32 {
+		v = append(v, "VAULTSCAN_DEBUG_TOKEN must be ≥32 random bytes")
+	}
+
 	// --- CORS must be locked down (no localhost origins, no wildcards) ---
 	for _, origin := range c.CORSAllowedOrigins {
 		if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") ||
