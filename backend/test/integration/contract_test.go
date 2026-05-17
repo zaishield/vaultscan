@@ -41,6 +41,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/config"
 	"github.com/zaishield/vaultscan/backend/internal/dashboards"
 	"github.com/zaishield/vaultscan/backend/internal/guardrails"
+	"github.com/zaishield/vaultscan/backend/internal/integrations"
 )
 
 // Register decoders for content types kin-openapi doesn't know about
@@ -150,6 +151,7 @@ func mountFullAPI(t *testing.T, h *harness) *httptest.Server {
 	_, _ = keyMgr.Bootstrap(context.Background())
 	verifier = verifier.WithKeyManager(keyMgr)
 	cfg := &config.Config{CORSAllowedOrigins: []string{"*"}, RateLimitRPS: 10000}
+	intSvc := integrations.New(h.pool, h.bus, h.audit)
 	router := api.Mount(&api.Services{
 		Pool: h.pool, Cfg: cfg, Verifier: verifier,
 		Audit: h.audit, Bus: h.bus, Branding: h.branding,
@@ -160,6 +162,7 @@ func mountFullAPI(t *testing.T, h *harness) *httptest.Server {
 		Dashboards: dashboards.New(h.pool),
 		Nodes: h.nodes, LiveStream: ls, Guardrails: guardrailSvc,
 		Bruteforce: bruteforce, MFA: mfaSvc, Keys: keyMgr,
+		Integrations: intSvc,
 	})
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)

@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -54,6 +55,9 @@ func newRecv(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *recvSta
 		})
 		st.mu.Unlock()
 		st.hits.Add(1)
+		// Replace r.Body so the user handler can re-read it; the
+		// stash above already consumed the original reader.
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		if handler != nil {
 			handler(w, r)
 			return
@@ -165,6 +169,7 @@ func TestOutbound_HMACSignatureRoundTrip(t *testing.T) {
 		mac.Write(body)
 		want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 		if !hmac.Equal([]byte(sig), []byte(want)) {
+			t.Logf("HMAC mismatch:\n  got:  %s\n  want: %s\n  body: %s", sig, want, string(body))
 			http.Error(w, "bad signature", 400)
 			return
 		}

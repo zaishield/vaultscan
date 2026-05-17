@@ -202,7 +202,7 @@ func TestHandlers_FeedbackFamily(t *testing.T) {
 		body := map[string]any{
 			"category": "bug",
 			"severity": "minor",
-			"message":  "the marketplace install form lost focus on tab",
+			"body":     "the marketplace install form lost focus on tab",
 		}
 		b, _ := json.Marshal(body)
 		req, _ := http.NewRequest("POST", srv.URL+"/api/v1/feedback",
@@ -212,7 +212,7 @@ func TestHandlers_FeedbackFamily(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := http.DefaultClient.Do(req)
 		defer resp.Body.Close()
-		out := requireStatus(t, resp, 200)
+		out := requireStatus(t, resp, 201)
 		if !strings.Contains(string(out), "\"id\"") {
 			t.Errorf("submit missing id: %s", out)
 		}
@@ -256,8 +256,8 @@ func TestHandlers_MobileFamily(t *testing.T) {
 		resp, _ := http.DefaultClient.Do(req)
 		defer resp.Body.Close()
 		body := requireStatus(t, resp, 200)
-		if !strings.Contains(string(body), "agents_online") {
-			t.Errorf("dashboard missing agents_online: %s", body)
+		if !strings.Contains(string(body), "online_agents") {
+			t.Errorf("dashboard missing online_agents: %s", body)
 		}
 	})
 
@@ -276,7 +276,7 @@ func TestHandlers_MobileFamily(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := http.DefaultClient.Do(req)
 		defer resp.Body.Close()
-		out := requireStatus(t, resp, 200)
+		out := requireStatus(t, resp, 201)
 		if !strings.Contains(string(out), "device_id") {
 			t.Errorf("enroll missing device_id: %s", out)
 		}

@@ -103,6 +103,15 @@ func TestHS01_RLS_BlocksCrossTenant(t *testing.T) {
 	}
 	defer func() { _, _ = conn.Exec(context.Background(), `RESET ROLE`) }()
 
+	// Defensive: pgxpool may have leased us a conn that another test
+	// previously SET vaultscan.tenant_id on without clearing. Reset
+	// the GUC to empty before reading baseline so the test is
+	// isolation-resistant.
+	if _, err := conn.Exec(ctx,
+		`SELECT set_config('vaultscan.tenant_id', '', false)`); err != nil {
+		t.Fatalf("reset GUC: %v", err)
+	}
+
 	// Baseline: no GUC set → policy short-circuits → both rows visible.
 	var both int
 	if err := conn.QueryRow(ctx,

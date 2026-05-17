@@ -336,13 +336,16 @@ func (ls *LiveStream) Subscribe(ctx context.Context, pool *pgxpool.Pool, userID,
 	ls.mu.Lock()
 	ls.subs[id] = s
 	ls.mu.Unlock()
+	var closeOnce sync.Once
 	closer := func() {
-		ls.mu.Lock()
-		delete(ls.subs, id)
-		ls.mu.Unlock()
-		close(s.C)
-		_, _ = pool.Exec(context.Background(),
-			`UPDATE dashboard_sse_subscriptions SET closed_at=now() WHERE id=$1`, id)
+		closeOnce.Do(func() {
+			ls.mu.Lock()
+			delete(ls.subs, id)
+			ls.mu.Unlock()
+			close(s.C)
+			_, _ = pool.Exec(context.Background(),
+				`UPDATE dashboard_sse_subscriptions SET closed_at=now() WHERE id=$1`, id)
+		})
 	}
 	return s.C, closer, nil
 }

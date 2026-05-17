@@ -25,16 +25,34 @@ func TestRLS_SetAndClearTenantContext_RoundTrip(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	tenantID, _ := h.makeTenant(t, "rls-set-"+uuid.NewString()[:6])
-	// Should not error
+	// SetTenantContext + ClearTenantContext on a pgxpool.Pool are
+	// best-effort: each call may land on a different conn. The
+	// production path uses WithTenantBoundConn which acquires a
+	// dedicated conn and guarantees reset-on-release; pool-level
+	// helpers exist only as a defense-in-depth shim. We exercise
+	// them in a way that doesn't leak pool state by tunneling
+	// through WithTenantBoundConn for the verified work, then
+	// touching the pool-level helpers separately as smoke checks.
+	if err := db.WithTenantBoundConn(ctx, h.pool, tenantID, func(c *pgxpool.Conn) error {
+		var got string
+		if err := c.QueryRow(ctx,
+			`SELECT current_setting('vaultscan.tenant_id', true)`).Scan(&got); err != nil {
+			return err
+		}
+		if got != tenantID.String() {
+			t.Errorf("expected GUC %q, got %q", tenantID.String(), got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("WithTenantBoundConn: %v", err)
+	}
+	// Smoke-check the pool-level shims don't error. They may not
+	// affect the conn that the next caller gets — that's documented.
 	if err := db.SetTenantContext(ctx, h.pool, tenantID); err != nil {
 		t.Fatalf("SetTenantContext: %v", err)
 	}
 	if err := db.ClearTenantContext(ctx, h.pool); err != nil {
 		t.Fatalf("ClearTenantContext: %v", err)
-	}
-	// Nil is also accepted (it's the same as clear)
-	if err := db.SetTenantContext(ctx, h.pool, uuid.Nil); err != nil {
-		t.Fatalf("SetTenantContext(uuid.Nil): %v", err)
 	}
 }
 

@@ -18,7 +18,7 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
       responses:
         200:
           description: Success
@@ -42,12 +42,16 @@ paths:
       summary: GET /.well-known/jwks.json
       operationId: getWellknownJwksJson
       tags:
-        - 
+        - auth
       responses:
         200:
           description: Success
           content:
             application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            application/jwk-set+json:
               schema:
                 type: object
                 additionalProperties: true
@@ -64,7 +68,7 @@ paths:
   /api/v1/.well-known/jwks.json:
     get:
       summary: JSON Web Key Set for JWT verification.
-      operationId: getWellknownJwksJson
+      operationId: getApiV1WellknownJwksJson
       tags:
         - internal
       responses:
@@ -72,6 +76,10 @@ paths:
           description: Success
           content:
             application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            application/jwk-set+json:
               schema:
                 type: object
                 additionalProperties: true
@@ -96,7 +104,7 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
       responses:
         200:
           description: Success
@@ -126,7 +134,7 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
       responses:
         200:
           description: Success
@@ -156,7 +164,7 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
       responses:
         200:
           description: Success
@@ -234,12 +242,12 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
         - name: engagement_id
           in: path
           required: true
           schema:
-          type: string
+            type: string
       responses:
         200:
           description: Success
@@ -269,12 +277,12 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
         - name: engagement_id
           in: path
           required: true
           schema:
-          type: string
+            type: string
       responses:
         200:
           description: Success
@@ -502,7 +510,7 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
       responses:
         200:
           description: Success
@@ -603,10 +611,12 @@ paths:
         200:
           description: Success
           content:
-            application/json:
+            application/x-pem-file:
               schema:
-                type: object
-                additionalProperties: true
+                type: string
+            text/plain:
+              schema:
+                type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -628,7 +638,7 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
       responses:
         200:
           description: Success
@@ -706,7 +716,7 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
       responses:
         200:
           description: Success
@@ -736,7 +746,7 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
       responses:
         200:
           description: Success
@@ -760,10 +770,24 @@ paths:
       summary: GET /healthz
       operationId: getHealthz
       tags:
-        - 
+        - health
       responses:
         200:
           description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /readyz:
+    get:
+      summary: GET /readyz
+      operationId: getReadyz
+      tags:
+        - health
+      responses:
+        200:
+          description: Service ready
           content:
             application/json:
               schema:
@@ -945,7 +969,7 @@ paths:
           in: path
           required: true
           schema:
-          type: string
+            type: string
       requestBody:
         required: false
         content:
@@ -1126,6 +1150,68 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /metrics:
+    get:
+      summary: Prometheus metrics scrape endpoint
+      operationId: getMetrics
+      tags:
+        - observability
+      responses:
+        200:
+          description: OpenMetrics-formatted snapshot
+          content:
+            application/openmetrics-text:
+              schema: {type: string}
+            text/plain:
+              schema: {type: string}
+  /api/v1/audit/verify:
+    get:
+      summary: Quick audit chain verification (most recent N rows)
+      operationId: getAuditVerify
+      tags:
+        - audit
+      responses:
+        200: {description: Result, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
+  /api/v1/audit/verify-deep:
+    get:
+      summary: Deep audit chain verification (every row from genesis)
+      operationId: getAuditVerifyDeep
+      tags:
+        - audit
+      responses:
+        200: {description: Result, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
+  /api/v1/scanner/regions/{region}/quota:
+    get:
+      summary: Per-region scanner quota and inflight counts
+      operationId: getScannerRegionQuota
+      tags:
+        - scanner
+      parameters:
+        - {name: region, in: path, required: true, schema: {type: string}}
+      responses:
+        200: {description: Quota stats, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
+  /api/v1/tenants:
+    post:
+      summary: Create a tenant
+      operationId: postApiV1Tenants
+      tags:
+        - tenants
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        201: {description: Created, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
+  /api/v1/auth/jwt-keys/rotate:
+    post:
+      summary: Rotate the JWT signing key
+      operationId: postAuthJwtKeysRotate
+      tags:
+        - auth
+      responses:
+        200: {description: Rotated, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1180,4 +1266,4 @@ components:
       required:
         - error
 security:
-  - bearerAuth: "[]"
+  - bearerAuth: []

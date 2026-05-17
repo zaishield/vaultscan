@@ -101,6 +101,13 @@ func TestRLS_EngagementsCrossTenantBlocked(t *testing.T) {
 	}
 	defer func() { _, _ = conn.Exec(context.Background(), `RESET ROLE`) }()
 
+	// Defensive: another test may have left vaultscan.tenant_id set
+	// on this conn. Reset so baseline reads the pass-through path.
+	if _, err := conn.Exec(ctx,
+		`SELECT set_config('vaultscan.tenant_id', '', false)`); err != nil {
+		t.Fatalf("reset GUC: %v", err)
+	}
+
 	// Both engagements visible without GUC (NULL → pass-through).
 	var both int
 	_ = conn.QueryRow(ctx,
@@ -132,9 +139,9 @@ func TestRLS_TenantDataKeysCrossTenantBlocked(t *testing.T) {
 
 	// Seed wrapped-DEK rows for both.
 	_, err := h.pool.Exec(ctx, `
-		INSERT INTO tenant_data_keys(tenant_id, wrapped_key, kek_version)
-		VALUES ($1, $2, 1), ($3, $4, 1)
-		ON CONFLICT (tenant_id) DO NOTHING`,
+		INSERT INTO tenant_data_keys(tenant_id, wrapped_key, key_version, kek_id)
+		VALUES ($1, $2, 1, 'platform-master-v1'), ($3, $4, 1, 'platform-master-v1')
+		ON CONFLICT (tenant_id, key_version) DO NOTHING`,
 		tA, []byte("WRAPPED-DEK-A"), tB, []byte("WRAPPED-DEK-B"))
 	if err != nil {
 		t.Fatalf("seed: %v", err)

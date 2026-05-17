@@ -148,7 +148,7 @@ func TestCrossTenant_AllHandlers_Rejected(t *testing.T) {
 		{
 			name:   "createRetestBatch",
 			method: "POST",
-			path:   "/api/v1/retests/batches",
+			path:   "/api/v1/retest-batches",
 			body: map[string]any{
 				"tenant_id":   tenantB.String(),
 				"reason":      "rogue-retest",
@@ -157,8 +157,8 @@ func TestCrossTenant_AllHandlers_Rejected(t *testing.T) {
 		},
 		{
 			name:   "setAutoRetest",
-			method: "POST",
-			path:   "/api/v1/retests/auto",
+			method: "PUT",
+			path:   "/api/v1/settings/auto-retest",
 			body: map[string]any{
 				"tenant_id": tenantB.String(),
 				"enabled":   false,
@@ -176,7 +176,7 @@ func TestCrossTenant_AllHandlers_Rejected(t *testing.T) {
 		{
 			name:   "emergencyStop",
 			method: "POST",
-			path:   "/api/v1/scan-jobs/emergency-stop",
+			path:   "/api/v1/scans/emergency-stop",
 			body: map[string]any{
 				"tenant_id": tenantB.String(),
 				"reason":    "rogue",

@@ -20,8 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
 	"github.com/zaishield/vaultscan/backend/internal/observability"
@@ -155,21 +153,39 @@ func TestMetrics_ScanJobsCreated_Bumped(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	tA, engA := h.makeTenant(t, "metric-scan-a")
-	actor := uuid.New()
+	actor := adminID
+
+	// makeTenant doesn't seed a scope target; add one so Scope Guard
+	// approves the Submit (otherwise the job is rejected and the
+	// scan_jobs_created counter never increments).
+	scope, err := h.engagements.AddScope(ctx, &adminID, engA,
+		"cidr", "203.0.113.0/24", "external", "metrics test")
+	if err != nil {
+		t.Fatalf("AddScope: %v", err)
+	}
+	if err := h.engagements.ApproveScope(ctx, &adminID, scope.ID); err != nil {
+		t.Fatalf("ApproveScope: %v", err)
+	}
+	if err := h.engagements.Activate(ctx, &adminID, engA); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
 
 	before := metricLine(scrapeMetrics(t),
 		`vaultscan_scan_jobs_created_total{plane="external"}`)
-	_, _, err := h.scanorch.Submit(ctx, scanorch.SubmitInput{
+	job, dec, err := h.scanorch.Submit(ctx, scanorch.SubmitInput{
 		PlatformID: platformID, PartnerID: directID,
 		TenantID: tA, EngagementID: engA,
-		ProfileCode: "ext_recon_quick",
+		ProfileCode: "external_discovery",
 		Plane:       "external",
-		Region:      "us-east-1",
+		Region:      "us",
 		Targets:     []string{"203.0.113.10"},
 		RequestedBy: &actor,
 	})
 	if err != nil {
 		t.Fatalf("scanorch.Submit: %v", err)
+	}
+	if job == nil {
+		t.Fatalf("Submit returned no job, scope-guard decision: %+v", dec)
 	}
 	after := metricLine(scrapeMetrics(t),
 		`vaultscan_scan_jobs_created_total{plane="external"}`)
@@ -209,10 +225,39 @@ func TestMetrics_AuditChainBreaks_BumpedOnTamper(t *testing.T) {
 			AffectedEndpoint: "chain.example",
 		})
 	}
-	// Tamper one audit row to force a chain break.
+	// Tamper one audit row to force a chain break. The audit_logs
+	// table has an append-only trigger that the test must bypass.
+	// In production this trigger would catch the tamper before it
+	// completed; for the test we simulate a privileged attacker who
+	// has dropped the protection — exactly the scenario the chain
+	// verifier exists to detect. Column is TEXT so we cast through jsonb.
 	if _, err := h.pool.Exec(ctx,
-		`UPDATE audit_logs SET payload = jsonb_set(payload, '{tampered}', 'true')
-		  WHERE id = (SELECT id FROM audit_logs ORDER BY id DESC LIMIT 1 OFFSET 1)`); err != nil {
+		`ALTER TABLE audit_logs DISABLE TRIGGER audit_logs_no_update`); err != nil {
+		t.Fatalf("disable trigger: %v", err)
+	}
+	// Capture the row we're about to tamper so we can restore it
+	// at test-end — the shared-schema harness means a permanently
+	// corrupt audit chain breaks every subsequent test that calls
+	// VerifyDeep.
+	var (
+		tamperID      int64
+		originalBody  string
+	)
+	if err := h.pool.QueryRow(ctx,
+		`SELECT id, payload FROM audit_logs ORDER BY id DESC LIMIT 1 OFFSET 1`).
+		Scan(&tamperID, &originalBody); err != nil {
+		t.Fatalf("snapshot row: %v", err)
+	}
+	defer func() {
+		dctx := context.Background()
+		_, _ = h.pool.Exec(dctx,
+			`UPDATE audit_logs SET payload=$2 WHERE id=$1`, tamperID, originalBody)
+		_, _ = h.pool.Exec(dctx,
+			`ALTER TABLE audit_logs ENABLE TRIGGER audit_logs_no_update`)
+	}()
+	if _, err := h.pool.Exec(ctx,
+		`UPDATE audit_logs SET payload = jsonb_set(payload::jsonb, '{tampered}', 'true'::jsonb)::text
+		  WHERE id = $1`, tamperID); err != nil {
 		t.Fatalf("tamper: %v", err)
 	}
 	before := metricLine(scrapeMetrics(t), `vaultscan_audit_chain_breaks_total`)

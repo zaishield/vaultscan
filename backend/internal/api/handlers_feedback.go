@@ -40,6 +40,12 @@ func submitFeedback(s *Services) http.HandlerFunc {
 			badRequest(w, "category must be one of: nps, bug, feature, thumbs_up, thumbs_down, other")
 			return
 		}
+		// body is the customer-facing message — required for every
+		// category except NPS (where rating is the signal).
+		if req.Category != "nps" && strings.TrimSpace(req.Body) == "" {
+			badRequest(w, "body is required")
+			return
+		}
 		if req.Severity == "" {
 			req.Severity = "normal"
 		}

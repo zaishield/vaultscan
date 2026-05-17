@@ -142,7 +142,7 @@ func TestOpenAPI_ShapeFingerprintPinned(t *testing.T) {
 	}
 	// Sanity: must contain at least the canonical health paths.
 	paths := spec.Paths.InMatchingOrder()
-	must := []string{"/api/v1/healthz", "/api/v1/readyz"}
+	must := []string{"/healthz", "/readyz"}
 	for _, m := range must {
 		found := false
 		for _, p := range paths {
@@ -173,8 +173,8 @@ func TestOpenAPI_RequiredOpsPresent(t *testing.T) {
 	required := []struct {
 		Path, Method string
 	}{
-		{"/api/v1/healthz", "GET"},
-		{"/api/v1/readyz", "GET"},
+		{"/healthz", "GET"},
+		{"/readyz", "GET"},
 	}
 	for _, r := range required {
 		item := spec.Paths.Find(r.Path)

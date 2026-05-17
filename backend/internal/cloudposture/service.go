@@ -254,7 +254,11 @@ func score(results []ControlResult) float64 {
 	total := 0.0
 	pass := 0.0
 	for _, r := range results {
-		if r.Status == "not_applicable" {
+		// Exclude not-applicable (no resources to check) and manual
+		// (requires console review) from the denominator. Counting
+		// them as failures would punish accounts for our automation
+		// gaps rather than for their actual posture.
+		if r.Status == "not_applicable" || r.Status == "manual" {
 			continue
 		}
 		total++

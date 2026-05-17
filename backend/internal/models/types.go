@@ -168,7 +168,7 @@ type Asset struct {
 
 // AssetType enumeration covering all 14 blueprint asset types.
 var AssetTypes = []string{
-	"domain", "subdomain", "ip", "cidr", "api", "webapp", "server",
+	"domain", "subdomain", "ip", "cidr", "url", "api", "webapp", "server",
 	"database", "cloud_resource", "container", "k8s_cluster",
 	"mobile_app", "repository", "ssl_certificate",
 }
