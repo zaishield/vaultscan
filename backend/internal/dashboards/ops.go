@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -269,6 +270,11 @@ type subscriber struct {
 	tenantID uuid.UUID
 	channel  string
 	C        chan LiveMessage
+	// delivered / dropped counted via atomic.Add. Snapshotted on
+	// stream close and recorded in dashboard_sse_subscriptions so
+	// ops can see per-stream loss after the fact.
+	delivered uint64
+	dropped   uint64
 }
 
 type LiveMessage struct {
@@ -301,17 +307,39 @@ func (ls *LiveStream) dispatch(eventType string, ev eventbus.Event) {
 		if ev.TenantID != nil && s.tenantID != *ev.TenantID {
 			continue
 		}
-		// Non-blocking send: a slow consumer drops events rather than
-		// stalling the dispatcher.
-		select {
-		case s.C <- LiveMessage{
+		msg := LiveMessage{
 			Type: eventType, Tenant: tenantOrZero(ev.TenantID), Time: time.Now().UTC(),
 			Payload: ev.Payload,
-		}:
+		}
+		// Non-blocking send: a slow SSE consumer (browser tab tucked
+		// in a background window, idle laptop lid closed) drops
+		// events rather than stalling the dispatcher across every
+		// other subscriber. The trade-off is that compliance-critical
+		// channels CANNOT rely on the SSE stream alone — they must
+		// also be persisted (audit_logs / findings tables) and
+		// reconciled on reconnect. We track drops so ops can alert
+		// when a subscriber starts losing events.
+		select {
+		case s.C <- msg:
+			atomic.AddUint64(&s.delivered, 1)
 		default:
+			atomic.AddUint64(&s.dropped, 1)
+			if liveStreamDropSink != nil {
+				liveStreamDropSink(eventType)
+			}
 		}
 	}
 }
+
+// liveStreamDropSink lets cmd/api wire a Prometheus counter without
+// the dashboards package importing observability (which would form
+// a cycle via audit). Nil = no metric, just per-subscriber atomic
+// counters that the SSE endpoint can expose on close.
+var liveStreamDropSink func(eventType string)
+
+// SetDropSink wires a callback fired once per dropped SSE message.
+// cmd/api binds this to observability.DashboardSSEDrops.WithLabelValues.
+func SetDropSink(f func(eventType string)) { liveStreamDropSink = f }
 
 func tenantOrZero(t *uuid.UUID) uuid.UUID {
 	if t == nil {

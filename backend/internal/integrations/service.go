@@ -482,10 +482,20 @@ func (s *Service) recordDelivery(ctx context.Context, integrationID uuid.UUID, e
 		nullIfZero(code), nullIfEmpty(body))
 }
 
-// integrationField pulls a single string column off the integration row by name.
+// integrationField pulls a single string column off the integration
+// row by name. The `field` argument must be one of the columns in
+// the allowed-fields whitelist below — every other value is refused
+// at runtime so a future caller that accepts a user-supplied field
+// can't smuggle SQL through the identifier interpolation. The body
+// of the query is parameterised normally; this whitelist is the
+// defence against identifier injection.
 func (s *Service) integrationField(ctx context.Context, name, field string) (string, error) {
+	if !allowedIntegrationFields[field] {
+		return "", fmt.Errorf("integrations: field %q is not allow-listed", field)
+	}
 	var v *string
 	if err := s.pool.QueryRow(ctx,
+		// #nosec G201 — field has been whitelisted just above.
 		`SELECT `+field+` FROM integrations WHERE name=$1 LIMIT 1`, name).Scan(&v); err != nil {
 		return "", err
 	}
@@ -493,6 +503,17 @@ func (s *Service) integrationField(ctx context.Context, name, field string) (str
 		return "", nil
 	}
 	return *v, nil
+}
+
+// allowedIntegrationFields enumerates every column integrationField()
+// is permitted to read. Adding a new field is a deliberate edit
+// here, not a behavioural change at the call site.
+var allowedIntegrationFields = map[string]bool{
+	"issue_type": true,
+	"format":     true,
+	"name":       true,
+	"type":       true,
+	"endpoint":   true,
 }
 
 func (s *Service) integrationConfig(ctx context.Context, name string) (map[string]any, error) {

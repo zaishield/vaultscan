@@ -324,9 +324,13 @@ func (e *Evaluator) countAuditLogs(ctx context.Context, tenantID uuid.UUID, f fi
 			args = append(args, dur.String())
 		}
 	}
-	// Tenant scope: most audit queries are platform-scoped (tenant_id
-	// may be null). Apply only when explicitly requested.
-	if f["tenant_scoped"] == "true" {
+	// Tenant scope. Default = tenant-scoped (closed). The previous
+	// default was platform-wide ("most audit queries are platform-
+	// scoped"), which meant a tenant-specific compliance control
+	// could silently count events from every tenant — false-positive
+	// pass rates. Control authors who legitimately want platform-
+	// wide counts must opt in explicitly with tenant_scoped=false.
+	if f["tenant_scoped"] != "false" {
 		q += fmt.Sprintf(" AND tenant_id = $%d", len(args)+1)
 		args = append(args, tenantID)
 	}

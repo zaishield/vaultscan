@@ -118,11 +118,17 @@ func (s *Service) Snapshot(ctx context.Context, accountID uuid.UUID) (snapshotID
 		return uuid.Nil, err
 	}
 	findingsJSON, _ := json.Marshal(results)
-	score := score(results)
+	br := scoreBreakdown(results)
 	if err := s.pool.QueryRow(ctx, `
-		INSERT INTO cloud_posture_snapshots(account_id, findings, overall_score)
-		VALUES ($1, $2::jsonb, $3) RETURNING id`,
-		accountID, findingsJSON, score).Scan(&snapshotID); err != nil {
+		INSERT INTO cloud_posture_snapshots(
+		    account_id, findings, overall_score,
+		    automated_count, manual_count, not_applicable_count,
+		    total_count, coverage_percent)
+		VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8)
+		RETURNING id`,
+		accountID, findingsJSON, br.Score,
+		br.AutomatedCount, br.ManualCount, br.NotApplicable,
+		br.TotalCount, br.CoveragePercent).Scan(&snapshotID); err != nil {
 		return uuid.Nil, err
 	}
 	if _, err := s.pool.Exec(ctx,
@@ -248,28 +254,56 @@ func (s *Service) computeDrift(ctx context.Context, accountID uuid.UUID, current
 }
 
 func score(results []ControlResult) float64 {
+	s := scoreBreakdown(results)
+	return s.Score
+}
+
+// ScoreBreakdown carries both the pass-rate and the automation
+// coverage so dashboards can show "80% pass / 60% coverage" rather
+// than just the headline percentage. A 100% pass over a 30%
+// automated control set is a very different posture than 100% over
+// 95% automated, and customers deserve to see both.
+type ScoreBreakdown struct {
+	Score             float64 `json:"score"`                  // pass / (pass+fail) × 100
+	AutomatedCount    int     `json:"automated_count"`        // pass+fail
+	ManualCount       int     `json:"manual_count"`           // status=manual
+	NotApplicable     int     `json:"not_applicable_count"`   // status=not_applicable
+	TotalCount        int     `json:"total_count"`
+	CoveragePercent   float64 `json:"coverage_percent"`       // automated / (automated+manual) × 100
+}
+
+// scoreBreakdown returns the headline score and the automation
+// coverage. Manual / not_applicable are still excluded from the
+// pass-rate denominator (counting them as fail would punish
+// accounts for our automation gaps), but the breakdown exposes
+// them so the customer sees the full picture.
+func scoreBreakdown(results []ControlResult) ScoreBreakdown {
+	b := ScoreBreakdown{TotalCount: len(results)}
 	if len(results) == 0 {
-		return 0
+		return b
 	}
-	total := 0.0
-	pass := 0.0
+	var pass, fail float64
 	for _, r := range results {
-		// Exclude not-applicable (no resources to check) and manual
-		// (requires console review) from the denominator. Counting
-		// them as failures would punish accounts for our automation
-		// gaps rather than for their actual posture.
-		if r.Status == "not_applicable" || r.Status == "manual" {
-			continue
-		}
-		total++
-		if r.Status == "pass" {
+		switch r.Status {
+		case "pass":
 			pass++
+		case "fail":
+			fail++
+		case "manual":
+			b.ManualCount++
+		case "not_applicable":
+			b.NotApplicable++
 		}
 	}
-	if total == 0 {
-		return 0
+	b.AutomatedCount = int(pass + fail)
+	if b.AutomatedCount > 0 {
+		b.Score = pass / (pass + fail) * 100
 	}
-	return pass / total * 100
+	denom := b.AutomatedCount + b.ManualCount
+	if denom > 0 {
+		b.CoveragePercent = float64(b.AutomatedCount) / float64(denom) * 100
+	}
+	return b
 }
 
 func statusRank(s string) int {

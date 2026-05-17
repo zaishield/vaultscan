@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -62,6 +63,10 @@ func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 		return nil, errors.New("auth: missing token")
 	}
 	claims := &VaultscanClaims{}
+	// Allow up to 30s leeway on exp/nbf to absorb clock skew between
+	// API pods and the issuer (Keycloak). Without leeway a 1ms-stale
+	// clock rejects valid tokens at the boundary, surfacing as
+	// flaky 401s for users who just refreshed.
 	tok, err := jwt.ParseWithClaims(raw, claims, func(t *jwt.Token) (any, error) {
 		switch t.Method.(type) {
 		case *jwt.SigningMethodHMAC:
@@ -97,7 +102,7 @@ func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 			return pub, nil
 		}
 		return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-	})
+	}, jwt.WithLeeway(30*time.Second))
 	if err != nil || !tok.Valid {
 		return nil, fmt.Errorf("auth: invalid token: %w", err)
 	}

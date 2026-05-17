@@ -89,6 +89,47 @@ func notFound(w http.ResponseWriter) {
 		"error": map[string]string{"code": "not_found", "message": "resource not found"}})
 }
 
+// parsePagination reads `limit` and `offset` query params with two
+// guarantees the old `strconv.Atoi(...); _ =` pattern didn't provide:
+//
+//  1. Non-numeric values are an explicit 400 (rather than silently
+//     defaulting to 0 → `LIMIT 0` queries that returned no rows and
+//     looked like "no data exists").
+//  2. limit is capped at the supplied max so a hostile client can't
+//     request `limit=999999` to exhaust memory / DB.
+//
+// Returns (limit, offset, true) on success; on failure it has already
+// written a 400 and the caller must just return.
+func parsePagination(w http.ResponseWriter, r *http.Request, defaultLimit, maxLimit int) (int, int, bool) {
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+	limit := defaultLimit
+	offset := 0
+	if limitStr != "" {
+		v, err := strconv.Atoi(limitStr)
+		if err != nil || v < 0 {
+			badRequest(w, "invalid limit")
+			return 0, 0, false
+		}
+		limit = v
+	}
+	if offsetStr != "" {
+		v, err := strconv.Atoi(offsetStr)
+		if err != nil || v < 0 {
+			badRequest(w, "invalid offset")
+			return 0, 0, false
+		}
+		offset = v
+	}
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+	if maxLimit > 0 && limit > maxLimit {
+		limit = maxLimit
+	}
+	return limit, offset, true
+}
+
 func forbidden(w http.ResponseWriter, msg string) {
 	writeJSON(w, http.StatusForbidden, map[string]any{
 		"error": map[string]string{"code": "forbidden", "message": msg}})
@@ -676,8 +717,12 @@ func listAssets(s *Services) http.HandlerFunc {
 		f.Plane = r.URL.Query().Get("plane")
 		f.Criticality = r.URL.Query().Get("criticality")
 		f.Search = r.URL.Query().Get("q")
-		f.Limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
-		f.Offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
+		limit, offset, ok := parsePagination(w, r, 100, 1000)
+		if !ok {
+			return
+		}
+		f.Limit = limit
+		f.Offset = offset
 		out, err := s.Assets.List(r.Context(), f)
 		if err != nil {
 			internalErr(w, err)
@@ -830,7 +875,10 @@ func listScans(s *Services) http.HandlerFunc {
 			forbidden(w, err.Error())
 			return
 		}
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		limit, _, ok := parsePagination(w, r, 50, 500)
+		if !ok {
+			return
+		}
 		out, err := s.ScanOrch.ListByTenant(r.Context(), tenantID, limit)
 		if err != nil {
 			internalErr(w, err)
@@ -1037,8 +1085,12 @@ func listFindings(s *Services) http.HandlerFunc {
 		}
 		f.Scanner = r.URL.Query().Get("scanner")
 		f.Search = r.URL.Query().Get("q")
-		f.Limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
-		f.Offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
+		limit, offset, ok := parsePagination(w, r, 100, 1000)
+		if !ok {
+			return
+		}
+		f.Limit = limit
+		f.Offset = offset
 		out, err := s.Findings.List(r.Context(), f)
 		if err != nil {
 			internalErr(w, err)
@@ -2244,7 +2296,10 @@ func drillCriticalFindings(s *Services) http.HandlerFunc {
 			return
 		}
 		rng := dashboards.ParseRange(r.URL.Query().Get("since"))
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		limit, _, ok := parsePagination(w, r, 50, 500)
+		if !ok {
+			return
+		}
 		out, err := s.Dashboards.CriticalFindings(r.Context(), tenantID, rng, limit)
 		if err != nil {
 			internalErr(w, err)
@@ -2262,7 +2317,10 @@ func drillSLABreaches(s *Services) http.HandlerFunc {
 			forbidden(w, err.Error())
 			return
 		}
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		limit, _, ok := parsePagination(w, r, 50, 500)
+		if !ok {
+			return
+		}
 		out, err := s.Dashboards.SLABreaches(r.Context(), tenantID, limit)
 		if err != nil {
 			internalErr(w, err)
@@ -2281,7 +2339,10 @@ func drillRecentScans(s *Services) http.HandlerFunc {
 			return
 		}
 		rng := dashboards.ParseRange(r.URL.Query().Get("since"))
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		limit, _, ok := parsePagination(w, r, 50, 500)
+		if !ok {
+			return
+		}
 		out, err := s.Dashboards.RecentScans(r.Context(), tenantID, rng, limit)
 		if err != nil {
 			internalErr(w, err)
