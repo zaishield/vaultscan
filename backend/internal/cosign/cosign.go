@@ -67,13 +67,31 @@ const (
 	DecisionRejectedDisabled  = "rejected_disabled"
 	DecisionRejectedSubject   = "rejected_subject"
 	DecisionRejectedPayload   = "rejected_payload"
+	DecisionRejectedRekor     = "rejected_rekor"
 )
 
 type Service struct {
 	pool *pgxpool.Pool
+	// RekorPublic is the public key used to verify Sigstore Rekor
+	// signed-entry timestamps. nil = no SET verification (entries
+	// are still parsed + persisted so an operator can re-verify
+	// out-of-band with rekor-cli). cmd/api wires this from
+	// config.RekorPublicKeyPath at boot.
+	RekorPublic *RekorPublicKey
+	// RequireRekor refuses any signature that doesn't carry a
+	// transparency-log entry. Off by default for backwards-compat;
+	// production deployments wanting strict supply-chain attest
+	// flip this on.
+	RequireRekor bool
 }
 
 func New(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+
+// SetRekorPublic wires the Rekor SET verifier.
+func (s *Service) SetRekorPublic(k *RekorPublicKey) { s.RekorPublic = k }
+
+// SetRequireRekor toggles the "no Rekor → reject" gate.
+func (s *Service) SetRequireRekor(v bool) { s.RequireRekor = v }
 
 // TrustedKey is one row of the cosign_trusted_keys table parsed into the
 // verifier's working form.
@@ -218,6 +236,15 @@ type Bundle struct {
 	SignatureB64 string `json:"signature"`
 	KeyID        string `json:"key_id,omitempty"`   // hint; we also try every active key
 	Subject      string `json:"subject,omitempty"`  // for keyless verification (future)
+	// RekorB64 carries an optional Sigstore Rekor transparency-log
+	// entry envelope (base64). When present, Service.VerifyImage
+	// parses + persists the log index + integrated_at, and (if
+	// Service.RekorPublic is wired) verifies the SET signature.
+	// When absent, signatures still verify against the key chain
+	// but the row in cosign_verifications has rekor_log_id NULL —
+	// operators can alert on that to enforce "no production image
+	// without a Rekor witness".
+	RekorB64 string `json:"rekor,omitempty"`
 }
 
 // Result is the outcome the registry persists in cosign_verifications.
@@ -226,6 +253,11 @@ type Result struct {
 	Reason     string
 	MatchedKey string
 	Digest     string
+	// Rekor-related fields. RekorEntry is non-nil only when the
+	// bundle carried a parseable transparency-log entry; the
+	// LogDecision persists the index / id / integrated_at so the
+	// audit trail can later run rekor-cli verify out-of-band.
+	RekorEntry *RekorEntry
 }
 
 // VerifyImage validates that `bundle` is a cosign signature over the
@@ -309,6 +341,7 @@ func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest stri
 		if verifyPubKey(k.parsedPublic, k.Algorithm, digest[:], sig) {
 			r.Decision = DecisionAccepted
 			r.MatchedKey = k.KeyID
+			s.attachRekor(r, bundle, payloadBytes)
 			return r, nil
 		}
 	}
@@ -320,6 +353,7 @@ func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest stri
 				r.Decision = DecisionAccepted
 				r.MatchedKey = k.KeyID
 				r.Reason = "matched via fallback after key_id hint mismatch"
+				s.attachRekor(r, bundle, payloadBytes)
 				return r, nil
 			}
 		}
@@ -329,12 +363,71 @@ func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest stri
 	return r, nil
 }
 
+// attachRekor parses + (optionally) verifies the bundle's Rekor entry
+// and stamps the result. Called only after signature verification
+// has already succeeded — this is the supply-chain attest layer on
+// top of the per-key chain validation.
+//
+// If RequireRekor is set, a missing or invalid entry flips the
+// Result back to a rejection (DecisionRejectedRekor). Otherwise
+// failures degrade gracefully — the per-key signature is still
+// authoritative for acceptance, but the audit row carries no
+// transparency-log evidence and an operator can alert on that.
+func (s *Service) attachRekor(r *Result, bundle Bundle, payload []byte) {
+	if bundle.RekorB64 == "" {
+		if s.RequireRekor {
+			r.Decision = DecisionRejectedRekor
+			r.Reason = "RequireRekor=true and bundle carries no transparency-log entry"
+		}
+		return
+	}
+	entry, err := ParseRekorEntry(bundle.RekorB64)
+	if err != nil {
+		if s.RequireRekor {
+			r.Decision = DecisionRejectedRekor
+			r.Reason = "rekor entry unparseable: " + err.Error()
+		}
+		return
+	}
+	if s.RekorPublic != nil {
+		if err := s.RekorPublic.VerifySignedEntryTimestamp(entry, payload); err != nil {
+			if s.RequireRekor {
+				r.Decision = DecisionRejectedRekor
+				r.Reason = "rekor SET verification failed: " + err.Error()
+				return
+			}
+			// Non-strict mode: still attach the entry so the audit
+			// row records what we received, but mark the reason.
+			if r.Reason == "" {
+				r.Reason = "rekor SET unverified: " + err.Error()
+			}
+		}
+	}
+	r.RekorEntry = entry
+}
+
 // LogDecision persists the outcome to cosign_verifications.
+// Rekor-related columns are NULL when the bundle carried no
+// transparency-log entry; non-NULL when the verifier captured one,
+// regardless of whether the SET signature could be checked (the
+// row records what was received).
 func (s *Service) LogDecision(ctx context.Context, imageRef string, r *Result, actor *uuid.UUID) error {
+	var (
+		rekorLogID     *string
+		rekorLogIndex  *int64
+		rekorIntegrated *time.Time
+	)
+	if r.RekorEntry != nil {
+		rekorLogID = &r.RekorEntry.LogID
+		rekorLogIndex = &r.RekorEntry.LogIndex
+		rekorIntegrated = &r.RekorEntry.IntegratedAt
+	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO cosign_verifications(image_ref, image_digest, key_id, decision, reason, actor_id)
-		VALUES ($1, $2, NULLIF($3,''), $4, $5, $6)`,
-		imageRef, r.Digest, r.MatchedKey, r.Decision, r.Reason, actor)
+		INSERT INTO cosign_verifications(image_ref, image_digest, key_id, decision, reason, actor_id,
+		    rekor_log_id, rekor_log_index, rekor_integrated_at)
+		VALUES ($1, $2, NULLIF($3,''), $4, $5, $6, $7, $8, $9)`,
+		imageRef, r.Digest, r.MatchedKey, r.Decision, r.Reason, actor,
+		rekorLogID, rekorLogIndex, rekorIntegrated)
 	return err
 }
 
