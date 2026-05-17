@@ -60,3 +60,6 @@ keycloak-data/
 .pytest_cache/
 __pycache__/
 *.pyc
+
+# Reference Files
+references/
