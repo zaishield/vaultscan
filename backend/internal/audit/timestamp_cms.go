@@ -241,8 +241,8 @@ func findMessageDigestAttr(attrsBytes []byte) ([]byte, error) {
 // constructed, SET = tag 17 = 0x11 | 0x20). The length bytes and
 // content are unchanged.
 func canonicalSignedAttrs(implicit []byte) ([]byte, error) {
-	if len(implicit) == 0 {
-		return nil, errors.New("signedAttrs is empty (unsigned timestamp tokens not supported)")
+	if len(implicit) < 2 {
+		return nil, errors.New("signedAttrs too short (need tag + at least one length byte)")
 	}
 	if implicit[0] != 0xA0 {
 		// Not the IMPLICIT [0] form we expected. Could be that the
@@ -252,6 +252,24 @@ func canonicalSignedAttrs(implicit []byte) ([]byte, error) {
 			return implicit, nil
 		}
 		return nil, fmt.Errorf("unexpected signedAttrs tag 0x%02x", implicit[0])
+	}
+	// Validate the length encoding before swapping the tag. Long-form
+	// lengths (first length byte has high bit set, e.g. 0x81/0x82/...)
+	// are legal DER and we MUST handle them correctly — only the
+	// FIRST byte (tag) is being swapped, the length octets that
+	// follow are untouched. Without this check a malformed input
+	// with a truncated length would pass through silently.
+	lenByte := implicit[1]
+	if lenByte&0x80 != 0 {
+		// Long-form: low 7 bits = number of subsequent length octets.
+		nLen := int(lenByte & 0x7F)
+		if nLen == 0 || nLen > 4 {
+			// 0 = indefinite (BER, not DER); >4 = absurdly large.
+			return nil, fmt.Errorf("signedAttrs has invalid long-form length octet count %d", nLen)
+		}
+		if len(implicit) < 2+nLen {
+			return nil, errors.New("signedAttrs truncated before length octets complete")
+		}
 	}
 	out := make([]byte, len(implicit))
 	copy(out, implicit)

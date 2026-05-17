@@ -66,8 +66,14 @@ func Tbl(header []string, rows [][]string) Block {
 
 // TblWithWidths constructs a Table with explicit column widths in
 // twentieths-of-a-point. Useful for compliance reports that need
-// stable column sizing across renders.
+// stable column sizing across renders. Panics if widths length
+// doesn't match the header length — that's a developer mistake
+// (the per-cell renderer would otherwise index out of bounds when
+// it tried to look up each cell's width).
 func TblWithWidths(header []string, widths []int, rows [][]string) Block {
+	if len(widths) != 0 && len(widths) != len(header) {
+		panic("docxgen.TblWithWidths: len(widths) must equal len(header)")
+	}
 	return Block{Kind: BlockTable, Table: &Table{
 		Header: header, Rows: rows, ColumnWidths: widths,
 	}}
@@ -271,8 +277,9 @@ func writeTableCell(b *bytes.Buffer, text string, bold bool, width int) {
 }
 
 // splitLines is a strings.Split shim that doesn't require the
-// `strings` import (kept the import set minimal so this file is
-// self-contained).
+// `strings` import. Trailing empty line is trimmed so cells ending
+// in "\n" don't emit an empty <w:r><w:t/></w:r> tail (which Word
+// renders as an extra blank line in the cell).
 func splitLines(s string) []string {
 	out := []string{}
 	cur := []byte{}
@@ -285,6 +292,12 @@ func splitLines(s string) []string {
 		cur = append(cur, s[i])
 	}
 	out = append(out, string(cur))
+	// Strip a trailing empty entry produced by text ending in
+	// "\n". Preserve interior empties (text\n\ntext = 3 lines
+	// including a blank in the middle, which is intentional).
+	if len(out) > 1 && out[len(out)-1] == "" {
+		out = out[:len(out)-1]
+	}
 	return out
 }
 

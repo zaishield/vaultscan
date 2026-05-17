@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/zaishield/vaultscan/backend/internal/audit"
@@ -234,6 +235,23 @@ func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.Scan
 				Code:   scopeguard.DecisionBlockedMissingAuth,
 				Reason: "engagement state changed between approval and insert (paused/expired or auth doc removed)",
 			}, nil
+		}
+		// Unique-violation on (tenant_id, idempotency_key) means a
+		// concurrent Submit() with the same key won the race. Re-
+		// read and return the existing job rather than surfacing
+		// the raw 23505 to the caller — that's the whole point of
+		// the idempotency key.
+		if in.IdempotencyKey != "" && isUniqueViolation(err) {
+			var existingID uuid.UUID
+			if qerr := o.pool.QueryRow(ctx, `
+				SELECT id FROM scan_jobs
+				 WHERE tenant_id=$1 AND idempotency_key=$2
+				 ORDER BY created_at DESC LIMIT 1`,
+				in.TenantID, in.IdempotencyKey).Scan(&existingID); qerr == nil {
+				if existing, gerr := o.Get(ctx, existingID); gerr == nil {
+					return existing, nil, nil
+				}
+			}
 		}
 		return nil, nil, fmt.Errorf("scanorch: insert scan_job: %w", err)
 	}
@@ -643,6 +661,18 @@ func (o *Orchestrator) recordFailover(ctx context.Context, from, to string) {
 // isNoNodeErr reports whether err is the "no scanner node available"
 // case (used by pickScannerNode to decide whether to walk the
 // failover ladder vs surface a hard infra error).
+// isUniqueViolation reports whether err is a Postgres unique-
+// constraint violation (SQLSTATE 23505). Used by Submit() to map
+// a race-loser INSERT against scan_jobs_tenant_idempotency_key_idx
+// into a "return the existing job" idempotency response.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
+}
+
 func isNoNodeErr(err error) bool {
 	return errors.Is(err, ErrNoScannerNode)
 }

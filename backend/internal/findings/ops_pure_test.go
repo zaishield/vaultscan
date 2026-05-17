@@ -97,6 +97,46 @@ func TestStripVariableTokens_PortPattern(t *testing.T) {
 	}
 }
 
+// portRe regression: the original pattern matched bare digit groups
+// (\b\d{1,5}\b with optional tcp/udp prefix) and mangled version
+// strings like "TLS 1.0 enabled" into "TLS #PORT.#PORT enabled".
+// Downstream regex filters (e.g. severity_override.title_regex
+// matching "TLS 1.0") stopped working as a result. The fix
+// requires either the tcp/udp prefix or the leading colon.
+func TestStripVariableTokens_PreservesVersionNumbers(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   string
+		keep string // substring that must remain
+	}{
+		{"TLS 1.0 enabled", "1.0"},
+		{"OpenSSL 3.9 vulnerability", "3.9"},
+		{"CVE-2024-1234 in libfoo 1.2.3", "1.2.3"},
+		{"Severity 7.5 alert", "7.5"},
+	}
+	for _, c := range cases {
+		got := stripVariableTokens(c.in)
+		if !strings.Contains(got, c.keep) {
+			t.Errorf("input %q → %q lost version substring %q", c.in, got, c.keep)
+		}
+	}
+}
+
+// Real port forms (tcp/443, udp/53, :8080) MUST still strip.
+func TestStripVariableTokens_StillStripsRealPorts(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{
+		"vuln on tcp/443",
+		"udp/53 open",
+		"https://example.com:8080/admin",
+	} {
+		got := stripVariableTokens(in)
+		if !strings.Contains(got, "#PORT") {
+			t.Errorf("input %q → %q didn't strip the port form", in, got)
+		}
+	}
+}
+
 func TestStripVariableTokens_CollapsesWhitespace(t *testing.T) {
 	t.Parallel()
 	got := stripVariableTokens("a   b  c")

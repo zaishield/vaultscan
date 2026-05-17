@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // parsePagination covers the helper introduced in batch 6: validate
@@ -120,6 +121,37 @@ func TestCapString_ZeroCap(t *testing.T) {
 	t.Parallel()
 	if got := capString("hello", 0); got != "" {
 		t.Errorf("got %q want empty (zero cap)", got)
+	}
+}
+
+// UTF-8 boundary safety: truncating mid-rune must not produce
+// invalid UTF-8 sequences. The old (byte-only) implementation
+// would return "a\xe4\xbd" for capString("a你好", 3) which is
+// invalid and breaks strict-UTF-8 downstream validators.
+func TestCapString_UTF8BoundarySafe(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in    string
+		cap   int
+		valid bool   // must always be valid UTF-8
+		want  string // optional exact result
+	}{
+		{"a你好", 1, true, "a"},        // cap before multibyte rune
+		{"a你好", 2, true, "a"},        // cap mid 你 — step back to "a"
+		{"a你好", 3, true, "a"},        // cap mid 你 — step back to "a"
+		{"a你好", 4, true, "a你"},       // cap right after 你
+		{"a你好", 5, true, "a你"},       // cap mid 好
+		{"a你好", 7, true, "a你好"},      // cap == len
+		{"hello", 100, true, "hello"}, // ASCII passthrough
+	}
+	for _, c := range cases {
+		got := capString(c.in, c.cap)
+		if !utf8.ValidString(got) {
+			t.Errorf("capString(%q, %d) = %q is NOT valid UTF-8", c.in, c.cap, got)
+		}
+		if c.want != "" && got != c.want {
+			t.Errorf("capString(%q, %d) = %q want %q", c.in, c.cap, got, c.want)
+		}
 	}
 }
 

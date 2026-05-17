@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
@@ -89,18 +90,31 @@ func notFound(w http.ResponseWriter) {
 		"error": map[string]string{"code": "not_found", "message": "resource not found"}})
 }
 
-// capString truncates s to at most max bytes. Used to bound
-// untrusted string columns (User-Agent, free-text reasons) before
-// hitting the DB so a hostile client can't flood rows with multi-
-// MB blobs. Byte-counted (not rune-counted) — the goal is row size,
-// and Postgres TEXT charges by byte too. For multibyte UTF-8 input
-// truncation could leave a partial rune at the boundary; callers
-// using this for display should re-validate.
+// capString truncates s to at most `max` BYTES, but trims back to
+// the nearest valid UTF-8 boundary so the result is always valid
+// UTF-8. Postgres TEXT charges by byte, so the budget is bytes; the
+// rune-safe trim just prevents an invalid sequence from landing
+// in the column and tripping strict UTF-8 validators (which then
+// break the API response when the row is re-read).
+//
+// A 4-byte UTF-8 rune cut at byte 2 would otherwise leave the
+// trailing 0xE4 0xBD pair, which is invalid on its own.
 func capString(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
 	if len(s) <= max {
 		return s
 	}
-	return s[:max]
+	// Walk back from `max` until we land on a UTF-8 boundary.
+	// utf8.RuneStart returns false for continuation bytes
+	// (10xxxxxx). At most 3 step-backs needed for the longest
+	// 4-byte rune.
+	i := max
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i]
 }
 
 // parsePagination reads `limit` and `offset` query params with two
@@ -1551,6 +1565,10 @@ func listAudit(s *Services) http.HandlerFunc {
 			}
 		}
 		// Bound the page size: configurable up to 500, default 100.
+		// DELIBERATELY silent-fallback (not parsePagination): the
+		// audit-history endpoint is consumed by long-poll dashboards
+		// where a momentary client-typo "limit=abc" shouldn't 400 —
+		// we just use the safe default. The cap-at-500 still applies.
 		limit := 100
 		if v := r.URL.Query().Get("limit"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {

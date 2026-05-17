@@ -22,6 +22,23 @@ func mfaEnrollStart(s *Services) http.HandlerFunc {
 			internalErr(w, errMFANotWired)
 			return
 		}
+		// Refuse re-enrollment for users who already have MFA. The
+		// user_mfa INSERT uses ON CONFLICT DO UPDATE which would
+		// clobber the existing TOTP secret with no second-factor
+		// check — a session-stolen attacker (e.g. via XSS) could
+		// silently replace the victim's MFA and lock them out.
+		// Operators rotating their MFA must DELETE /api/v1/auth/mfa
+		// first (that route is MFA-gated), then re-enroll.
+		enrolled, err := s.MFA.IsEnrolled(r.Context(), id.UserID)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		if enrolled {
+			writeJSONError(w, http.StatusConflict, "already_enrolled",
+				"MFA is already enrolled; disable it first (DELETE /api/v1/auth/mfa) then re-enroll")
+			return
+		}
 		secret, err := s.MFA.StartEnrollment(r.Context(), id.UserID, id.Email, "VAULTSCAN")
 		if err != nil {
 			internalErr(w, err)

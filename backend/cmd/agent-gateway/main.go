@@ -364,7 +364,11 @@ func main() {
 				return
 			}
 
-			parser, ok := parsers.Registry[tool]
+			// parsers.Lookup (not Registry directly) so the universal
+			// MaxParserInputBytes + MaxFindingsPerParse DoS guards
+			// apply. A hostile agent posting a 1 GiB JSON would
+			// otherwise bypass them and OOM the gateway.
+			parser, ok := parsers.Lookup(tool)
 			if !ok {
 				writeJSON(w, 200, map[string]any{"evidence_id": ev.ID, "ingested_findings": 0,
 					"note": "no parser available for tool"})

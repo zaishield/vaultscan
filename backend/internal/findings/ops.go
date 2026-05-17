@@ -33,10 +33,23 @@ func ClusterKey(in IngestInput) string {
 // IP addresses, hostnames-in-quotes. Keeps the human-recognisable
 // "title family" intact.
 var (
-	portRe   = regexp.MustCompile(`\b(tcp|udp)?/?\d{1,5}\b`)
+	// portRe matches "tcp/443", "udp/53", or ":8080" — i.e. the
+	// forms scanner output uses to denote a port. The OLD version
+	// `\b(tcp|udp)?/?\d{1,5}\b` matched standalone digit groups
+	// too, which mangled version strings: "TLS 1.0 enabled" became
+	// "TLS #PORT.#PORT enabled" and downstream regex filters (e.g.
+	// severity_override.title_regex matching "TLS 1.0") stopped
+	// working. The new pattern requires either the tcp/udp prefix
+	// OR the leading colon, so version numbers pass through
+	// unchanged.
+	portRe   = regexp.MustCompile(`\b(?:tcp|udp)/\d{1,5}\b|:\d{1,5}\b`)
 	ipRe     = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)
 	uuidRe   = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-	hostRe   = regexp.MustCompile(`\b[a-z0-9][a-z0-9-]*\.[a-z0-9-]+(\.[a-z0-9-]+)+\b`)
+	// hostRe requires the rightmost segment (TLD) to start with a
+	// letter. Without this constraint "1.2.3" matched as a hostname
+	// and version numbers like "libfoo 1.2.3" got mangled. Real
+	// TLDs always start with a letter (.com, .io, .co.uk, etc.).
+	hostRe   = regexp.MustCompile(`\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z][a-z0-9-]*\b`)
 	wsRe     = regexp.MustCompile(`\s+`)
 )
 

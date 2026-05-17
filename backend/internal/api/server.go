@@ -530,7 +530,12 @@ func Mount(s *Services) http.Handler {
 		r.Get("/api/v1/agents/{agent_id}/update-offer", offerAgentUpdate(s))
 		r.With(middleware.RequirePermission("trigger_emergency_stop")).
 			Post("/api/v1/agents/{agent_id}/emergency-stop", requestAgentEmergencyStop(s))
-		r.Post("/api/v1/emergency-stops/{stop_id}/ack", ackAgentEmergencyStop(s))
+		// Acking an emergency stop is privileged — only operators
+		// who could ALSO trigger one should be able to suppress one.
+		// Without this gate any authenticated user could silence a
+		// platform-wide safety signal.
+		r.With(middleware.RequirePermission("trigger_emergency_stop")).
+			Post("/api/v1/emergency-stops/{stop_id}/ack", ackAgentEmergencyStop(s))
 		r.Get("/api/v1/agents/{agent_id}/emergency-stop-sla", emergencyStopSLA(s))
 
 		// ===================================================================
@@ -596,7 +601,13 @@ func Mount(s *Services) http.Handler {
 		// VS-12 Dashboard ops
 		// ===================================================================
 		r.Get("/api/v1/dashboards/layouts", listDashboardLayouts(s))
-		r.Post("/api/v1/dashboards/layouts", saveDashboardLayout(s))
+		// view_findings is the permission floor for any tenant-
+		// scoped portal view. Saving a layout that references
+		// widgets in another tenant must trip the inner tenant
+		// scope check; this gate stops anonymous/over-broad scopes
+		// from POSTing layouts at all.
+		r.With(middleware.RequirePermission("view_findings")).
+			Post("/api/v1/dashboards/layouts", saveDashboardLayout(s))
 		r.Get("/api/v1/dashboards/geo", geoScanNodes(s))
 		r.Get("/api/v1/dashboards/compliance", complianceSnapshot(s))
 		r.Get("/api/v1/dashboards/stream", dashboardStreamSSE(s))
@@ -619,7 +630,13 @@ func Mount(s *Services) http.Handler {
 			Put("/api/v1/platform/maintenance", setMaintenance(s))
 		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
 			Post("/api/v1/platform/break-glass", issueBreakGlass(s))
-		r.Post("/api/v1/platform/break-glass/redeem", redeemBreakGlass(s))
+		// Redemption is paired with issueBreakGlass — both ends of
+		// the break-glass flow MUST be MFA-gated. The previous shape
+		// allowed any authenticated user to redeem a leaked token
+		// with no second factor, defeating the whole point of the
+		// flow.
+		r.With(middleware.RequireMFA()).
+			Post("/api/v1/platform/break-glass/redeem", redeemBreakGlass(s))
 		r.Get("/api/v1/platform/policy-rules", listPolicyRules(s))
 
 		// MFA enrolment + management (HS-01).

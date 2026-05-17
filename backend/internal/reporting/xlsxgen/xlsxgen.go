@@ -111,8 +111,25 @@ func Build(sheets []Sheet) ([]byte, error) {
 	// rule.styleID.
 	st := newStyles()
 	for si := range sheets {
+		// Validate every rule's column is in-range against the
+		// sheet's known width (length of Header, or max row width
+		// if Header is empty). An out-of-range rule is a silent
+		// no-op which is fine at runtime but masks operator typos.
+		maxCol := len(sheets[si].Header) - 1
+		if maxCol < 0 {
+			for _, row := range sheets[si].Rows {
+				if len(row)-1 > maxCol {
+					maxCol = len(row) - 1
+				}
+			}
+		}
 		for ri := range sheets[si].ConditionalFormats {
 			rule := &sheets[si].ConditionalFormats[ri]
+			if rule.Col < 0 || rule.Col > maxCol {
+				return nil, fmt.Errorf(
+					"xlsxgen: sheet %q ConditionalFormat rule[%d].Col=%d out of range [0..%d]",
+					sheets[si].Name, ri, rule.Col, maxCol)
+			}
 			rule.styleID = st.addRule(rule.Fill, rule.Bold)
 		}
 	}

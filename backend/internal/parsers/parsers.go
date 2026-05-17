@@ -82,13 +82,19 @@ func Lookup(tool string) (ParseFunc, bool) {
 			return nil, err
 		}
 		out, err := raw(ctx, in)
-		// truncate even when the parser returned partial results
-		// alongside an error — those partial results would otherwise
-		// either bypass the 50k cap (if propagated) or be lost (if
-		// dropped). Cap them and surface the error so the caller
-		// can decide.
+		if err != nil {
+			// Contract: an error from the inner parser means "I
+			// couldn't make sense of the input." Callers (scanner
+			// worker) treat err != nil as a failed task and skip
+			// ingestion. Returning partial results alongside the
+			// error was confusing — the worker discarded them
+			// anyway. If a parser legitimately wants to emit
+			// partial results AND warn, it should return
+			// (results, nil) and log internally.
+			return nil, err
+		}
 		out, _ = truncateFindings(out)
-		return out, err
+		return out, nil
 	}, true
 }
 

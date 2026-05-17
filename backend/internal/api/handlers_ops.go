@@ -1223,13 +1223,18 @@ func redeemBreakGlass(s *Services) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		id, _ := auth.FromContext(r.Context())
-		var actor *uuid.UUID
-		if id != nil {
-			a := id.UserID
-			actor = &a
+		// Route is MFA-gated; identity MUST be present. The previous
+		// code defaulted actor=nil if FromContext erred — dangerous
+		// because break-glass audit rows would have no attribution
+		// (and silently accepting unauthenticated callers if a
+		// middleware reorder ever happened).
+		id, err := auth.FromContext(r.Context())
+		if err != nil || id == nil {
+			forbidden(w, "authenticated identity required")
+			return
 		}
-		perm, issuer, err := s.Guardrails.RedeemBreakGlass(r.Context(), req.Token, actor, clientIP(r))
+		actor := id.UserID
+		perm, issuer, err := s.Guardrails.RedeemBreakGlass(r.Context(), req.Token, &actor, clientIP(r))
 		if err != nil {
 			badRequest(w, err.Error())
 			return

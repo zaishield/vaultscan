@@ -31,6 +31,37 @@ import (
 )
 
 func main() {
+	// Probe + drain flags are invoked by the Helm chart's
+	// liveness/readiness probes and preStop hook (see
+	// infra/helm/vaultscan/templates/scanner-worker-deployment.yaml).
+	// The probes are simple "is the binary present and runnable"
+	// checks — we exit 0 immediately. The real readiness signal is
+	// whether the worker successfully claimed work in the last
+	// poll interval, which the deployment timeout absorbs.
+	//
+	// --drain writes a signal file the running worker watches so
+	// the preStop hook can ask the long-running process to stop
+	// claiming new jobs and finish in-flight work before SIGTERM.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--ready", "--live":
+			os.Exit(0)
+		case "--drain":
+			// Write the drain marker. The running worker polls
+			// for this file at the start of each claim loop and
+			// returns early when present.
+			path := os.Getenv("VAULTSCAN_SCANNER_DRAIN_FILE")
+			if path == "" {
+				path = "/tmp/vaultscan-scanner-drain"
+			}
+			if err := os.WriteFile(path, []byte("drain\n"), 0o600); err != nil {
+				_, _ = fmt.Fprintln(os.Stderr, "scanner-worker: drain signal:", err)
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		panic(err)
