@@ -30,7 +30,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	pool, err := db.OpenForComponent(ctx, cfg.DatabaseURL, "analytics-worker")
 	if err != nil {
 		log.Fatal().Err(err).Msg("open db")
 	}

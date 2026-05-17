@@ -83,7 +83,7 @@ func main() {
 			_ = shutdown(sctx)
 		}
 	}()
-	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	pool, err := db.OpenForComponent(ctx, cfg.DatabaseURL, "api")
 	if err != nil {
 		log.Fatal().Err(err).Msg("open database")
 	}

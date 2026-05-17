@@ -50,7 +50,7 @@ func main() {
 	log := logging.New(cfg.Env)
 	ctx := context.Background()
 
-	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	pool, err := db.OpenForComponent(ctx, cfg.DatabaseURL, "agent-gateway")
 	if err != nil {
 		log.Fatal().Err(err).Msg("open db")
 	}

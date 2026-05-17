@@ -23,6 +23,24 @@ type DB struct {
 // PoolConfig is the tunable surface, populated from env vars by Open.
 // All knobs have production-grade defaults; bump them for high-load
 // environments via VAULTSCAN_PG_{MAX_CONNS, MIN_CONNS, ...}.
+//
+// Per-component overrides: each binary calls
+// PoolConfigForComponent("api" / "scanner-worker" / "agent-gateway"
+// / "analytics-worker" / "cron-runner") which layers component-
+// specific env vars on top of the defaults. Components hit different
+// query patterns:
+//
+//   - api              — many short read-heavy queries; high concurrency
+//   - scanner-worker   — long-held rows under FOR UPDATE; few conns,
+//                        long statement timeouts
+//   - agent-gateway    — high RPS but each request is small; medium conns
+//   - analytics-worker — long-running aggregations; few conns, very
+//                        long statement timeouts
+//   - cron-runner      — sporadic jobs; minimal conns, leader-elect
+//                        already serialises
+//
+// A single shared default would have to pick one of these as the
+// loser. Per-component lets each binary tune appropriately.
 type PoolConfig struct {
 	MaxConns        int32
 	MinConns        int32
@@ -54,6 +72,105 @@ func DefaultPoolConfig() PoolConfig {
 
 func Open(ctx context.Context, dsn string) (*DB, error) {
 	return OpenWithConfig(ctx, dsn, DefaultPoolConfig())
+}
+
+// componentDefaults pins reasonable defaults per binary. Operators
+// override individual knobs by setting VAULTSCAN_PG_<COMPONENT>_*
+// env vars (or the legacy VAULTSCAN_PG_* for global override).
+//
+// The shapes here are derived from a production target of
+// 50 vCPU / 200GB Postgres with ~150 max connections. The sum of
+// MaxConns across all binaries in one region MUST stay under that
+// ceiling — these defaults total ~80, leaving headroom for
+// migrations + ad-hoc operator psql sessions.
+var componentDefaults = map[string]PoolConfig{
+	"api": {
+		MaxConns:         50, // request-driven, many short queries
+		MinConns:         8,
+		MaxConnLifetime:  time.Hour,
+		MaxConnIdle:      30 * time.Minute,
+		HealthCheck:      time.Minute,
+		StatementTimeout: 15 * time.Second, // short — API has its own request timeouts
+		IdleInTxTimeout:  30 * time.Second,
+	},
+	"scanner-worker": {
+		MaxConns:         12, // FOR UPDATE rows held — too many conns wastes them
+		MinConns:         2,
+		MaxConnLifetime:  2 * time.Hour,
+		MaxConnIdle:      time.Hour,
+		HealthCheck:      time.Minute,
+		StatementTimeout: 5 * time.Minute, // scanner output ingest can be slow
+		IdleInTxTimeout:  10 * time.Minute,
+	},
+	"agent-gateway": {
+		MaxConns:         20, // high RPS but tiny queries
+		MinConns:         4,
+		MaxConnLifetime:  time.Hour,
+		MaxConnIdle:      15 * time.Minute,
+		HealthCheck:      time.Minute,
+		StatementTimeout: 10 * time.Second,
+		IdleInTxTimeout:  30 * time.Second,
+	},
+	"analytics-worker": {
+		MaxConns:         8, // long-running aggregations; few conns
+		MinConns:         2,
+		MaxConnLifetime:  4 * time.Hour, // long-lived; warm caches matter
+		MaxConnIdle:      time.Hour,
+		HealthCheck:      2 * time.Minute,
+		StatementTimeout: 15 * time.Minute, // OLAP queries can take this
+		IdleInTxTimeout:  20 * time.Minute,
+	},
+	"cron-runner": {
+		MaxConns:         4, // jobs serialise via leader election anyway
+		MinConns:         1,
+		MaxConnLifetime:  time.Hour,
+		MaxConnIdle:      30 * time.Minute,
+		HealthCheck:      2 * time.Minute,
+		StatementTimeout: 5 * time.Minute, // partition mgmt, retention cron
+		IdleInTxTimeout:  5 * time.Minute,
+	},
+}
+
+// PoolConfigForComponent returns the right defaults for `component`,
+// with VAULTSCAN_PG_* env vars taking precedence (operator override
+// works at any layer). Unknown component falls back to the generic
+// DefaultPoolConfig so a typo doesn't crash boot.
+func PoolConfigForComponent(component string) PoolConfig {
+	base, ok := componentDefaults[component]
+	if !ok {
+		return DefaultPoolConfig()
+	}
+	// Layer the global VAULTSCAN_PG_* env vars on top — they
+	// override the component default if set.
+	if v := envInt32("VAULTSCAN_PG_MAX_CONNS", -1); v >= 0 {
+		base.MaxConns = v
+	}
+	if v := envInt32("VAULTSCAN_PG_MIN_CONNS", -1); v >= 0 {
+		base.MinConns = v
+	}
+	if v := envDur("VAULTSCAN_PG_MAX_CONN_LIFETIME", 0); v > 0 {
+		base.MaxConnLifetime = v
+	}
+	if v := envDur("VAULTSCAN_PG_MAX_CONN_IDLE", 0); v > 0 {
+		base.MaxConnIdle = v
+	}
+	if v := envDur("VAULTSCAN_PG_HEALTHCHECK", 0); v > 0 {
+		base.HealthCheck = v
+	}
+	if v := envDur("VAULTSCAN_PG_STATEMENT_TIMEOUT", 0); v > 0 {
+		base.StatementTimeout = v
+	}
+	if v := envDur("VAULTSCAN_PG_IDLE_IN_TX_TIMEOUT", 0); v > 0 {
+		base.IdleInTxTimeout = v
+	}
+	return base
+}
+
+// OpenForComponent is the convenience wrapper most binaries use
+// instead of Open. Picks the component-specific defaults and opens
+// the pool.
+func OpenForComponent(ctx context.Context, dsn, component string) (*DB, error) {
+	return OpenWithConfig(ctx, dsn, PoolConfigForComponent(component))
 }
 
 func OpenWithConfig(ctx context.Context, dsn string, pc PoolConfig) (*DB, error) {

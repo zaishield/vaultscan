@@ -1,0 +1,86 @@
+{{/*
+PodDisruptionBudgets — gate voluntary disruption (node drains,
+cluster autoscaler, kubectl drain) so we never lose ALL pods of a
+deployment at once. Without these, a routine Kubernetes node patch
+can take all of one region's scanner-worker pods down together —
+and the gateway has nothing to dispatch to until the drain finishes.
+
+Convention: minAvailable=1 for workers that can tolerate temporary
+under-capacity, minAvailable=N-1 for the API and gateway where any
+single pod outage is a customer-visible blip.
+
+api / agent-gateway each already define their PDB in their own
+deployment template; this file covers the four that were missing
+when the deployment-hardening sweep was originally written.
+*/}}
+
+{{- if .Values.scannerWorker.enabled }}
+{{- range $i, $region := .Values.scannerWorker.regions }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "vaultscan.fullname" $ }}-scanner-worker-{{ $region.name }}
+  labels:
+    {{- include "vaultscan.componentLabels" (dict "component" "scanner-worker" "Chart" $.Chart "Release" $.Release) | nindent 4 }}
+    vaultscan.io/region: {{ $region.name | quote }}
+spec:
+  # Scanner workers can lose all-but-one pod briefly — claims will
+  # re-pile up on the survivor and dispatch resumes when others
+  # return. minAvailable=1 prevents a node drain from taking the
+  # last pod down.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "vaultscan.componentSelector" (dict "root" $ "component" "scanner-worker") | nindent 6 }}
+      vaultscan.io/region: {{ $region.name | quote }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.analyticsWorker.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-analytics-worker
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "analytics-worker" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  # Analytics is non-real-time; we tolerate brief outages but want
+  # at least one pod alive so dashboards don't show stale-by-hours
+  # numbers after a node drain.
+  minAvailable: 1
+  selector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "analytics-worker") | nindent 6 }}
+{{- end }}
+
+{{- if .Values.portal.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-portal
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "portal" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  # Portal is customer-facing static-asset serving. Any node drain
+  # without a PDB can yank all replicas at once and cause a 30-60s
+  # outage while replacements come up.
+  minAvailable: 2
+  selector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "portal") | nindent 6 }}
+{{- end }}
+
+{{- if .Values.pgbouncer.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-pgbouncer
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "pgbouncer" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  # pgbouncer in front of Postgres — losing all replicas means
+  # every API pod immediately can't reach the DB. minAvailable=N-1
+  # so a drain only takes one pod at a time.
+  maxUnavailable: 1
+  selector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "pgbouncer") | nindent 6 }}
+{{- end }}

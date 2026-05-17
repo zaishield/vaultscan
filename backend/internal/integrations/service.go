@@ -16,10 +16,13 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/zaishield/vaultscan/backend/internal/circuitbreaker"
 
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
@@ -43,6 +46,16 @@ type Service struct {
 	// pool is the worker pool used by the bus-fanout path. nil → falls
 	// back to legacy `go s.deliver(...)` (single-pod dev only).
 	workerPool *WorkerPool
+
+	// Per-integration circuit breakers. When a single upstream
+	// (Jira / Slack / a specific webhook URL) flaps, the breaker
+	// trips after MaxFailures consecutive failures and short-
+	// circuits subsequent attempts with ErrBreakerOpen — so the
+	// worker pool stops burning retries against a known-dead
+	// upstream. Keyed by integration_id so two integrations to
+	// the same provider type are isolated.
+	breakersMu sync.RWMutex
+	breakers   map[uuid.UUID]*circuitbreaker.Breaker
 }
 
 // AttachWorkerPool installs a bounded worker pool on the service.
@@ -58,6 +71,7 @@ func New(pool *pgxpool.Pool, bus *eventbus.Bus, a *audit.Service) *Service {
 		client:         &http.Client{Timeout: 10 * time.Second},
 		MaxAttempts:    5,
 		InitialBackoff: time.Second,
+		breakers:       map[uuid.UUID]*circuitbreaker.Breaker{},
 	}
 }
 
@@ -374,7 +388,29 @@ func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, n
 			req.Header.Set("X-Vaultscan-Signature",
 				"sha256="+hexDigest(hmac.New(sha256.New, []byte(secret)), body))
 		}
-		resp, err := s.client.Do(req)
+		// Wrap the actual upstream call in the per-integration
+		// circuit breaker. When the breaker is open the call
+		// returns ErrBreakerOpen immediately — counted as a
+		// failure attempt so the existing backoff still applies,
+		// but no socket gets opened to a known-dead upstream.
+		var resp *http.Response
+		breaker := s.breakerFor(integrationID, itype)
+		breakerErr := breaker.Call(func() error {
+			var derr error
+			resp, derr = s.client.Do(req)
+			if derr != nil {
+				return derr
+			}
+			// Treat 5xx as failure so the breaker actually
+			// tracks upstream health (4xx is a client-side
+			// problem; opening the breaker for 400s would punish
+			// our own bad payloads).
+			if resp.StatusCode >= 500 {
+				return fmt.Errorf("upstream %d", resp.StatusCode)
+			}
+			return nil
+		})
+		err = breakerErr
 		if err == nil {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
@@ -588,6 +624,30 @@ func jitterDuration(d time.Duration) time.Duration {
 	}
 	factor := 0.5 + rand.Float64() // [0.5, 1.5)
 	return time.Duration(float64(d) * factor)
+}
+
+// breakerFor returns the lazily-created circuit breaker for an
+// integration. One breaker per integration_id (not per type), so
+// two distinct Slack webhooks fail independently. MaxFailures=5,
+// Cooldown=30s — production-default values matching the
+// circuitbreaker package's own defaults.
+func (s *Service) breakerFor(integrationID uuid.UUID, name string) *circuitbreaker.Breaker {
+	s.breakersMu.RLock()
+	b, ok := s.breakers[integrationID]
+	s.breakersMu.RUnlock()
+	if ok {
+		return b
+	}
+	s.breakersMu.Lock()
+	defer s.breakersMu.Unlock()
+	// Re-check under the write lock; another goroutine may have
+	// created the breaker between our RLock and Lock.
+	if b, ok = s.breakers[integrationID]; ok {
+		return b
+	}
+	b = circuitbreaker.New(circuitbreaker.Config{Name: name})
+	s.breakers[integrationID] = b
+	return b
 }
 
 var _ = errors.New

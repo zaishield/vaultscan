@@ -75,7 +75,7 @@ func main() {
 		log.Fatal().Msg("VAULTSCAN_SCANNER_REGION required (e.g. ae|eu|in|us|sg)")
 	}
 
-	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	pool, err := db.OpenForComponent(ctx, cfg.DatabaseURL, "scanner-worker")
 	if err != nil {
 		log.Fatal().Err(err).Msg("open db")
 	}
