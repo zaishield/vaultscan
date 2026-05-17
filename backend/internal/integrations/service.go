@@ -385,7 +385,15 @@ func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, n
 		} else {
 			s.recordDelivery(ctx, integrationID, ev, attempt, "retrying", 0, err.Error())
 		}
-		time.Sleep(delay)
+		// ctx-aware sleep so worker-pool shutdown can interrupt the
+		// retry loop without waiting for the full backoff. Without
+		// this, a 16s exponential backoff at attempt 4 would hold up
+		// the pool's Stop() call for that whole duration.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
 		delay *= 2
 	}
 	s.recordDelivery(ctx, integrationID, ev, attempt, "failed", 0, "max attempts reached")

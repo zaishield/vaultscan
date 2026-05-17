@@ -141,6 +141,24 @@ func RequestID() func(http.Handler) http.Handler {
 	}
 }
 
+// MaxBodySize caps the request body bytes a handler can read. Wraps
+// r.Body in http.MaxBytesReader so any io.ReadAll / json.Decoder
+// that crosses the limit returns an error rather than allocating
+// unbounded memory. 32 MiB is the default — comfortably above the
+// largest legitimate request (multipart asset upload at 5 MiB,
+// authdocs at 10 MiB) and small enough to stop a single OOM attempt.
+func MaxBodySize(limitBytes int64) func(http.Handler) http.Handler {
+	if limitBytes <= 0 {
+		limitBytes = 32 << 20
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, limitBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // SecurityHeaders sets a conservative baseline of HTTP security headers
 // (HS-01).
 func SecurityHeaders() func(http.Handler) http.Handler {

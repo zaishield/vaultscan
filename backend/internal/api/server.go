@@ -85,6 +85,7 @@ func Mount(s *Services) http.Handler {
 	r.Use(chiware.Recoverer)
 	r.Use(middleware.RequestID())
 	r.Use(middleware.SecurityHeaders())
+	r.Use(middleware.MaxBodySize(32 << 20)) // 32 MiB cap on any request body
 	r.Use(observability.HTTPDurationMiddleware)
 
 	cors := cors.New(cors.Options{

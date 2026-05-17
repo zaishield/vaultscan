@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 
 	"github.com/zaishield/vaultscan/backend/internal/agents"
 	"github.com/zaishield/vaultscan/backend/internal/assets"
@@ -54,10 +56,30 @@ func badRequest(w http.ResponseWriter, msg string) {
 		"error": map[string]string{"code": "bad_request", "message": msg}})
 }
 
+// internalErr returns a 500 to the client. The raw error message is
+// NOT echoed back — it can carry SQL table/column names, file paths,
+// stack-trace fragments, or other infra details an attacker can use
+// to refine probes. Operators see the full error via the request
+// logger. Clients see a stable generic message + the request_id so
+// they can quote it in support tickets.
 func internalErr(w http.ResponseWriter, err error) {
+	internalErrLogger.Error().
+		Err(err).
+		Msg("api: internal error returned to client")
 	writeJSON(w, http.StatusInternalServerError, map[string]any{
-		"error": map[string]string{"code": "internal", "message": err.Error()}})
+		"error": map[string]string{
+			"code":    "internal",
+			"message": "an internal error occurred; please retry",
+		},
+	})
 }
+
+// internalErrLogger is intentionally a package-level singleton so we
+// don't have to thread a logger through every handler signature.
+// Operators get the full err via this logger; the response stays
+// information-sterile for the client.
+var internalErrLogger = zerolog.New(os.Stderr).With().
+	Timestamp().Str("component", "api").Logger()
 
 func notFound(w http.ResponseWriter) {
 	writeJSON(w, http.StatusNotFound, map[string]any{
