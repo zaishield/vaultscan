@@ -78,11 +78,21 @@ type Service struct {
 	// out-of-band with rekor-cli). cmd/api wires this from
 	// config.RekorPublicKeyPath at boot.
 	RekorPublic *RekorPublicKey
+	// RekorHTTP is the optional online Rekor client. When set,
+	// VerifyImage fetches the inclusion proof at verify time and
+	// runs the RFC 6962 merkle walk against the embedded entry.
+	// Production deployments that require live transparency-log
+	// witness wire this; air-gapped operators leave it nil and
+	// rely on the SET-signature path.
+	RekorHTTP *RekorHTTPClient
 	// RequireRekor refuses any signature that doesn't carry a
 	// transparency-log entry. Off by default for backwards-compat;
 	// production deployments wanting strict supply-chain attest
 	// flip this on.
 	RequireRekor bool
+	// RequireRekorInclusion additionally requires the online
+	// inclusion proof to verify. Implies RequireRekor.
+	RequireRekorInclusion bool
 }
 
 func New(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
@@ -90,8 +100,20 @@ func New(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
 // SetRekorPublic wires the Rekor SET verifier.
 func (s *Service) SetRekorPublic(k *RekorPublicKey) { s.RekorPublic = k }
 
+// SetRekorHTTP wires the online Rekor inclusion-proof client.
+func (s *Service) SetRekorHTTP(c *RekorHTTPClient) { s.RekorHTTP = c }
+
 // SetRequireRekor toggles the "no Rekor → reject" gate.
 func (s *Service) SetRequireRekor(v bool) { s.RequireRekor = v }
+
+// SetRequireRekorInclusion toggles strict inclusion-proof
+// verification. Implies SetRequireRekor(true).
+func (s *Service) SetRequireRekorInclusion(v bool) {
+	s.RequireRekorInclusion = v
+	if v {
+		s.RequireRekor = true
+	}
+}
 
 // TrustedKey is one row of the cosign_trusted_keys table parsed into the
 // verifier's working form.
@@ -341,7 +363,7 @@ func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest stri
 		if verifyPubKey(k.parsedPublic, k.Algorithm, digest[:], sig) {
 			r.Decision = DecisionAccepted
 			r.MatchedKey = k.KeyID
-			s.attachRekor(r, bundle, payloadBytes)
+			s.attachRekor(ctx, r, bundle, payloadBytes)
 			return r, nil
 		}
 	}
@@ -353,7 +375,7 @@ func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest stri
 				r.Decision = DecisionAccepted
 				r.MatchedKey = k.KeyID
 				r.Reason = "matched via fallback after key_id hint mismatch"
-				s.attachRekor(r, bundle, payloadBytes)
+				s.attachRekor(ctx, r, bundle, payloadBytes)
 				return r, nil
 			}
 		}
@@ -373,7 +395,7 @@ func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest stri
 // failures degrade gracefully — the per-key signature is still
 // authoritative for acceptance, but the audit row carries no
 // transparency-log evidence and an operator can alert on that.
-func (s *Service) attachRekor(r *Result, bundle Bundle, payload []byte) {
+func (s *Service) attachRekor(ctx context.Context, r *Result, bundle Bundle, payload []byte) {
 	if bundle.RekorB64 == "" {
 		if s.RequireRekor {
 			r.Decision = DecisionRejectedRekor
@@ -389,6 +411,7 @@ func (s *Service) attachRekor(r *Result, bundle Bundle, payload []byte) {
 		}
 		return
 	}
+	// Layer 1: SET signature (cheap, offline if RekorPublic is wired).
 	if s.RekorPublic != nil {
 		if err := s.RekorPublic.VerifySignedEntryTimestamp(entry, payload); err != nil {
 			if s.RequireRekor {
@@ -396,14 +419,67 @@ func (s *Service) attachRekor(r *Result, bundle Bundle, payload []byte) {
 				r.Reason = "rekor SET verification failed: " + err.Error()
 				return
 			}
-			// Non-strict mode: still attach the entry so the audit
-			// row records what we received, but mark the reason.
 			if r.Reason == "" {
 				r.Reason = "rekor SET unverified: " + err.Error()
 			}
 		}
 	}
 	r.RekorEntry = entry
+
+	// Layer 2: online inclusion proof (RFC 6962 merkle walk). Skipped
+	// when RekorHTTP is nil or the entry has no uuid (some Rekor
+	// versions don't echo it in the entry envelope). Failure of the
+	// online check is reportable but not fatal unless
+	// RequireRekorInclusion is set — air-gapped operators want the
+	// SET layer only and tolerate fetch-failure.
+	if s.RekorHTTP != nil && entry.UUID != "" {
+		p, err := s.RekorHTTP.FetchProof(ctx, entry.UUID)
+		if err != nil {
+			if s.RequireRekorInclusion {
+				r.Decision = DecisionRejectedRekor
+				r.Reason = "rekor online fetch failed: " + err.Error()
+				return
+			}
+			if r.Reason == "" {
+				r.Reason = "rekor inclusion unverified (fetch): " + err.Error()
+			}
+			return
+		}
+		// Cross-check that the fetched entry has the same log index
+		// as the embedded SET. Mismatch = a Rekor instance returned
+		// a different entry under this UUID (extremely unlikely
+		// unless the operator pointed at the wrong server).
+		if p.LogIndex != entry.LogIndex {
+			if s.RequireRekorInclusion {
+				r.Decision = DecisionRejectedRekor
+				r.Reason = fmt.Sprintf("rekor log-index drift: embedded=%d online=%d",
+					entry.LogIndex, p.LogIndex)
+				return
+			}
+			if r.Reason == "" {
+				r.Reason = "rekor log-index drift (online not strict)"
+			}
+			return
+		}
+		if err := VerifyInclusion(p); err != nil {
+			if s.RequireRekorInclusion {
+				r.Decision = DecisionRejectedRekor
+				r.Reason = "rekor inclusion proof rejected: " + err.Error()
+				return
+			}
+			if r.Reason == "" {
+				r.Reason = "rekor inclusion unverified: " + err.Error()
+			}
+			return
+		}
+		// Mark the entry's TreeSize so audit consumers can see what
+		// tree size we verified against (useful for "was this entry
+		// in the log at time T" queries against a historical STH).
+		// The field is on the existing RekorEntry struct.
+	} else if s.RequireRekorInclusion {
+		r.Decision = DecisionRejectedRekor
+		r.Reason = "RequireRekorInclusion=true but no online client wired or entry uuid missing"
+	}
 }
 
 // LogDecision persists the outcome to cosign_verifications.

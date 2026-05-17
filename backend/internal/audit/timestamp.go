@@ -251,7 +251,8 @@ func parseTSResp(body []byte) (*TimestampToken, error) {
 }
 
 // VerifyChain extracts the certificate chain embedded in a TSA
-// response and verifies it against c.TrustedRoots. Designed to be
+// response, verifies it against c.TrustedRoots, AND verifies the
+// CMS SignerInfo signature against the leaf cert. Designed to be
 // called from Timestamp() immediately after parseTSResp; absent a
 // trust pool the function returns nil so the dev path stays usable.
 //
@@ -260,15 +261,13 @@ func parseTSResp(body []byte) (*TimestampToken, error) {
 //   2. The leaf chains back to a root in c.TrustedRoots, with any
 //      intermediates picked up from the embedded cert bag.
 //   3. The leaf carries id-kp-timeStamping EKU (RFC 3161 §2.3).
-//
-// Known gap (documented for the operator): this does NOT verify
-// the CMS signature itself — that requires walking the SignerInfo
-// signed-attrs structure and computing the message digest, which
-// is hundreds of lines of careful ASN.1. A determined attacker
-// with a stolen timestamping cert chaining to a trusted root could
-// still produce a token that passes this check; mitigated by the
-// scope of who can mint such certs (DigiCert, GlobalSign, Sectigo,
-// etc. — not "anyone with TLS").
+//   4. The CMS SignerInfo signature verifies against the leaf's
+//      public key (RFC 5652 §5.4 canonical SET-OF re-encoding of
+//      signedAttrs + the messageDigest attribute matches the
+//      actual eContent sha256). This closes the MitM gap where a
+//      previous version accepted any well-formed token with a
+//      valid embedded chain — now an attacker also needs the
+//      leaf's private key.
 func (c *TSAClient) VerifyChain(token []byte) error {
 	if c.TrustedRoots == nil {
 		return nil
@@ -294,6 +293,15 @@ func (c *TSAClient) VerifyChain(token []byte) error {
 	})
 	if err != nil {
 		return fmt.Errorf("rfc3161: TSA cert chain invalid: %w", err)
+	}
+	// Cert chain is valid AND the leaf has the timestamping EKU.
+	// Now the new bit: verify the CMS SignedData signature was
+	// actually produced by this leaf's private key. Without this,
+	// an attacker who substituted the SignerInfo with a forged
+	// signature would still pass — the chain just proves the
+	// embedded cert is genuine.
+	if err := VerifyCMSSignature(token, leaf); err != nil {
+		return fmt.Errorf("rfc3161: CMS signature verification: %w", err)
 	}
 	return nil
 }
