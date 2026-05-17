@@ -225,6 +225,7 @@ func Mount(s *Services) http.Handler {
 		// Convert RPS-style config into limit-over-window: configured
 		// RPS × window = total requests allowed in the rolling window.
 		mid := middleware.NewRateLimitMiddleware(limiter, s.Cfg.RateLimitRPS*windowSec, windowSec)
+		mid.SetFailOpen(s.Cfg.RateLimitFailOpen)
 		r.Use(mid.Wrap)
 		// Second layer: per-tenant cap, applied above the per-identity
 		// cap. Stops a single noisy tenant from collectively exhausting
@@ -232,6 +233,7 @@ func Mount(s *Services) http.Handler {
 		tenantMid := middleware.NewTenantRateLimitMiddleware(
 			limiter, s.Cfg.RateLimitRPS*windowSec, windowSec,
 			s.Cfg.PerTenantRateLimitMultiplier)
+		tenantMid.SetFailOpen(s.Cfg.RateLimitFailOpen)
 		r.Use(tenantMid.Wrap)
 		// Idempotency-Key middleware: clients that send the header
 		// get safe-retry semantics. Mounted AFTER auth so we can

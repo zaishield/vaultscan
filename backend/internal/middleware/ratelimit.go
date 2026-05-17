@@ -346,9 +346,10 @@ func randomToken(n int) string {
 // RateLimitMiddleware wraps a Limiter so it can be plugged into chi.
 // limit + window can be set per-deploy; defaults to 100 req / 60 s.
 type RateLimitMiddleware struct {
-	limiter Limiter
-	limit   int
-	window  int
+	limiter  Limiter
+	limit    int
+	window   int
+	failOpen bool
 }
 
 func NewRateLimitMiddleware(l Limiter, limit, windowSec int) *RateLimitMiddleware {
@@ -361,15 +362,32 @@ func NewRateLimitMiddleware(l Limiter, limit, windowSec int) *RateLimitMiddlewar
 	return &RateLimitMiddleware{limiter: l, limit: limit, window: windowSec}
 }
 
+// FailOpen controls behaviour when the limiter backend returns an
+// error (e.g. Redis unreachable). Default is false — fail closed
+// (503). Set to true for environments where availability outweighs
+// the brief window of unprotected traffic during a Redis blip; this
+// was the previous unconditional behaviour and is a known DoS vector
+// (drop Redis to remove rate limits). cmd/api wires this from
+// config.RateLimitFailOpen.
+func (m *RateLimitMiddleware) SetFailOpen(v bool) { m.failOpen = v }
+
 func (m *RateLimitMiddleware) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := identityKey(r)
 		ok, err := m.limiter.Allow(r.Context(), key, m.limit, m.window)
 		if err != nil {
-			// Fail open on backend failure — better to serve traffic
-			// than 503 the whole API when Redis is briefly down. Log
-			// the error from the calling site if you want it surfaced.
-			next.ServeHTTP(w, r)
+			rateLimitHits("backend_error")
+			if m.failOpen {
+				w.Header().Set("X-RateLimit-Backend", "degraded")
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Fail closed: a configured-but-unreachable rate limiter
+			// is a security risk (attacker drops Redis to remove
+			// rate limits). 503 surfaces the issue immediately.
+			w.Header().Set("Retry-After", "5")
+			writeJSONError(w, http.StatusServiceUnavailable, "rate_limiter_unavailable",
+				"rate limiter backend is unavailable; retry shortly")
 			return
 		}
 		// Always emit the limit headers — successful responses too,
@@ -429,7 +447,11 @@ type TenantRateLimitMiddleware struct {
 	limit      int
 	window     int
 	multiplier int
+	failOpen   bool
 }
+
+// SetFailOpen mirrors RateLimitMiddleware.SetFailOpen.
+func (m *TenantRateLimitMiddleware) SetFailOpen(v bool) { m.failOpen = v }
 
 func NewTenantRateLimitMiddleware(l Limiter, perIdentityLimit, windowSec, multiplier int) *TenantRateLimitMiddleware {
 	if perIdentityLimit <= 0 {
@@ -466,7 +488,14 @@ func (m *TenantRateLimitMiddleware) Wrap(next http.Handler) http.Handler {
 		tenantLimit := m.limit * m.multiplier
 		ok, err := m.limiter.Allow(r.Context(), key, tenantLimit, m.window)
 		if err != nil {
-			next.ServeHTTP(w, r)
+			rateLimitHits("tenant_backend_error")
+			if m.failOpen {
+				next.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("Retry-After", "5")
+			writeJSONError(w, http.StatusServiceUnavailable, "rate_limiter_unavailable",
+				"tenant rate limiter backend is unavailable; retry shortly")
 			return
 		}
 		if !ok {

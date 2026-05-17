@@ -101,6 +101,13 @@ type Config struct {
 	// RateLimitWindowSec is the rolling window for the Redis sliding-
 	// window backend. Memory backend always treats limit as RPS.
 	RateLimitWindowSec     int
+	// RateLimitFailOpen toggles fail-open vs fail-closed when the
+	// limiter backend errors (e.g. Redis unreachable). Default is
+	// false (fail closed → 503) which closes a known DoS vector
+	// where an attacker drops Redis to remove rate limits. Set to
+	// true only in environments where availability outweighs the
+	// brief unprotected window during a Redis blip.
+	RateLimitFailOpen      bool
 
 	// Debug / pprof server. Mounted on a separate addr so the
 	// production network policy can lock it down independently of
@@ -175,6 +182,7 @@ func Load() (*Config, error) {
 		RateLimitRedisPassword: os.Getenv("VAULTSCAN_RATE_LIMIT_REDIS_PASSWORD"),
 		RateLimitRedisDB:       parseInt("VAULTSCAN_RATE_LIMIT_REDIS_DB", 0),
 		RateLimitWindowSec:     parseInt("VAULTSCAN_RATE_LIMIT_WINDOW_SEC", 60),
+		RateLimitFailOpen:      parseBool("VAULTSCAN_RATE_LIMIT_FAIL_OPEN", false),
 
 		// Empty addr → debug server disabled. localhost-only is the
 		// safe default: ops port-forwards into the pod when they need
@@ -224,6 +232,24 @@ func parseInt(k string, def int) int {
 			return def
 		}
 		return n
+	}
+	return def
+}
+
+// parseBool reads a boolean env var. Accepts the common forms:
+// "1"/"0", "true"/"false", "on"/"off", "yes"/"no" (case-insensitive).
+// Anything else falls back to def — a strict parser would be nice
+// but the API surface tolerates the loose form historically.
+func parseBool(k string, def bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(k)))
+	if v == "" {
+		return def
+	}
+	switch v {
+	case "1", "true", "on", "yes", "y", "t":
+		return true
+	case "0", "false", "off", "no", "n", "f":
+		return false
 	}
 	return def
 }

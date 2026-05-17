@@ -30,8 +30,14 @@ x-api-env: &api-env
   VAULTSCAN_API_ADDR: ":8080"
   VAULTSCAN_AGENT_GATEWAY_ADDR: ":8443"
   VAULTSCAN_CORS_ALLOWED_ORIGINS: "http://localhost:${VAULTSCAN_PORTAL_PORT:-5173},http://localhost:3000"
-  VAULTSCAN_JWT_SECRET: dev-only-shared-secret-change-me
-  VAULTSCAN_EVIDENCE_MASTER_KEY: ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA=
+  # IMPORTANT: secrets are NOT committed here. Both values must be
+  # provided via .env at the repository root (copy .env.example and
+  # generate fresh values). compose will refuse to start if either
+  # is unset rather than silently fall back to a known-shared dev
+  # secret. The previous inline defaults were a Trojan horse — copy-
+  # paste of compose.yml into a production setup leaked dev credentials.
+  VAULTSCAN_JWT_SECRET: ${VAULTSCAN_JWT_SECRET:?set in .env — generate with: openssl rand -base64 48}
+  VAULTSCAN_EVIDENCE_MASTER_KEY: ${VAULTSCAN_EVIDENCE_MASTER_KEY:?set in .env — generate with: openssl rand -base64 32}
 
 services:
   postgres:

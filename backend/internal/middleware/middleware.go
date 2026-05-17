@@ -81,7 +81,21 @@ func RequireMFA() func(http.Handler) http.Handler {
 }
 
 // TenantScope ensures the request's tenant_id matches the identity's tenant
-// (Blueprint §9.3). ZAISHIELD super admin bypasses this check.
+// (Blueprint §9.3).
+//
+// Behaviour:
+//   - ZAISHIELD super admin → pass through (operator path; may
+//     legitimately query across tenants).
+//   - Header supplied:        verify it matches identity.TenantID.
+//     On mismatch the request is refused with 403.
+//   - Header NOT supplied:    if the identity has a TenantID, the
+//     header is auto-populated from identity (the previous version
+//     of this middleware silently fell through here, which left
+//     downstream filtering as the sole defence — a service-layer
+//     bug could leak cross-tenant data). If the identity has no
+//     TenantID (platform / partner role), the request passes
+//     through with no header — those callers run unbound and must
+//     filter explicitly.
 func TenantScope(headerName string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +106,14 @@ func TenantScope(headerName string) func(http.Handler) http.Handler {
 			}
 			requested := r.Header.Get(headerName)
 			if requested == "" {
+				// Auto-bind to the identity's tenant if one exists,
+				// so RLS / WHERE filtering always sees a concrete
+				// tenant_id. Platform/partner roles (no TenantID)
+				// still pass through unbound — those paths are
+				// expected to filter by partner_id / platform_id.
+				if id != nil && id.TenantID != nil {
+					r.Header.Set(headerName, id.TenantID.String())
+				}
 				next.ServeHTTP(w, r)
 				return
 			}

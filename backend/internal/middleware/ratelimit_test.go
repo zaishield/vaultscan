@@ -218,10 +218,11 @@ func TestNewRedisLimiter_RejectsEmptyAddr(t *testing.T) {
 	}
 }
 
-func TestRateLimitMiddleware_FailOpenOnBackendError(t *testing.T) {
+// Default = fail closed. When the backend errors, the middleware
+// returns 503 + Retry-After. This closes the DoS vector where an
+// attacker drops Redis to remove rate limits.
+func TestRateLimitMiddleware_FailClosedOnBackendError(t *testing.T) {
 	t.Parallel()
-	// Limiter that always errors → middleware should pass the request
-	// through (don't 503 the API when Redis is down).
 	mid := NewRateLimitMiddleware(brokenLimiter{}, 1, 1)
 	called := false
 	srv := httptest.NewServer(mid.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -229,11 +230,37 @@ func TestRateLimitMiddleware_FailOpenOnBackendError(t *testing.T) {
 	})))
 	defer srv.Close()
 	resp, _ := http.Get(srv.URL)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 (fail closed), got %d", resp.StatusCode)
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Error("expected Retry-After header on 503")
+	}
+	if called {
+		t.Error("handler should NOT be called when limiter errors and fail-open is off")
+	}
+}
+
+// Opt-in fail open. Some deploys prefer availability over the
+// brief unprotected window during a Redis blip.
+func TestRateLimitMiddleware_FailOpenWhenEnabled(t *testing.T) {
+	t.Parallel()
+	mid := NewRateLimitMiddleware(brokenLimiter{}, 1, 1)
+	mid.SetFailOpen(true)
+	called := false
+	srv := httptest.NewServer(mid.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})))
+	defer srv.Close()
+	resp, _ := http.Get(srv.URL)
 	if resp.StatusCode != 200 {
-		t.Errorf("expected 200, got %d", resp.StatusCode)
+		t.Errorf("expected 200 (fail open), got %d", resp.StatusCode)
 	}
 	if !called {
-		t.Error("handler not called when limiter errors")
+		t.Error("handler not called when fail-open is on")
+	}
+	if resp.Header.Get("X-RateLimit-Backend") != "degraded" {
+		t.Error("expected X-RateLimit-Backend: degraded header on fail-open")
 	}
 }
 
