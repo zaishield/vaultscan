@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -257,7 +259,17 @@ func (c *CVEEnricher) LookupCVE(ctx context.Context, cve string) (*EnrichmentRes
 		  FROM cve_metadata WHERE cve_id = $1`, cve).
 		Scan(&score, &epss, &pct, &r.KEV, &r.KEVRansomware, &due, &r.Summary)
 	if err != nil {
-		return &EnrichmentResult{}, nil // unknown == no metadata
+		// Distinguish "row not found" (legitimate unknown) from
+		// "DB error" (transient outage). Previously both returned
+		// (&EnrichmentResult{}, nil), so a brief DB blip permanently
+		// under-enriched a batch of findings — no retry signal and
+		// no operator visibility. Now we propagate the error on
+		// anything except pgx.ErrNoRows; callers can choose to
+		// retry or fall back, and observability picks up the spike.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &EnrichmentResult{}, nil
+		}
+		return &EnrichmentResult{}, fmt.Errorf("enrichment: lookup %s: %w", cve, err)
 	}
 	if score != nil {
 		r.CVSS = *score

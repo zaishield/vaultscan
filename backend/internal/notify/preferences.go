@@ -178,11 +178,20 @@ func severityRank(s string) int {
 }
 
 // quietHoursSpec is the JSON shape of preferences.quiet_hours.
+//
+// IMPORTANT: StartHour/EndHour describe the QUIET window — the
+// hours during which the user does NOT want pushy notifications,
+// only digests. The historical implementation inverted this and
+// treated the same fields as "business hours" (quiet = outside),
+// which made a 9-17 spec quiet OVERNIGHT — the opposite of any
+// reasonable user intent. Fixed 2026-05; if downstream UIs were
+// built against the inverted semantics, swap the values they
+// submit.
 type quietHoursSpec struct {
 	Timezone    string `json:"timezone"`
 	StartHour   int    `json:"start_hour"`
 	EndHour     int    `json:"end_hour"`
-	WeekdayOnly bool   `json:"weekday_only"`
+	WeekdayOnly bool   `json:"weekday_only"` // quiet only on weekdays
 }
 
 // inQuietHours reports whether `when`, in the spec's timezone, falls
@@ -201,16 +210,22 @@ func inQuietHours(specJSON []byte, when time.Time) bool {
 	}
 	t := when.In(loc)
 	if spec.WeekdayOnly && (t.Weekday() == time.Saturday || t.Weekday() == time.Sunday) {
-		// Outside business days — entire day is quiet.
-		return true
+		// WeekdayOnly = "quiet hours apply only on weekdays". When
+		// the current day is a weekend, no quiet window applies →
+		// return false (not in quiet hours).
+		return false
 	}
 	hour := t.Hour()
 	if spec.StartHour <= spec.EndHour {
-		// Same-day window (e.g. 9-17).
-		// Quiet hours are OUTSIDE business hours.
-		return hour < spec.StartHour || hour >= spec.EndHour
+		// Same-day quiet window (e.g. start=22, end=23 → quiet only
+		// for the 22:00 hour). The previous implementation returned
+		// the inverse — "outside business hours" — which made a
+		// 9-17 spec quiet OVERNIGHT, the opposite of what users set
+		// it for. Quiet = [start, end).
+		return hour >= spec.StartHour && hour < spec.EndHour
 	}
-	// Wrap-midnight window (e.g. 22-6).
+	// Wrap-midnight quiet window (e.g. start=22, end=6 → quiet
+	// from 22:00 through 05:59).
 	return hour >= spec.StartHour || hour < spec.EndHour
 }
 

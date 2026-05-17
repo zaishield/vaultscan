@@ -32,12 +32,25 @@ func NewFindingsIndexer(c *Client) *FindingsIndexer { return &FindingsIndexer{cl
 // HandleEvent is bus.Subscribe-shaped. The payload of a
 // FindingCreated event carries finding_id + tenant_id + the searchable
 // fields (title, severity, scanner, affected_endpoint).
+//
+// Tenant guard: an event WITHOUT TenantID is refused outright. A
+// spoofed event with no tenant would index a finding under the
+// platform-wide bucket where any tenant-scoped query could match
+// it. The event bus durability layer makes the publisher
+// responsible for setting TenantID; the indexer treats its absence
+// as a bug worth refusing rather than fixing up.
 func (idx *FindingsIndexer) HandleEvent(ctx context.Context, ev eventbus.Event) {
 	if ev.Type != eventbus.FindingNormalized {
 		return
 	}
 	id, _ := ev.Payload["finding_id"].(string)
 	if id == "" {
+		return
+	}
+	if ev.TenantID == nil {
+		// Don't index untyped/unscoped findings — refusing here is
+		// safer than indexing with tenant_id=null which would
+		// short-circuit downstream tenant filters.
 		return
 	}
 	doc := map[string]any{

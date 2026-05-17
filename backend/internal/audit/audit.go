@@ -245,6 +245,82 @@ func ipOrNull(ip net.IP) any {
 	return ip.String()
 }
 
+// VerifyTail revalidates only the last `tail` audit rows (default
+// 256 when tail <= 0). Designed for the /readyz health check and
+// per-request sampling — Verify() walks the whole chain (O(n) and
+// can take minutes on a long-lived deployment), but VerifyTail
+// gives an immediate "is the chain healthy right now?" answer with
+// bounded cost.
+//
+// Returns the first inconsistent row id within the tail, or 0 if
+// the tail is intact. Does NOT detect a tamper from before the
+// tail — the hourly VerifyDeep cron is still the source of truth
+// for full-history attestation.
+func (s *Service) VerifyTail(ctx context.Context, tail int) (int64, error) {
+	if tail <= 0 {
+		tail = 256
+	}
+	// Pull the prev hash that anchors this tail so the rolling hash
+	// state starts from the right place.
+	var firstID int64
+	if err := s.pool.QueryRow(ctx, `
+		SELECT id FROM audit_logs ORDER BY id DESC OFFSET $1 - 1 LIMIT 1`,
+		tail).Scan(&firstID); err != nil {
+		// Fewer than `tail` rows in the table — full Verify is cheap.
+		return s.Verify(ctx)
+	}
+	var anchor []byte
+	if err := s.pool.QueryRow(ctx, `
+		SELECT chain_prev FROM audit_logs WHERE id = $1`, firstID).Scan(&anchor); err != nil {
+		return 0, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, event, actor_type, actor_id, host(ip), user_agent,
+		       platform_id, partner_id, tenant_id,
+		       target_type, target_id, payload, chain_prev, chain_hash
+		  FROM audit_logs WHERE id >= $1 ORDER BY id ASC`, firstID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	prev := anchor
+	for rows.Next() {
+		var (
+			id              int64
+			event, actor    string
+			actorID         *uuid.UUID
+			ipStr           *string
+			userAgent       *string
+			platID          uuid.UUID
+			partID, tenID   *uuid.UUID
+			tType, tID      *string
+			payload         string
+			chainPrev, hash []byte
+		)
+		if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
+			&platID, &partID, &tenID,
+			&tType, &tID, &payload, &chainPrev, &hash); err != nil {
+			return 0, err
+		}
+		h := sha256.New()
+		if prev != nil {
+			h.Write(prev)
+		}
+		fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
+			event, actor, canonicalActorID(actorID), derefStr(ipStr),
+			canonicalString(derefStr(userAgent)),
+			platID, partID, tenID,
+			derefStr(tType), derefStr(tID))
+		h.Write([]byte(payload))
+		want := h.Sum(nil)
+		if !equal(want, hash) {
+			return id, nil
+		}
+		prev = hash
+	}
+	return 0, nil
+}
+
 // canonicalIP returns the form that Verify will read back. A nil net.IP is
 // stored as SQL NULL, which Verify deserialises as the empty string.
 func canonicalIP(ip net.IP) string {

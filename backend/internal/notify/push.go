@@ -310,7 +310,16 @@ func (f *FCMTransport) token(ctx context.Context) (string, error) {
 	jwt := signing + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	form := strings.NewReader("grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=" + jwt)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+	// Cap the OAuth exchange at 5s. The previous implementation
+	// inherited only the caller's context, so a hung Google OAuth
+	// endpoint would block every queued FCM.Send for the caller's
+	// full ctx budget (potentially 30s+). 5s is generous against
+	// the historical p95 (~200ms) and short enough that a
+	// degraded oauth2.googleapis.com doesn't snowball into a
+	// notify-worker deadlock.
+	exchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(exchCtx, http.MethodPost,
 		"https://oauth2.googleapis.com/token", form)
 	if err != nil {
 		return "", err

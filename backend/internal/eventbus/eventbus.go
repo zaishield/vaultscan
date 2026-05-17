@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -131,11 +132,16 @@ func (b *Bus) Publish(ctx context.Context, ev Event) error {
 	return nil
 }
 
-// safeHandle wraps a subscriber call in a panic recovery so one
-// buggy adapter can't take down the process. The recovered panic
-// is logged via the package logger; the message stays in flight
-// (we don't re-deliver to that single subscriber, but every other
-// subscriber continues to receive the event).
+// safeHandle wraps a subscriber call in:
+//   - a panic recovery so one buggy adapter can't take down the
+//     process. Recovered panic is logged with event metadata; we
+//     don't re-deliver to that subscriber, but every other handler
+//     continues to receive the event.
+//   - a per-handler timeout (handlerTimeout, default 30s) so a
+//     slow / stuck subscriber can't accumulate goroutines indefinitely.
+//     The handler's ctx is derived from the publisher's ctx with the
+//     timeout layered on top — if the publisher ctx is already
+//     short, that wins.
 func safeHandle(h Handler, ctx context.Context, ev Event) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -146,5 +152,14 @@ func safeHandle(h Handler, ctx context.Context, ev Event) {
 				Msg("eventbus: subscriber panicked; recovered")
 		}
 	}()
-	h(ctx, ev)
+	hctx, cancel := context.WithTimeout(ctx, handlerTimeout)
+	defer cancel()
+	h(hctx, ev)
 }
+
+// handlerTimeout caps how long a single subscriber may run. 30s is
+// generous against the historical p95 for in-process handlers
+// (microseconds for log fan-out, ~tens of milliseconds for external
+// integrations); a handler exceeding this is almost certainly stuck
+// and we'd rather lose its result than leak a goroutine forever.
+var handlerTimeout = 30 * time.Second

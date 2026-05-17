@@ -122,6 +122,13 @@ func Mount(s *Services) http.Handler {
 		healthReg = health.NewRegistry()
 	}
 	healthReg.Register("database", health.PostgresCheck(s.Pool), false)
+	if s.Audit != nil {
+		// Audit chain tail check: cheap "is the most recent chain
+		// state healthy?" probe for /readyz. Doesn't replace the
+		// hourly VerifyDeep cron which walks the full history.
+		healthReg.Register("audit_chain",
+			health.AuditChainCheck(s.Audit.VerifyTail, 256), false)
+	}
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		// /healthz answers "is the process alive?" — does NOT check

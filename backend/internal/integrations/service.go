@@ -403,6 +403,14 @@ func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, n
 		case <-time.After(jittered):
 		}
 		delay *= 2
+		// Cap the backoff so attempt 6+ doesn't sit on a 60-minute
+		// timer holding open connection state. The integration is
+		// allowed at most ~5 minutes between attempts; if the
+		// upstream is still failing past that, DLQ is the better
+		// destination than an indefinite back-off.
+		if delay > 5*time.Minute {
+			delay = 5 * time.Minute
+		}
 	}
 	s.recordDelivery(ctx, integrationID, ev, attempt, "failed", 0, "max attempts reached")
 	observability.IntegrationDeliveryFailures.WithLabelValues(itype).Inc()

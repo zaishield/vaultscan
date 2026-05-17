@@ -5,6 +5,7 @@ package health
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -46,6 +47,32 @@ func TCPCheck(addr string) CheckFunc {
 			return StatusDown, err.Error()
 		}
 		_ = conn.Close()
+		return StatusOK, ""
+	}
+}
+
+// AuditChainCheck samples the most recent `tail` audit rows via
+// audit.Service.VerifyTail and reports degraded if the chain hash
+// state has diverged. This is the immediate "is the audit chain
+// healthy right now?" answer that /readyz needs. Full-history
+// attestation is still the hourly VerifyDeep cron job.
+//
+// Designed as a constructor over a function value rather than a
+// concrete audit.Service type so the health package does not have
+// to import audit (which transitively imports observability and
+// risks an import cycle). cmd/api binds the function at startup.
+func AuditChainCheck(verifyTail func(ctx context.Context, tail int) (int64, error), tail int) CheckFunc {
+	return func(ctx context.Context) (Status, string) {
+		if verifyTail == nil {
+			return StatusDown, "audit verifier not wired"
+		}
+		badID, err := verifyTail(ctx, tail)
+		if err != nil {
+			return StatusDown, "verify error: " + err.Error()
+		}
+		if badID != 0 {
+			return StatusDown, fmt.Sprintf("chain break at audit_logs.id=%d", badID)
+		}
 		return StatusOK, ""
 	}
 }
