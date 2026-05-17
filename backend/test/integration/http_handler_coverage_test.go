@@ -263,10 +263,8 @@ func TestHandlers_MobileFamily(t *testing.T) {
 
 	t.Run("enroll_device_succeeds", func(t *testing.T) {
 		body := map[string]any{
-			"tenant_id":    tenantID.String(),
-			"device_label": "test-iphone-15",
-			"platform":     "ios",
-			"push_token":   "ExponentPushToken[testtoken123]",
+			"platform":   "ios",
+			"push_token": "ExponentPushToken[testtoken123]",
 		}
 		b, _ := json.Marshal(body)
 		req, _ := http.NewRequest("POST", srv.URL+"/api/v1/mobile/devices",

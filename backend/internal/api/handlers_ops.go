@@ -963,6 +963,13 @@ func dashboardStreamSSE(s *Services) http.HandlerFunc {
 			internalErr(w, fmt.Errorf("streaming unsupported"))
 			return
 		}
+		// Disable the http.Server's WriteTimeout (60s in main.go) for
+		// this connection — SSE is a long-lived stream and otherwise
+		// every client would silently disconnect after a minute. The
+		// keepalive ticker below + the request context still bound
+		// the connection lifetime.
+		rc := http.NewResponseController(w)
+		_ = rc.SetWriteDeadline(time.Time{})
 
 		ch, closer, err := s.LiveStream.Subscribe(r.Context(), s.Pool, id.UserID, tenantID, channel)
 		if err != nil {

@@ -151,7 +151,6 @@ func TestHTTP_AcceptanceFlow_Full(t *testing.T) {
 		"partner_id":    directID,
 		"engagement_id": eng,
 		"profile_code":  "external_standard_va",
-		"plane":         "external",
 		"region":        "ae",
 		"targets":       []string{"http-accept.example"},
 	}
@@ -165,7 +164,6 @@ func TestHTTP_AcceptanceFlow_Full(t *testing.T) {
 		"partner_id":    directID,
 		"engagement_id": eng,
 		"profile_code":  "external_standard_va",
-		"plane":         "external",
 		"region":        "ae",
 		"targets":       []string{"elsewhere.example"},
 	}

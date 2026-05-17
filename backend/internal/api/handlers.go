@@ -97,7 +97,13 @@ func decode(r *http.Request, v any) error {
 		return errors.New("missing body")
 	}
 	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(v)
+	dec := json.NewDecoder(r.Body)
+	// Strict mode: an unknown field is almost always a client typo or
+	// a stale frontend talking to a new backend. Silently ignoring it
+	// hides real bugs (the field that "wasn't being applied"). Reject
+	// so the caller sees the problem immediately.
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
 }
 
 func uuidParam(r *http.Request, name string) (uuid.UUID, error) {
@@ -855,31 +861,34 @@ func emergencyStop(s *Services) http.HandlerFunc {
 			JobID    string `json:"job_id"`
 			TenantID string `json:"tenant_id"`
 			AgentID  string `json:"agent_id"`
+			Reason   string `json:"reason"`
 		}
 		if err := decode(r, &req); err != nil {
 			badRequest(w, err.Error())
 			return
 		}
 		identity, _ := auth.FromContext(r.Context())
-		var scope scanorch.EmergencyScope
-		if req.JobID != "" {
-			id, _ := uuid.Parse(req.JobID)
-			scope.JobID = &id
-		}
-		// Tenant-scoped emergency stop must be authorized — otherwise a
-		// tenant_admin could halt every other tenant's jobs by passing
-		// their UUID. AuthorizeOptionalTenant lets platform admins pass
-		// nil (=halt everything), tenant admins to their own only.
+		// Tenant-scoped emergency stop must be authorized BEFORE we
+		// look at any other input — otherwise a tenant_admin could
+		// halt every other tenant's jobs by passing their UUID.
+		// AuthorizeOptionalTenant lets platform admins pass nil
+		// (= halt everything), tenant admins their own only.
 		tid, terr := auth.AuthorizeOptionalTenant(identity, req.TenantID)
 		if terr != nil {
 			forbidden(w, terr.Error())
 			return
 		}
+		var scope scanorch.EmergencyScope
 		scope.TenantID = tid
+		if req.JobID != "" {
+			id, _ := uuid.Parse(req.JobID)
+			scope.JobID = &id
+		}
 		if req.AgentID != "" {
 			id, _ := uuid.Parse(req.AgentID)
 			scope.AgentID = &id
 		}
+		scope.Reason = strings.TrimSpace(req.Reason)
 		count, err := s.ScanOrch.EmergencyStop(r.Context(), &identity.UserID, scope)
 		if err != nil {
 			internalErr(w, err)

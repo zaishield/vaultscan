@@ -311,7 +311,11 @@ func (o *Orchestrator) EmergencyStop(ctx context.Context, actor *uuid.UUID, scop
 	var args []any
 	q := `UPDATE scan_jobs SET status='stopped', cancellation_reason=$1, updated_at=now()
 	       WHERE status IN ('pending','approved','dispatched','running')`
-	args = append(args, "emergency_stop")
+	reason := scope.Reason
+	if reason == "" {
+		reason = "emergency_stop"
+	}
+	args = append(args, reason)
 	if scope.JobID != nil {
 		q += fmt.Sprintf(" AND id=$%d", len(args)+1)
 		args = append(args, *scope.JobID)
@@ -359,6 +363,10 @@ type EmergencyScope struct {
 	JobID    *uuid.UUID
 	TenantID *uuid.UUID
 	AgentID  *uuid.UUID
+	// Reason is operator-supplied free-text explaining why the stop
+	// fired. Stored on scan_jobs.cancellation_reason for the
+	// post-incident audit. Defaults to "emergency_stop" when empty.
+	Reason string
 }
 
 func (o *Orchestrator) Get(ctx context.Context, id uuid.UUID) (*models.ScanJob, error) {

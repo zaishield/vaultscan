@@ -199,9 +199,9 @@ func TestContract_SmokeAllSpecPaths(t *testing.T) {
 		{"GET", "/api/v1/scanner/regions/ae/quota", "", 200},
 		{"GET", "/metrics", "", 200},
 		// Mutations
+		// platform_id is taken from the auth context, not the body.
 		{"POST", "/api/v1/tenants",
 			`{"name":"contract-create","slug":"contract-create",
-              "platform_id":"00000000-0000-0000-0000-0000000000a1",
               "partner_id":"00000000-0000-0000-0000-0000000000b1"}`, 201},
 		{"POST", "/api/v1/auth/jwt-keys/rotate", ``, 200},
 	}
