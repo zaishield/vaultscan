@@ -1,6 +1,7 @@
 package scanorch
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -64,14 +65,22 @@ func TestFailoverRegions_TrimsWhitespace(t *testing.T) {
 
 func TestIsNoNodeErr(t *testing.T) {
 	t.Parallel()
-	if !isNoNodeErr(errFmt("scanorch: no scanner node available for region \"x\"")) {
-		t.Error("should detect")
+	if !isNoNodeErr(fmt.Errorf("%w for region %q", ErrNoScannerNode, "x")) {
+		t.Error("should detect wrapped sentinel")
+	}
+	if !isNoNodeErr(ErrNoScannerNode) {
+		t.Error("bare sentinel should match")
 	}
 	if isNoNodeErr(nil) {
 		t.Error("nil should be false")
 	}
 	if isNoNodeErr(errFmt("db connection refused")) {
 		t.Error("unrelated error should be false")
+	}
+	// String-only error WITHOUT the sentinel must NOT match — this
+	// is precisely why we moved off strings.Contains.
+	if isNoNodeErr(errFmt("scanorch: no scanner node available for region \"x\"")) {
+		t.Error("untyped error must not match the sentinel check")
 	}
 }
 

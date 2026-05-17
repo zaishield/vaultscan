@@ -9,11 +9,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 )
@@ -136,8 +138,14 @@ func (s *Service) recordInner(ctx context.Context, e Entry) error {
 
 	var prev []byte
 	if err := tx.QueryRow(ctx,
-		`SELECT chain_hash FROM audit_logs ORDER BY id DESC LIMIT 1`).Scan(&prev); err != nil && err.Error() != "no rows in result set" {
-		// fresh table: prev stays nil
+		`SELECT chain_hash FROM audit_logs ORDER BY id DESC LIMIT 1`).Scan(&prev); err != nil {
+		// Fresh table: pgx.ErrNoRows is the only acceptable miss.
+		// Anything else is a real DB error (column gone, conn drop,
+		// permissions) — must abort, not silently restart the chain
+		// from nil.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("audit: read prev chain hash: %w", err)
+		}
 	}
 
 	// chain_hash = sha256(prev_hash || canonical_metadata || payload_bytes).

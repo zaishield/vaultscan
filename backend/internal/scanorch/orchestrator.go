@@ -558,9 +558,16 @@ func (o *Orchestrator) pickScannerNode(ctx context.Context, region string) (uuid
 			return id, nil
 		}
 	}
-	return uuid.Nil, fmt.Errorf("scanorch: no scanner node available; tried regions=%v",
-		tried)
+	return uuid.Nil, fmt.Errorf("%w; tried regions=%v", ErrNoScannerNode, tried)
 }
+
+// ErrNoScannerNode is the sentinel returned by pickScannerNode when
+// no node is available in the requested region or any failover
+// region. Callers use errors.Is(err, ErrNoScannerNode) to decide
+// whether to walk the failover ladder vs surface a hard infra
+// error — replaces the prior strings.Contains check that broke
+// silently when the message text was reworded.
+var ErrNoScannerNode = errors.New("scanorch: no scanner node available")
 
 // pickInRegion is the original single-region picker, extracted so
 // pickScannerNode can call it once per ladder entry.
@@ -587,7 +594,7 @@ func (o *Orchestrator) pickInRegion(ctx context.Context, region string) (uuid.UU
 	}
 	q += " ORDER BY random() LIMIT 1"
 	if err := o.pool.QueryRow(ctx, q, args...).Scan(&id); err != nil {
-		return uuid.Nil, fmt.Errorf("scanorch: no scanner node available for region %q", region)
+		return uuid.Nil, fmt.Errorf("%w for region %q", ErrNoScannerNode, region)
 	}
 	return id, nil
 }
@@ -607,7 +614,7 @@ func (o *Orchestrator) recordFailover(ctx context.Context, from, to string) {
 // case (used by pickScannerNode to decide whether to walk the
 // failover ladder vs surface a hard infra error).
 func isNoNodeErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no scanner node available")
+	return errors.Is(err, ErrNoScannerNode)
 }
 
 func summarizeTargets(t []string) string {
