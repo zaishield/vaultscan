@@ -343,7 +343,13 @@ func (ls *LiveStream) Subscribe(ctx context.Context, pool *pgxpool.Pool, userID,
 			delete(ls.subs, id)
 			ls.mu.Unlock()
 			close(s.C)
-			_, _ = pool.Exec(context.Background(),
+			// Cleanup runs after the request ctx is dead. Use a
+			// fresh ctx with a bound so a DB stall can't keep
+			// this goroutine alive past the brief teardown
+			// window.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = pool.Exec(ctx,
 				`UPDATE dashboard_sse_subscriptions SET closed_at=now() WHERE id=$1`, id)
 		})
 	}

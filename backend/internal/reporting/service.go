@@ -145,7 +145,7 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*Report, erro
 	}
 
 	for _, format := range in.Formats {
-		body, ct, err := s.render(format, in.ReportType, dataset)
+		body, ct, err := s.render(ctx, format, in.ReportType, dataset)
 		if err != nil {
 			return nil, fmt.Errorf("reporting: render %s: %w", format, err)
 		}
@@ -360,7 +360,7 @@ func (s *Service) gatherDataset(ctx context.Context, in GenerateInput) (*Dataset
 	return d, nil
 }
 
-func (s *Service) render(format, reportType string, d *Dataset) ([]byte, string, error) {
+func (s *Service) render(ctx context.Context, format, reportType string, d *Dataset) ([]byte, string, error) {
 	switch format {
 	case FormatJSON:
 		buf, err := json.MarshalIndent(d, "", "  ")
@@ -378,7 +378,11 @@ func (s *Service) render(format, reportType string, d *Dataset) ([]byte, string,
 			return nil, "", err
 		}
 		if s.pdfRenderer != nil {
-			pdf, err := s.pdfRenderer.Render(context.Background(), html)
+			// Forward the request ctx so a client disconnect /
+			// request timeout cancels the renderer rather than
+			// leaving a chromium / wkhtmltopdf subprocess running
+			// to completion in the background.
+			pdf, err := s.pdfRenderer.Render(ctx, html)
 			if err != nil {
 				return nil, "", err
 			}

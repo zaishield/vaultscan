@@ -63,7 +63,13 @@ func (i *Indexer) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			i.flush(context.Background())
+			// Final flush gets a fresh ctx (the work ctx is dead)
+			// but a 5s bound so a stuck OpenSearch can't keep
+			// the process alive past pod-grace.
+			finalCtx, cancel := context.WithTimeout(
+				context.Background(), 5*time.Second)
+			i.flush(finalCtx)
+			cancel()
 			return
 		case <-t.C:
 			i.flush(ctx)
