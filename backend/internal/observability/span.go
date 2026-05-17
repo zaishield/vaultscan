@@ -49,6 +49,9 @@ type EndFunc func(err error)
 // "evidence.RecordWithDEK"). Sticking to this lets ops grep traces
 // by Go-package + method.
 func Span(ctx context.Context, name string, kvs ...string) (context.Context, EndFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ctx, sp := tracer().Start(ctx, name)
 	if len(kvs) > 0 {
 		attrs := make([]attribute.KeyValue, 0, len(kvs)/2)
@@ -69,6 +72,9 @@ func Span(ctx context.Context, name string, kvs ...string) (context.Context, End
 // SpanInt is a convenience wrapper for spans with an integer attribute
 // (counts, durations, sizes). Avoids the caller doing strconv.Itoa.
 func SpanInt(ctx context.Context, name string, key string, val int) (context.Context, EndFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ctx, sp := tracer().Start(ctx, name, trace.WithAttributes(attribute.Int(key, val)))
 	return ctx, func(err error) {
 		if err != nil {

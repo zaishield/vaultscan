@@ -31,7 +31,7 @@ func FuzzParseSCIMFilter(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, in string) {
-		field, value, err := parseSCIMFilter(in)
+		field, op, value, err := parseSCIMFilter(in)
 		if err != nil {
 			return
 		}
@@ -42,6 +42,7 @@ func FuzzParseSCIMFilter(f *testing.F) {
 		if field == "" {
 			t.Fatalf("parseSCIMFilter(%q) returned empty field with nil err", in)
 		}
+		_ = op
 		_ = value
 	})
 }

@@ -16,6 +16,9 @@ type Config struct {
 	OrchestratorAddr   string
 
 	DatabaseURL        string
+	// DatabaseReplicaURL is the read-only Postgres replica. Empty =
+	// no replica configured; all reads go to the primary.
+	DatabaseReplicaURL string
 	OpenSearchURL      string
 	EventBusURL        string
 	ObjectStoreURL     string
@@ -164,6 +167,7 @@ func Load() (*Config, error) {
 		OrchestratorAddr:  getenv("VAULTSCAN_ORCH_ADDR", ":8090"),
 		DatabaseURL:       getenv("VAULTSCAN_DATABASE_URL",
 			"postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable"),
+		DatabaseReplicaURL: getenv("VAULTSCAN_DATABASE_REPLICA_URL", ""),
 		OpenSearchURL:     getenv("VAULTSCAN_OPENSEARCH_URL", "http://localhost:9200"),
 		EventBusURL:       getenv("VAULTSCAN_EVENTBUS_URL", "nats://localhost:4222"),
 		ObjectStoreURL:    getenv("VAULTSCAN_OBJECT_STORE_URL", "http://localhost:9000"),

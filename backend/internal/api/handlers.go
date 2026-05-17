@@ -2860,6 +2860,45 @@ func revokeUserTokens(s *Services) http.HandlerFunc {
 	}
 }
 
+// eraseUser fulfils a GDPR Article 17 right-to-erasure request.
+// Pseudonymises the user's PII, revokes all sessions, and audits.
+// Only invokable by an operator (gated by manage_users); end-users
+// who want to be forgotten submit a ticket and the operator runs this.
+func eraseUser(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := uuidParam(r, "user_id")
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+		var req struct {
+			Reason string `json:"reason"`
+		}
+		_ = decode(r, &req)
+		if req.Reason == "" {
+			badRequest(w, "reason required (regulator request, consent withdrawal, etc.)")
+			return
+		}
+		identity, _ := auth.FromContext(r.Context())
+		// Forbid self-erasure via this endpoint — preserves the
+		// audit-actor invariant (the row recording the erasure
+		// would itself reference an erased user). Operators run
+		// this on behalf of the user.
+		if identity != nil && identity.UserID == id {
+			badRequest(w, "erase cannot be self-served via this endpoint")
+			return
+		}
+		if err := s.Users.Erase(r.Context(), id, &identity.UserID, req.Reason); err != nil {
+			internalErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status": "erased",
+			"note":   "PII pseudonymised; audit history retained under accountability obligation",
+		})
+	}
+}
+
 func unlockUser(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuidParam(r, "user_id")

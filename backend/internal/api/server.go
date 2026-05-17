@@ -304,6 +304,11 @@ func Mount(s *Services) http.Handler {
 			// degrades to shared isolation rather than going dark.
 			r.With(middleware.RequirePermission("create_tenant")).
 				Post("/{tenant_id}/promote-isolation", promoteTenantIsolation(s))
+			// Pin the tenant's data-residency commitment. Empty region
+			// clears the pin. Allowed regions match the whitelist in
+			// the handler.
+			r.With(middleware.RequirePermission("create_tenant")).
+				Put("/{tenant_id}/residency", setTenantResidency(s))
 			// Tenant-level branding overrides (Blueprint §8.5).
 			// Read is open to any authenticated user of the tenant
 			// (portal chrome needs it on every page); mutate
@@ -350,6 +355,10 @@ func Mount(s *Services) http.Handler {
 			Post("/api/v1/users/{user_id}/revoke-tokens", revokeUserTokens(s))
 		r.With(middleware.RequirePermission("create_tenant")).
 			Post("/api/v1/users/{user_id}/unlock", unlockUser(s))
+		// GDPR Art. 17 right-to-erasure. Pseudonymises PII; audit history
+		// stays intact under separate legal basis (accountability).
+		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
+			Post("/api/v1/users/{user_id}/erase", eraseUser(s))
 		// Partners
 		r.Route("/api/v1/partners", func(r chi.Router) {
 			r.With(middleware.RequirePermission("create_partner")).

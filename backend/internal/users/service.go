@@ -223,6 +223,63 @@ func (s *Service) Suspend(ctx context.Context, userID uuid.UUID, until time.Time
 	})
 }
 
+// Erase fulfils a GDPR Article 17 ("right to erasure") request.
+//
+// The audit trail MUST survive — accountability obligations conflict
+// with right-to-erasure, and every regulator I've checked accepts
+// "audit logs are retained under a separate legal basis (legitimate
+// interest / legal obligation) and contain only the user_id, not
+// PII". So we pseudonymise PII in the users row but keep the row
+// + the audit history intact:
+//
+//   - email     → erased+<user_id>@invalid.local
+//   - full_name → "ERASED USER <user_id_short>"
+//   - keycloak_sub, last_login_at, mfa_enabled cleared
+//   - status set to 'erased' — auth.Verifier refuses tokens for
+//     status='erased' the same way it refuses 'suspended'
+//   - all active sessions revoked (token_revocations)
+//
+// The actor is recorded in the audit row so an operator can prove
+// the erasure was authorised (consent withdrawal, regulator order).
+// `reason` is free-text — keep it short, it's stored in payload.
+//
+// Tenant/partner-owned personal data outside the users table
+// (engagement_audits.actor_id etc) keeps the user_id as a stable
+// foreign key — the same pseudonymisation argument applies.
+func (s *Service) Erase(ctx context.Context, userID uuid.UUID, actor *uuid.UUID, reason string) error {
+	var platID uuid.UUID
+	if err := s.pool.QueryRow(ctx, `SELECT platform_id FROM users WHERE id=$1`, userID).Scan(&platID); err != nil {
+		return fmt.Errorf("users.Erase: lookup: %w", err)
+	}
+
+	shortID := userID.String()[:8]
+	anonEmail := "erased+" + userID.String() + "@invalid.local"
+	anonName := "ERASED USER " + shortID
+
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE users SET
+		    email         = $2,
+		    full_name     = $3,
+		    keycloak_sub  = NULL,
+		    last_login_at = NULL,
+		    mfa_enabled   = false,
+		    status        = 'erased',
+		    updated_at    = now()
+		WHERE id = $1`, userID, anonEmail, anonName); err != nil {
+		return fmt.Errorf("users.Erase: update users: %w", err)
+	}
+
+	if err := s.RevokeAllTokens(ctx, userID, actor, "erasure-request"); err != nil {
+		return fmt.Errorf("users.Erase: revoke tokens: %w", err)
+	}
+
+	return s.audit.Record(ctx, audit.Entry{
+		PlatformID: platID, ActorID: actor, Event: "user.erased",
+		TargetType: "user", TargetID: userID.String(),
+		Payload: map[string]any{"reason": reason, "regulation": "gdpr_art17"},
+	})
+}
+
 // Unlock clears the lockout flag.
 func (s *Service) Unlock(ctx context.Context, userID uuid.UUID, actor *uuid.UUID) error {
 	if _, err := s.pool.Exec(ctx,

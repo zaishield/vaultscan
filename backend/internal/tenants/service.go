@@ -193,3 +193,80 @@ func (s *Service) Reactivate(ctx context.Context, id uuid.UUID, actor *uuid.UUID
 }
 
 var ErrNotFound = errors.New("tenant not found")
+
+// ErrResidencyViolation is returned when a request handling pod's
+// VAULTSCAN_REGION doesn't match the tenant's data_region pin. The
+// API surfaces this as 451 (Unavailable For Legal Reasons) — the
+// closest fitting status for "we can't process this here because
+// of a residency commitment".
+var ErrResidencyViolation = errors.New("tenants: data-residency pin does not match pod region")
+
+// CheckResidency enforces the tenant's data-residency commitment.
+// Returns nil when the pin is not set (legacy tenants), when the pod
+// has no region configured (single-region deployments), or when they
+// match. Otherwise ErrResidencyViolation.
+//
+// Call this from any service-layer write path that creates new
+// long-lived data for the tenant (scans, findings, evidence). The
+// idea is to surface a misconfigured cross-region routing before
+// the data lands in the wrong region.
+func (s *Service) CheckResidency(ctx context.Context, tenantID uuid.UUID, podRegion string) error {
+	if podRegion == "" {
+		return nil // single-region deployment; no enforcement possible
+	}
+	var pinned *string
+	err := s.pool.QueryRow(ctx, `SELECT data_region FROM tenants WHERE id=$1`, tenantID).Scan(&pinned)
+	if err != nil {
+		return fmt.Errorf("tenants.CheckResidency: %w", err)
+	}
+	if pinned == nil || *pinned == "" {
+		return nil
+	}
+	if *pinned != podRegion {
+		return ErrResidencyViolation
+	}
+	return nil
+}
+
+// SetResidency updates the data_region pin and writes an audit row +
+// a tenant_residency_history entry. Empty region clears the pin.
+func (s *Service) SetResidency(ctx context.Context, tenantID uuid.UUID, region string, actor *uuid.UUID, reason string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var prev *string
+	if err := tx.QueryRow(ctx, `SELECT data_region FROM tenants WHERE id=$1`, tenantID).Scan(&prev); err != nil {
+		return err
+	}
+	newVal := any(region)
+	if region == "" {
+		newVal = nil
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE tenants SET data_region=$2, updated_at=now() WHERE id=$1`,
+		tenantID, newVal); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO tenant_residency_history(tenant_id, from_region, to_region, actor_id, reason)
+		VALUES ($1,$2,$3,$4,$5)`,
+		tenantID, prev, newVal, actor, reason); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	t, _ := s.Get(ctx, tenantID)
+	if t != nil {
+		_ = s.audit.Record(ctx, audit.Entry{
+			PlatformID: t.PlatformID, PartnerID: &t.PartnerID, TenantID: &t.ID,
+			ActorID: actor, Event: "tenant.residency_set",
+			TargetType: "tenant", TargetID: tenantID.String(),
+			Payload: map[string]any{"from": prev, "to": region, "reason": reason},
+		})
+	}
+	return nil
+}

@@ -20,6 +20,76 @@ type DB struct {
 	*pgxpool.Pool
 }
 
+// ReplicaPool holds the read-only replica pool alongside the primary.
+// Heavy read-only handlers (analytics dashboards, long-tail audit
+// queries, asset/finding list endpoints) can route to the replica
+// to take load off the primary writer.
+//
+// Wiring: cmd/api opens this with OpenReplica(); if
+// VAULTSCAN_DATABASE_REPLICA_URL is empty, the field is nil and
+// callers fall back to the primary pool transparently via Reader().
+type ReplicaPool struct {
+	*pgxpool.Pool
+}
+
+// OpenReplica opens a read-only replica pool sized for read-heavy
+// queries. Returns nil + nil error when no replica DSN is configured —
+// callers must handle nil and fall back to the primary.
+//
+// Replica pool config is intentionally bigger than the primary's
+// because reads dominate; the analytics + dashboards endpoints alone
+// easily saturate a 10-conn pool.
+func OpenReplica(ctx context.Context, dsn string) (*ReplicaPool, error) {
+	if dsn == "" {
+		return nil, nil
+	}
+	pc := PoolConfig{
+		MaxConns:        envInt32("VAULTSCAN_PG_REPLICA_MAX_CONNS", 75),
+		MinConns:        envInt32("VAULTSCAN_PG_REPLICA_MIN_CONNS", 5),
+		MaxConnLifetime: 30 * time.Minute,
+		MaxConnIdle:     5 * time.Minute,
+		HealthCheck:     30 * time.Second,
+		// Longer statement timeout — read-only analytics queries can
+		// legitimately scan large tables.
+		StatementTimeout: envDur("VAULTSCAN_PG_REPLICA_STATEMENT_TIMEOUT", 30*time.Second),
+	}
+	db, err := OpenWithConfig(ctx, dsn, pc)
+	if err != nil {
+		return nil, fmt.Errorf("open replica: %w", err)
+	}
+	// Mark every connection as read-only at the session level so a
+	// rogue handler that accidentally routes a write to the replica
+	// fails loudly instead of returning silently-stale primary data
+	// (or worse, getting promoted to a primary by a fail-over and
+	// accepting the write).
+	prev := db.Pool.Config().AfterConnect
+	db.Pool.Config().AfterConnect = func(ctx context.Context, conn *pgxConn) error {
+		if prev != nil {
+			if err := prev(ctx, conn); err != nil {
+				return err
+			}
+		}
+		if _, err := conn.Exec(ctx, "SET default_transaction_read_only = on"); err != nil {
+			return fmt.Errorf("replica: set default_transaction_read_only: %w", err)
+		}
+		return nil
+	}
+	return &ReplicaPool{Pool: db.Pool}, nil
+}
+
+// Reader returns the replica pool if configured, otherwise the
+// primary. Use this from read-only handlers that can tolerate
+// the small replication lag (typically <1s on a healthy cluster).
+//
+// Write paths MUST use the primary directly — never call Reader()
+// for INSERT/UPDATE/DELETE.
+func Reader(primary *pgxpool.Pool, replica *ReplicaPool) *pgxpool.Pool {
+	if replica != nil && replica.Pool != nil {
+		return replica.Pool
+	}
+	return primary
+}
+
 // PoolConfig is the tunable surface, populated from env vars by Open.
 // All knobs have production-grade defaults; bump them for high-load
 // environments via VAULTSCAN_PG_{MAX_CONNS, MIN_CONNS, ...}.

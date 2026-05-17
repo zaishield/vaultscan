@@ -277,29 +277,57 @@ func (s *SCIMServer) deleteUser(w http.ResponseWriter, r *http.Request, userID u
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// queryUsers translates a (very simple) SCIM filter into a SQL WHERE
-// clause. Supports `userName eq "x"`, `email eq "x"`, `id eq "x"`,
-// and the empty filter (return all). Rejects anything else with an
-// error so callers know to switch to client-side filtering.
+// queryUsers translates a SCIM filter into a SQL WHERE clause.
+// Supports the operators most real-world IdPs (Okta, Azure AD,
+// JumpCloud) emit: eq, sw, ew, co, pr. Multi-clause filters (AND/OR)
+// are not supported — those IdPs that need them fall back to
+// client-side filtering by passing no filter.
+//
+// Filter forms:
+//
+//	userName eq "alice@example.com"
+//	userName sw "alice"        — starts with
+//	userName ew "@example.com" — ends with
+//	userName co "alice"        — contains
+//	userName pr                — present (non-null, non-empty)
 func (s *SCIMServer) queryUsers(ctx context.Context, tenantID uuid.UUID, filter string) ([]SCIMUser, error) {
 	q := `SELECT id, email, COALESCE(full_name,''), status,
 	             to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 	        FROM users WHERE tenant_id = $1`
 	args := []any{tenantID}
 	if filter != "" {
-		field, value, err := parseSCIMFilter(filter)
+		field, op, value, err := parseSCIMFilter(filter)
 		if err != nil {
 			return nil, err
 		}
+		col := ""
 		switch field {
 		case "username", "email":
-			q += " AND email = $2"
-			args = append(args, value)
+			col = "email"
 		case "id":
-			q += " AND id = $2"
-			args = append(args, value)
+			col = "id"
+		case "name.formatted", "displayname":
+			col = "full_name"
 		default:
 			return nil, fmt.Errorf("scim: filter on %q not supported", field)
+		}
+		switch op {
+		case "eq":
+			q += fmt.Sprintf(" AND %s = $%d", col, len(args)+1)
+			args = append(args, value)
+		case "sw":
+			q += fmt.Sprintf(" AND %s ILIKE $%d", col, len(args)+1)
+			args = append(args, scimLikeEscape(value)+"%")
+		case "ew":
+			q += fmt.Sprintf(" AND %s ILIKE $%d", col, len(args)+1)
+			args = append(args, "%"+scimLikeEscape(value))
+		case "co":
+			q += fmt.Sprintf(" AND %s ILIKE $%d", col, len(args)+1)
+			args = append(args, "%"+scimLikeEscape(value)+"%")
+		case "pr":
+			q += fmt.Sprintf(" AND %s IS NOT NULL AND %s <> ''", col, col)
+		default:
+			return nil, fmt.Errorf("scim: operator %q not supported", op)
 		}
 	}
 	q += " ORDER BY email LIMIT 200"
@@ -343,17 +371,51 @@ func statusFromActive(active bool) string {
 
 func activeFromStatus(status string) bool { return status == "active" }
 
-func parseSCIMFilter(filter string) (field, value string, err error) {
-	parts := strings.SplitN(filter, " eq ", 2)
-	if len(parts) != 2 {
-		return "", "", errors.New("scim: only `field eq \"value\"` supported")
+// parseSCIMFilter handles the operator vocabulary documented on
+// queryUsers. Returns (field, op, value, err). For "pr" (present),
+// the returned value is empty — the caller checks op=="pr" and
+// emits IS NOT NULL.
+//
+// Order matters: "pr" must be checked first because it's a single-
+// token operator; the others (eq/sw/ew/co) wrap a quoted value.
+func parseSCIMFilter(filter string) (field, op, value string, err error) {
+	f := strings.TrimSpace(filter)
+	// "field pr" — presence test, no value
+	if strings.HasSuffix(strings.ToLower(f), " pr") {
+		field = strings.ToLower(strings.TrimSpace(f[:len(f)-3]))
+		if field == "" {
+			return "", "", "", errors.New("scim: empty field in filter")
+		}
+		return field, "pr", "", nil
 	}
-	field = strings.ToLower(strings.TrimSpace(parts[0]))
-	value = strings.Trim(strings.TrimSpace(parts[1]), `"`)
-	if field == "" {
-		return "", "", errors.New("scim: empty field in filter")
+	for _, candidate := range []string{" eq ", " sw ", " ew ", " co "} {
+		idx := strings.Index(strings.ToLower(f), candidate)
+		if idx <= 0 {
+			continue
+		}
+		field = strings.ToLower(strings.TrimSpace(f[:idx]))
+		op = strings.TrimSpace(candidate)
+		value = strings.Trim(strings.TrimSpace(f[idx+len(candidate):]), `"`)
+		if field == "" {
+			return "", "", "", errors.New("scim: empty field in filter")
+		}
+		return field, op, value, nil
 	}
-	return field, value, nil
+	return "", "", "", errors.New("scim: only eq/sw/ew/co/pr operators supported")
+}
+
+// scimLikeEscape escapes the LIKE wildcards `%` and `_` so a filter
+// like userName co "100%" matches the literal string "100%" instead
+// of "100<anything>".
+func scimLikeEscape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r == '%' || r == '_' || r == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func (s *SCIMServer) scimError(w http.ResponseWriter, status int, detail string) {
