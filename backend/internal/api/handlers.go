@@ -33,6 +33,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
 	"github.com/zaishield/vaultscan/backend/internal/integrations"
+	"github.com/zaishield/vaultscan/backend/internal/middleware"
 	"github.com/zaishield/vaultscan/backend/internal/models"
 	"github.com/zaishield/vaultscan/backend/internal/partners"
 	"github.com/zaishield/vaultscan/backend/internal/reporting"
@@ -103,15 +104,11 @@ func uuidParam(r *http.Request, name string) (uuid.UUID, error) {
 	return uuid.Parse(chi.URLParam(r, name))
 }
 
+// clientIP delegates to middleware.ClientIP so the rate limiter and
+// the audit/evidence paths agree on the same trust decision. See the
+// shared helper for the trust-list semantics.
 func clientIP(r *http.Request) net.IP {
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		if i := strings.Index(v, ","); i >= 0 {
-			v = v[:i]
-		}
-		return net.ParseIP(strings.TrimSpace(v))
-	}
-	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	return net.ParseIP(host)
+	return middleware.ClientIP(r)
 }
 
 // ----- Branding ----------------------------------------------------------

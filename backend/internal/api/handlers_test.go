@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/zaishield/vaultscan/backend/internal/middleware"
 )
 
 // The api package's pure helpers are tiny but they're on every
@@ -144,14 +147,47 @@ func TestDecode_RejectsMalformedJSON(t *testing.T) {
 	}
 }
 
-func TestClientIP_PrefersXForwardedFor(t *testing.T) {
-	t.Parallel()
+func TestClientIP_TrustsXFFOnlyFromTrustedProxy(t *testing.T) {
+	// NOT parallel — we mutate the package-level trusted-proxy list.
+	saved := middleware.TrustedProxyCIDRs
+	defer func() { middleware.TrustedProxyCIDRs = saved }()
+
+	_, trust10, _ := net.ParseCIDR("10.0.0.0/8")
+	middleware.TrustedProxyCIDRs = []*net.IPNet{trust10}
+
+	t.Run("xff_honoured_from_trusted_proxy", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = "10.0.0.99:443"
+		r.Header.Set("X-Forwarded-For", "203.0.113.5, 10.0.0.1")
+		got := clientIP(r)
+		if got == nil || got.String() != "203.0.113.5" {
+			t.Errorf("X-Forwarded-For not parsed when peer is trusted proxy: %v", got)
+		}
+	})
+
+	t.Run("xff_ignored_from_untrusted_peer", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = "198.51.100.7:443" // public IP, NOT in 10/8
+		r.Header.Set("X-Forwarded-For", "1.2.3.4")
+		got := clientIP(r)
+		if got == nil || got.String() != "198.51.100.7" {
+			t.Errorf("X-Forwarded-For honoured from untrusted peer (IP-spoof vulnerability): %v", got)
+		}
+	})
+}
+
+func TestClientIP_DefaultIgnoresXFF(t *testing.T) {
+	// NOT parallel — see above.
+	saved := middleware.TrustedProxyCIDRs
+	defer func() { middleware.TrustedProxyCIDRs = saved }()
+	middleware.TrustedProxyCIDRs = nil // simulate default config
+
 	r := httptest.NewRequest("GET", "/", nil)
 	r.RemoteAddr = "10.0.0.99:443"
-	r.Header.Set("X-Forwarded-For", "203.0.113.5, 10.0.0.1")
+	r.Header.Set("X-Forwarded-For", "203.0.113.5")
 	got := clientIP(r)
-	if got == nil || got.String() != "203.0.113.5" {
-		t.Errorf("X-Forwarded-For not parsed: %v", got)
+	if got == nil || got.String() != "10.0.0.99" {
+		t.Errorf("default config must NOT trust X-Forwarded-For: %v", got)
 	}
 }
 

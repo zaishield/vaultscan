@@ -231,11 +231,13 @@ func identityKey(r *http.Request) string {
 	if id, err := auth.FromContext(r.Context()); err == nil {
 		return "user:" + id.UserID.String()
 	}
-	host := r.Header.Get("X-Forwarded-For")
-	if host == "" {
-		host = strings.Split(r.RemoteAddr, ":")[0]
+	// Use the trust-gated source IP — without this an attacker could
+	// spoof X-Forwarded-For to pivot through rate-limiter buckets and
+	// evade the per-IP throttle entirely.
+	if ip := ClientIP(r); ip != nil {
+		return "ip:" + ip.String()
 	}
-	return "ip:" + host
+	return "ip:" + strings.Split(r.RemoteAddr, ":")[0]
 }
 
 func (rl *RateLimit) allow(key string) bool {
