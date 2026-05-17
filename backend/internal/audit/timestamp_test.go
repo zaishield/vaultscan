@@ -124,3 +124,43 @@ func TestNewTSAClient_DefaultURL(t *testing.T) {
 		t.Error("default URL should not be empty")
 	}
 }
+
+func TestWithTrustedRootsPEM_EmptyDisablesVerification(t *testing.T) {
+	t.Parallel()
+	c, err := NewTSAClient("").WithTrustedRootsPEM(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TrustedRoots != nil {
+		t.Errorf("empty PEM should leave TrustedRoots nil; got non-nil")
+	}
+}
+
+func TestWithTrustedRootsPEM_RejectsGarbage(t *testing.T) {
+	t.Parallel()
+	_, err := NewTSAClient("").WithTrustedRootsPEM([]byte("not a pem"))
+	if err == nil {
+		t.Error("expected error on garbage PEM")
+	}
+}
+
+func TestExtractCertsFromCMS_RejectsEmptySignedData(t *testing.T) {
+	t.Parallel()
+	// A valid-looking ContentInfo wrapping an empty SignedData.
+	// We expect extractCertsFromCMS to refuse rather than crash.
+	_, _, err := extractCertsFromCMS([]byte{0x30, 0x00}) // empty SEQUENCE
+	if err == nil {
+		t.Error("expected error for empty CMS input")
+	}
+}
+
+// VerifyChain returning nil when no trust pool is wired preserves
+// the dev path. This test guards against a regression where a fresh
+// TSAClient suddenly requires a configured pool.
+func TestVerifyChain_NilPoolPassesEverything(t *testing.T) {
+	t.Parallel()
+	c := NewTSAClient("")
+	if err := c.VerifyChain([]byte("garbage")); err != nil {
+		t.Errorf("nil TrustedRoots should bypass verification, got: %v", err)
+	}
+}

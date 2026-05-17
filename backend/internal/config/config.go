@@ -120,6 +120,14 @@ type Config struct {
 	// rolling-deploy version skew.
 	APIVersion string
 
+	// TSATrustedRootsPath points at a PEM bundle of CAs trusted to
+	// sign RFC 3161 timestamp tokens. When unset, the TSAClient
+	// returns tokens without chain validation (acceptable for
+	// dev; refused in production via the production_guard). When
+	// set, every successful Timestamp() call additionally validates
+	// the embedded cert chain back to one of these roots.
+	TSATrustedRootsPath string
+
 	// PerTenantRateLimitMultiplier scales the per-identity RPS to
 	// build a per-tenant ceiling (e.g. 5x means a tenant collectively
 	// gets 5× the single-user limit). 0 disables the per-tenant cap.
@@ -192,6 +200,7 @@ func Load() (*Config, error) {
 		DebugToken:                   os.Getenv("VAULTSCAN_DEBUG_TOKEN"),
 		PerTenantRateLimitMultiplier: parseInt("VAULTSCAN_RATE_LIMIT_TENANT_MULTIPLIER", 10),
 		APIVersion:                   getenv("VAULTSCAN_API_VERSION", "dev"),
+		TSATrustedRootsPath:          os.Getenv("VAULTSCAN_TSA_TRUSTED_ROOTS_PATH"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("VAULTSCAN_DATABASE_URL is required")

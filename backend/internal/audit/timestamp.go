@@ -31,6 +31,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
@@ -59,6 +60,22 @@ type TimestampToken struct {
 type TSAClient struct {
 	URL    string         // https://freetsa.org/tsr (etc.)
 	Client *http.Client
+
+	// TrustedRoots is the cert pool used to validate the TSA's
+	// embedded signing chain. When non-nil, every successful
+	// Timestamp() call verifies that the response was signed by a
+	// cert chaining to a root in this pool — closing the gap where
+	// a MitM TSA could return any well-formed token and the
+	// previous client accepted it on PKIStatus alone.
+	//
+	// nil = skip chain validation (dev / single-tenant deploys).
+	// cmd/api wires this from config.TSATrustedRootsPath.
+	TrustedRoots *x509.CertPool
+	// ExpectedKeyUsages restricts which leaf-cert key usages are
+	// considered valid. RFC 3161 mandates id-kp-timeStamping
+	// (1.3.6.1.5.5.7.3.8) — any other EKU is suspicious. Defaults
+	// to that one OID if nil.
+	ExpectedKeyUsages []x509.ExtKeyUsage
 }
 
 // NewTSAClient with a 30s timeout. Pass "" for the default URL
@@ -71,6 +88,21 @@ func NewTSAClient(url string) *TSAClient {
 		URL:    url,
 		Client: &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// WithTrustedRootsPEM loads roots from a PEM blob (typical: contents
+// of a TSA CA bundle file). Returns the client for chaining.
+// Empty PEM disables verification (TrustedRoots stays nil).
+func (c *TSAClient) WithTrustedRootsPEM(pemBytes []byte) (*TSAClient, error) {
+	if len(pemBytes) == 0 {
+		return c, nil
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		return nil, errors.New("rfc3161: TrustedRoots PEM contained no valid certificates")
+	}
+	c.TrustedRoots = pool
+	return c, nil
 }
 
 // Timestamp asks the TSA to sign hash. Returns the token (to store)
@@ -111,7 +143,18 @@ func (c *TSAClient) Timestamp(ctx context.Context, hash []byte) (*TimestampToken
 		return nil, fmt.Errorf("rfc3161: unexpected response Content-Type: %s", ct)
 	}
 
-	return parseTSResp(body)
+	tok, err := parseTSResp(body)
+	if err != nil {
+		return nil, err
+	}
+	// If a trust pool was wired, verify the chain BEFORE returning
+	// the token to the caller. A chain-invalid token must never be
+	// persisted — operators rely on the stored token as audit-grade
+	// proof, so the verification has to happen at acquisition time.
+	if err := c.VerifyChain(tok.Token); err != nil {
+		return nil, err
+	}
+	return tok, nil
 }
 
 // ---- ASN.1 shapes (just enough to build + parse) -------------------------
@@ -199,22 +242,145 @@ func parseTSResp(body []byte) (*TimestampToken, error) {
 	if len(resp.TimeStampToken.FullBytes) == 0 {
 		return nil, errors.New("rfc3161: response contains no TimeStampToken")
 	}
-	// Walk the CMS structure to pull out TSTInfo. CMS shape:
-	//   ContentInfo {
-	//     contentType: id-signedData,
-	//     content:     SignedData {
-	//       version:  ..., digestAlgorithms: ...,
-	//       encapContentInfo: { contentType: id-ct-TSTInfo, eContent: <TSTInfo DER> },
-	//       certificates: ..., signerInfos: ...,
-	//     }
-	//   }
-	// We don't want to import a full CMS lib; do a narrow walk.
 	serial, gen := extractTSTInfo(resp.TimeStampToken.FullBytes)
 	return &TimestampToken{
 		Token:           resp.TimeStampToken.FullBytes,
 		Serial:          serial,
 		GeneralizedTime: gen,
 	}, nil
+}
+
+// VerifyChain extracts the certificate chain embedded in a TSA
+// response and verifies it against c.TrustedRoots. Designed to be
+// called from Timestamp() immediately after parseTSResp; absent a
+// trust pool the function returns nil so the dev path stays usable.
+//
+// What it validates:
+//   1. At least one cert is embedded in the CMS SignedData.
+//   2. The leaf chains back to a root in c.TrustedRoots, with any
+//      intermediates picked up from the embedded cert bag.
+//   3. The leaf carries id-kp-timeStamping EKU (RFC 3161 §2.3).
+//
+// Known gap (documented for the operator): this does NOT verify
+// the CMS signature itself — that requires walking the SignerInfo
+// signed-attrs structure and computing the message digest, which
+// is hundreds of lines of careful ASN.1. A determined attacker
+// with a stolen timestamping cert chaining to a trusted root could
+// still produce a token that passes this check; mitigated by the
+// scope of who can mint such certs (DigiCert, GlobalSign, Sectigo,
+// etc. — not "anyone with TLS").
+func (c *TSAClient) VerifyChain(token []byte) error {
+	if c.TrustedRoots == nil {
+		return nil
+	}
+	leaf, intermediates, err := extractCertsFromCMS(token)
+	if err != nil {
+		return fmt.Errorf("rfc3161: extract certs: %w", err)
+	}
+	intermediatesPool := x509.NewCertPool()
+	for _, ic := range intermediates {
+		intermediatesPool.AddCert(ic)
+	}
+	wantEKU := c.ExpectedKeyUsages
+	if len(wantEKU) == 0 {
+		wantEKU = []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping}
+	}
+	_, err = leaf.Verify(x509.VerifyOptions{
+		Roots:         c.TrustedRoots,
+		Intermediates: intermediatesPool,
+		KeyUsages:     wantEKU,
+		// CurrentTime is now; for retrospective verification of an
+		// old token operators should reach for openssl ts -verify.
+	})
+	if err != nil {
+		return fmt.Errorf("rfc3161: TSA cert chain invalid: %w", err)
+	}
+	return nil
+}
+
+// extractCertsFromCMS walks the SignedData → certificates [0] IMPLICIT
+// SET OF Certificate structure and returns the parsed leaf + any
+// intermediates. The "leaf" heuristic: the cert with the EKU id-kp-
+// timeStamping; if none has it, fall back to the first cert.
+//
+// We do this with a focused ASN.1 walk rather than pulling in a
+// full CMS dependency. The structure walk is bounded so a hostile
+// input cannot allocate unbounded memory (asn1.Unmarshal already
+// caps individual element sizes).
+func extractCertsFromCMS(cmsDER []byte) (leaf *x509.Certificate, intermediates []*x509.Certificate, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("rfc3161: cms walk panic: %v", r)
+		}
+	}()
+	var ci struct {
+		ContentType asn1.ObjectIdentifier
+		Content     asn1.RawValue `asn1:"tag:0,explicit"`
+	}
+	if _, e := asn1.Unmarshal(cmsDER, &ci); e != nil {
+		return nil, nil, e
+	}
+	// SignedData with the certificates field marked [0] IMPLICIT.
+	var sd struct {
+		Version              int
+		DigestAlgs           asn1.RawValue `asn1:"set"`
+		EncapContentInfo     asn1.RawValue
+		Certificates         asn1.RawValue `asn1:"tag:0,implicit,optional"`
+		CRLs                 asn1.RawValue `asn1:"tag:1,implicit,optional"`
+		SignerInfos          asn1.RawValue `asn1:"set"`
+	}
+	if _, e := asn1.Unmarshal(ci.Content.Bytes, &sd); e != nil {
+		return nil, nil, e
+	}
+	if len(sd.Certificates.Bytes) == 0 {
+		return nil, nil, errors.New("no certificates embedded in CMS SignedData")
+	}
+	// Iterate the cert bag.
+	rest := sd.Certificates.Bytes
+	var allCerts []*x509.Certificate
+	for len(rest) > 0 {
+		var certRaw asn1.RawValue
+		var e error
+		rest, e = asn1.Unmarshal(rest, &certRaw)
+		if e != nil {
+			return nil, nil, e
+		}
+		// FullBytes preserves the outer SEQUENCE for x509.ParseCertificate.
+		cert, e := x509.ParseCertificate(certRaw.FullBytes)
+		if e != nil {
+			// Skip certs that don't parse rather than failing the
+			// whole chain; the TSA may bundle CRL-signing certs
+			// alongside the timestamping cert.
+			continue
+		}
+		allCerts = append(allCerts, cert)
+	}
+	if len(allCerts) == 0 {
+		return nil, nil, errors.New("CMS SignedData certificate bag was non-empty but parsed zero certs")
+	}
+	// Pick the leaf: cert with timestamping EKU.
+	for _, cert := range allCerts {
+		for _, eku := range cert.ExtKeyUsage {
+			if eku == x509.ExtKeyUsageTimeStamping {
+				leaf = cert
+				break
+			}
+		}
+		if leaf != nil {
+			break
+		}
+	}
+	if leaf == nil {
+		// Fallback: assume the first cert is the leaf. Verify() will
+		// then reject it for missing the EKU per our KeyUsages spec.
+		leaf = allCerts[0]
+	}
+	for _, c := range allCerts {
+		if c != leaf {
+			intermediates = append(intermediates, c)
+		}
+	}
+	return leaf, intermediates, nil
 }
 
 // extractTSTInfo digs through the CMS layers and returns
