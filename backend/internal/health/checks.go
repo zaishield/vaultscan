@@ -87,7 +87,15 @@ func HTTPCheck(client *http.Client, url string) CheckFunc {
 		if url == "" {
 			return StatusDown, "url not configured"
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		// Always cap the per-check call at 3s on top of whatever
+		// ceiling the caller's ctx has. The previous code relied on
+		// client.Timeout, which can be longer than the registry's
+		// perCheckTimeout for callers that pass a long-lived
+		// background ctx — a stuck upstream would then hold the
+		// goroutine past the deadline.
+		cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(cctx, http.MethodGet, url, nil)
 		if err != nil {
 			return StatusDown, err.Error()
 		}

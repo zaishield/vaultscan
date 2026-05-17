@@ -12,9 +12,19 @@ package searchindex
 
 import (
 	"context"
+	"os"
+
+	"github.com/rs/zerolog"
 
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 )
+
+// indexerLogger surfaces refused/silently-dropped events so an
+// operator can spot a misbehaving publisher emitting tenant-less
+// events. Stays small — one log line per drop — but means the
+// silence-on-nil-TenantID path is no longer invisible.
+var indexerLogger = zerolog.New(os.Stderr).With().
+	Timestamp().Str("component", "searchindex").Logger()
 
 // FindingsIndexName is the alias every API write targets. Production
 // rotates the underlying index periodically (template + ISM policy).
@@ -50,7 +60,13 @@ func (idx *FindingsIndexer) HandleEvent(ctx context.Context, ev eventbus.Event) 
 	if ev.TenantID == nil {
 		// Don't index untyped/unscoped findings — refusing here is
 		// safer than indexing with tenant_id=null which would
-		// short-circuit downstream tenant filters.
+		// short-circuit downstream tenant filters. Log so a buggy
+		// publisher doesn't go unnoticed.
+		indexerLogger.Warn().
+			Str("event_type", ev.Type).
+			Str("event_id", ev.ID.String()).
+			Str("finding_id", id).
+			Msg("searchindex: refusing event with nil TenantID (publisher bug)")
 		return
 	}
 	doc := map[string]any{

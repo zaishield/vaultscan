@@ -4,24 +4,39 @@ metadata:
   name: {{ include "vaultscan.fullname" . }}-portal
   labels: {{- include "vaultscan.componentLabels" (dict "component" "portal" "Chart" .Chart "Release" .Release) | nindent 4 }}
 spec:
-  replicaCount: {{ .Values.portal.replicaCount }}
+  # NOTE: was `replicaCount` here — that's not a valid Deployment.spec
+  # field (it's the Helm values key, not the k8s field). Existing
+  # deploys silently defaulted to 1 replica regardless of the values
+  # file. Fixed 2026-05 as part of the audit pass.
+  replicas: {{ .Values.portal.replicaCount }}
   selector:
     matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "portal") | nindent 6 }}
   template:
     metadata:
       labels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "portal") | nindent 8 }}
     spec:
+      terminationGracePeriodSeconds: 30
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: portal
           image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.portal.image.repository "tag" .Values.portal.image.tag) }}
+          imagePullPolicy: {{ .Values.portal.image.pullPolicy | default "IfNotPresent" }}
           ports: [{ name: http, containerPort: 80 }]
           resources: {{- toYaml .Values.portal.resources | nindent 12 }}
           readinessProbe:
             httpGet: { path: /, port: http }
             periodSeconds: 10
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 30
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 10"]
 ---
 apiVersion: v1
 kind: Service

@@ -11,17 +11,34 @@ spec:
     metadata:
       labels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "agent-gateway") | nindent 8 }}
     spec:
+      # Agent gateway hosts long-lived mTLS connections from
+      # on-prem agents. 60s grace lets in-flight uploads/heartbeats
+      # complete before SIGKILL — agents otherwise retry the same
+      # upload against another pod.
+      terminationGracePeriodSeconds: 60
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: agent-gateway
           image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.agentGateway.image.repository "tag" .Values.agentGateway.image.tag) }}
+          imagePullPolicy: {{ .Values.agentGateway.image.pullPolicy | default "IfNotPresent" }}
           ports: [{ name: tls, containerPort: 8443 }]
           envFrom: {{- include "vaultscan.envFrom" (dict "root" .) | nindent 12 }}
           readinessProbe:
             httpGet: { path: /healthz, port: tls }
             periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /healthz, port: tls }
+            periodSeconds: 15
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              # 15s drain — readinessProbe will go red and the
+              # service stops routing new connections before SIGTERM.
+              exec:
+                command: ["/bin/sh", "-c", "sleep 15"]
           resources: {{- toYaml .Values.agentGateway.resources | nindent 12 }}
 ---
 apiVersion: v1

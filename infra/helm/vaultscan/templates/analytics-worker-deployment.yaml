@@ -11,12 +11,16 @@ spec:
     metadata:
       labels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "analytics-worker") | nindent 8 }}
     spec:
+      # Analytics worker batches event-bus events into the warehouse;
+      # 45s grace lets the in-flight batch flush before SIGKILL.
+      terminationGracePeriodSeconds: 45
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: analytics-worker
           image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.analyticsWorker.image.repository "tag" .Values.analyticsWorker.image.tag) }}
+          imagePullPolicy: {{ .Values.analyticsWorker.image.pullPolicy | default "IfNotPresent" }}
           envFrom: {{- include "vaultscan.envFrom" (dict "root" .) | nindent 12 }}
           env:
             - { name: VAULTSCAN_ANALYTICS_INPROC, value: "false" }

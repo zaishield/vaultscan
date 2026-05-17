@@ -224,6 +224,14 @@ func APIVersion(version string) func(http.Handler) http.Handler {
 	if version == "" {
 		version = "dev"
 	}
+	// Strip CR / LF before stamping the value into a response header.
+	// Build-time -ldflags substitution is the only writer today, so
+	// untrusted input is unlikely — this is defence-in-depth against
+	// a future refactor that wires a config var here. Without
+	// sanitisation a malformed value containing "\r\nSet-Cookie: ..."
+	// would inject a header.
+	version = strings.ReplaceAll(version, "\r", "")
+	version = strings.ReplaceAll(version, "\n", "")
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-API-Version", version)

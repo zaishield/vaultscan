@@ -35,12 +35,29 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
 )
+
+// cosignLogger surfaces key-load anomalies (unparseable PEM, missing
+// algorithms) so ops sees them before a VerifyImage call fails with
+// a confusing "no active key" message.
+var cosignLogger = zerolog.New(os.Stderr).With().
+	Timestamp().Str("component", "cosign").Logger()
+
+// cosignKeyParseFailSink is wired by cmd/api at startup to bump a
+// Prometheus counter. Nil = no-op; log line still fires.
+var cosignKeyParseFailSink func(keyID string)
+
+// SetKeyParseFailSink lets cmd/api bind a metrics counter without
+// the cosign package importing observability (would form a cycle
+// via audit).
+func SetKeyParseFailSink(f func(keyID string)) { cosignKeyParseFailSink = f }
 
 // Decision codes correspond to cosign_verifications.decision values.
 const (
@@ -99,7 +116,17 @@ func (s *Service) LoadActiveKeys(ctx context.Context, plane string) ([]TrustedKe
 		}
 		pub, err := ParsePublicKey(pem)
 		if err != nil {
-			// Skip unparseable keys — log via the caller, don't poison the slice.
+			// Skip unparseable keys but log + count so ops can see
+			// a corrupted row before a later VerifyImage call fails
+			// with a confusing "no active trusted key produced this
+			// signature" message.
+			cosignLogger.Warn().Err(err).
+				Str("key_id", keyID).
+				Str("algorithm", algo).
+				Msg("cosign: skipping unparseable trusted key — operator must investigate the row")
+			if cosignKeyParseFailSink != nil {
+				cosignKeyParseFailSink(keyID)
+			}
 			continue
 		}
 		out = append(out, TrustedKey{
@@ -207,6 +234,17 @@ type Result struct {
 // audit row + the accept/reject action.
 func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest string, bundle Bundle, plane string) (*Result, error) {
 	r := &Result{Digest: expectedDigest}
+
+	// Bound the inputs before decoding. A cosign payload is normally
+	// a few hundred bytes (the SimpleSigning JSON); anything past
+	// 1 MiB is either a misconfigured caller or an attempt to make
+	// us allocate. The 32-MB API body cap is wide enough that this
+	// per-field guard catches the obvious DoS vector.
+	const maxFieldLen = 1 << 20
+	if len(bundle.PayloadB64) > maxFieldLen || len(bundle.SignatureB64) > maxFieldLen {
+		r.Decision, r.Reason = DecisionRejectedPayload, "bundle field exceeds 1 MiB cap"
+		return r, nil
+	}
 
 	// Decode + parse the SimpleSigning payload first. If the payload says
 	// it covers a different digest, reject before bothering with crypto.
