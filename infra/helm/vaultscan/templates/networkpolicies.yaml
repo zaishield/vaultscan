@@ -1,13 +1,118 @@
 {{- if .Values.networkPolicies.enabled }}
 # Default-deny baseline plus per-component allow rules derived from
 # Blueprint §27.1 segmentation.
+#
+# Two default-deny policies are needed: one for INGRESS (drop incoming
+# connections that aren't whitelisted below) and one for EGRESS
+# (force every outbound to go through an explicit allow rule). The
+# previous templates only had the Ingress default — egress was
+# implicitly allowed, so a compromised API pod could call any
+# external service.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "vaultscan.fullname" . }}-default-deny
+  name: {{ include "vaultscan.fullname" . }}-default-deny-ingress
 spec:
   podSelector: {}
   policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-default-deny-egress
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  # DNS is allowed for every pod (otherwise nothing resolves).
+  egress:
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Allow API → Postgres + Redis + OpenSearch + Keycloak (the
+# downstream stores it actually talks to). Each port is listed
+# explicitly so a future "wow nothing works" debugging session
+# starts from a known surface.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-api-egress-allow
+spec:
+  podSelector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    # Postgres + pgbouncer
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pgbouncer
+      ports:
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 6432 }
+    # Redis (rate limiter + locks)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - { protocol: TCP, port: 6379 }
+    # OpenSearch (analytics indexer)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opensearch
+      ports:
+        - { protocol: TCP, port: 9200 }
+    # Keycloak (SSO)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keycloak
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8443 }
+    # OpenBao / secrets backend
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao
+      ports:
+        - { protocol: TCP, port: 8200 }
+    # S3 / object store
+    - to:
+        - podSelector:
+            matchLabels: { component: object-store }
+      ports:
+        - { protocol: TCP, port: 9000 }
+        - { protocol: TCP, port: 443 }
+---
+# scanner-worker is similar to api but ALSO needs to reach the K8s
+# API server to create Jobs in the scanner-* namespaces.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-scanner-worker-egress-allow
+spec:
+  podSelector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "scanner-worker") | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # K8s API for spawning scanner Jobs
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: default } }
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

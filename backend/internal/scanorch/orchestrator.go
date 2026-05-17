@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/zaishield/vaultscan/backend/internal/audit"
@@ -175,13 +176,35 @@ func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.Scan
 		INSERT INTO scan_jobs(id, platform_id, partner_id, tenant_id, engagement_id, profile_id,
 		    plane, region, agent_id, scanner_node_id, status, target_summary, targets,
 		    schedule_at, requires_approval, job_signature, signing_key_id, requested_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18
+		-- TOCTOU guard: revalidate the two critical Scope Guard
+		-- preconditions atomically with the INSERT. If the
+		-- engagement was paused/expired OR the auth doc was deleted
+		-- between Scope Guard approval and this insert, the row
+		-- count is 0 and we surface a sentinel error so callers can
+		-- treat it as a late-arriving denial.
+		WHERE EXISTS (
+		  SELECT 1 FROM engagements e
+		   WHERE e.id = $5
+		     AND e.status = 'active'
+		     AND now() BETWEEN e.starts_at AND e.ends_at
+		)
+		AND EXISTS (
+		  SELECT 1 FROM authorization_documents WHERE engagement_id = $5
+		)
 		RETURNING created_at`,
 		job.ID, job.PlatformID, job.PartnerID, job.TenantID, job.EngagementID, job.ProfileID,
 		job.Plane, nullIfEmpty(job.Region), job.AgentID, job.ScannerNodeID, job.Status,
 		job.TargetSummary, targetsJSON, job.ScheduleAt, job.RequiresApproval,
 		job.JobSignature, job.SigningKeyID, job.RequestedBy,
 	).Scan(&job.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Late-arriving denial: engagement state changed under us.
+			return nil, &scopeguard.Decision{
+				Code:   scopeguard.DecisionBlockedMissingAuth,
+				Reason: "engagement state changed between approval and insert (paused/expired or auth doc removed)",
+			}, nil
+		}
 		return nil, nil, fmt.Errorf("scanorch: insert scan_job: %w", err)
 	}
 

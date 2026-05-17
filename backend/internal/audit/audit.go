@@ -144,12 +144,20 @@ func (s *Service) recordInner(ctx context.Context, e Entry) error {
 	// payload is stored as TEXT (migration 0012), so the bytes Record writes
 	// here are exactly what Verify reads back. canonicalIP / derefStr keep
 	// nil-vs-NULL handling identical on both sides of the chain.
+	//
+	// Fields covered: event, actor_type, actor_id, ip, user_agent,
+	// platform_id, partner_id, tenant_id, target_type, target_id, payload.
+	// Adding actor_id + user_agent closes the attribution-tamper gap:
+	// without them in the hash, an attacker with write access could
+	// rewrite the actor or browser-fingerprint of a row and the chain
+	// would still verify.
 	h := sha256.New()
 	if prev != nil {
 		h.Write(prev)
 	}
-	fmt.Fprintf(h, "%s|%s|%s|%v|%v|%v|%s|%s",
-		e.Event, e.ActorType, canonicalIP(e.IP),
+	fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
+		e.Event, e.ActorType, canonicalActorID(e.ActorID), canonicalIP(e.IP),
+		canonicalString(e.UserAgent),
 		e.PlatformID, e.PartnerID, e.TenantID,
 		e.TargetType, e.TargetID)
 	h.Write(payload)
@@ -175,7 +183,8 @@ func (s *Service) recordInner(ctx context.Context, e Entry) error {
 // inconsistency, or 0 if the chain is intact.
 func (s *Service) Verify(ctx context.Context) (int64, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, event, actor_type, host(ip), platform_id, partner_id, tenant_id,
+		SELECT id, event, actor_type, actor_id, host(ip), user_agent,
+		       platform_id, partner_id, tenant_id,
 		       target_type, target_id, payload, chain_prev, chain_hash
 		  FROM audit_logs ORDER BY id ASC`)
 	if err != nil {
@@ -187,14 +196,17 @@ func (s *Service) Verify(ctx context.Context) (int64, error) {
 		var (
 			id              int64
 			event, actor    string
+			actorID         *uuid.UUID
 			ipStr           *string
+			userAgent       *string
 			platID          uuid.UUID
 			partID, tenID   *uuid.UUID
 			tType, tID      *string
 			payload         string
 			chainPrev, hash []byte
 		)
-		if err := rows.Scan(&id, &event, &actor, &ipStr, &platID, &partID, &tenID,
+		if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
+			&platID, &partID, &tenID,
 			&tType, &tID, &payload, &chainPrev, &hash); err != nil {
 			return 0, err
 		}
@@ -202,8 +214,9 @@ func (s *Service) Verify(ctx context.Context) (int64, error) {
 		if prev != nil {
 			h.Write(prev)
 		}
-		fmt.Fprintf(h, "%s|%s|%s|%v|%v|%v|%s|%s",
-			event, actor, derefStr(ipStr),
+		fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
+			event, actor, canonicalActorID(actorID), derefStr(ipStr),
+			canonicalString(derefStr(userAgent)),
 			platID, partID, tenID,
 			derefStr(tType), derefStr(tID))
 		h.Write([]byte(payload))
@@ -245,6 +258,24 @@ func derefStr(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// canonicalActorID returns the form that hashes identically on
+// Record + Verify. Both sides see *uuid.UUID; nil maps to the empty
+// string sentinel (NOT "<nil>", to avoid colliding with %v's default
+// nil rendering for other nullable columns).
+func canonicalActorID(id *uuid.UUID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
+}
+
+// canonicalString collapses an empty-or-nil-equivalent string to "".
+// Used for user_agent which can be NULL in the DB (no header sent) or
+// empty (header sent with empty value). Both must hash the same.
+func canonicalString(s string) string {
+	return s
 }
 
 func equal(a, b []byte) bool {

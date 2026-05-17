@@ -33,7 +33,8 @@ type VerifyResult struct {
 // 02:17 between rows 9134 and 9135".
 func (s *Service) VerifyDeep(ctx context.Context) (*VerifyResult, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, event, actor_type, host(ip), platform_id, partner_id, tenant_id,
+		SELECT id, event, actor_type, actor_id, host(ip), user_agent,
+		       platform_id, partner_id, tenant_id,
 		       target_type, target_id, payload, chain_prev, chain_hash
 		  FROM audit_logs ORDER BY id ASC`)
 	if err != nil {
@@ -54,14 +55,17 @@ func (s *Service) VerifyDeep(ctx context.Context) (*VerifyResult, error) {
 		var (
 			id              int64
 			event, actor    string
+			actorID         *uuid.UUID
 			ipStr           *string
+			userAgent       *string
 			platID          uuid.UUID
 			partID, tenID   *uuid.UUID
 			tType, tID      *string
 			payload         string
 			chainPrev, hash []byte
 		)
-		if err := rows.Scan(&id, &event, &actor, &ipStr, &platID, &partID, &tenID,
+		if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
+			&platID, &partID, &tenID,
 			&tType, &tID, &payload, &chainPrev, &hash); err != nil {
 			return nil, err
 		}
@@ -70,8 +74,9 @@ func (s *Service) VerifyDeep(ctx context.Context) (*VerifyResult, error) {
 		if prev != nil {
 			h.Write(prev)
 		}
-		fmt.Fprintf(h, "%s|%s|%s|%v|%v|%v|%s|%s",
-			event, actor, derefStr(ipStr),
+		fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
+			event, actor, canonicalActorID(actorID), derefStr(ipStr),
+			canonicalString(derefStr(userAgent)),
 			platID, partID, tenID,
 			derefStr(tType), derefStr(tID))
 		h.Write([]byte(payload))

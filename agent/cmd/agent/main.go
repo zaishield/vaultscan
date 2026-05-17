@@ -303,7 +303,13 @@ func (a *Agent) execute(ctx context.Context, j job) {
 			_ = a.postStatus(ctx, j.ID, "killed", "emergency stop")
 			return
 		}
-		out, err := a.runner.Execute(ctx, tool, j.Targets, a.policy.MaxCPUPercent(), a.policy.MaxMemoryPercent())
+		// Wire emergency.Trigger() to cancel the per-tool ctx. When
+		// the cloud fires an emergency stop, the listener cancels
+		// every WithContext-derived ctx — including this one — and
+		// exec.CommandContext SIGKILLs the running subprocess.
+		toolCtx, toolCancel := a.emergency.WithContext(ctx)
+		out, err := a.runner.Execute(toolCtx, tool, j.Targets, a.policy.MaxCPUPercent(), a.policy.MaxMemoryPercent())
+		toolCancel()
 		if err != nil {
 			a.log.Warn().Err(err).Str("tool", tool).Msg("tool failed")
 			if errors.Is(err, runner.ErrToolNotAllowed) {
