@@ -27,6 +27,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/dashboards"
 	"github.com/zaishield/vaultscan/backend/internal/email"
 	"github.com/zaishield/vaultscan/backend/internal/engagements"
+	"github.com/zaishield/vaultscan/backend/internal/envmode"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
 	"github.com/zaishield/vaultscan/backend/internal/integrations"
@@ -124,7 +125,11 @@ type devTokenReq struct {
 
 func devToken(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.Cfg.Env != "development" {
+		// Strict allow-list: this endpoint must be inert in every env
+		// except explicit development. Staging, empty Env, anything
+		// unrecognised → 403. (Previous check used != "production"
+		// which allowed empty/staging Env values to mint dev tokens.)
+		if s.Cfg.Env != "development" || envmode.IsProduction(s.Cfg.Env) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "dev tokens disabled"})
 			return
 		}

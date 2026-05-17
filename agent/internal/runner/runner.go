@@ -13,10 +13,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// isProductionEnv mirrors backend/internal/envmode.IsProduction for the
+// runner's synthetic-output gate. Kept local rather than importing the
+// backend pkg because the agent binary is a separate go.mod with no
+// dependency on the backend module.
+func isProductionEnv() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("VAULTSCAN_ENV")))
+	return v == "production" || v == "prod"
+}
 
 // allowedTools is the immutable allow-list. Adding a tool here is a
 // deliberate code change; the agent will refuse to run anything else
@@ -38,9 +48,24 @@ type PolicyGate interface {
 
 type Runner struct {
 	policy PolicyGate
+	// AllowSynthetic flag mirrors backend/internal/scanner.Runner.
+	// false → if the host binary is missing, return ErrSyntheticForbidden
+	// rather than fabricated output. Production agents MUST set this
+	// to false; otherwise an attacker who hides nmap from the agent's
+	// PATH could inject fake findings into the data plane.
+	AllowSynthetic bool
 }
 
-func New() *Runner { return &Runner{} }
+// NewRunner returns a runner whose AllowSynthetic flag is set per env.
+// Production agents (VAULTSCAN_ENV=production) refuse to fabricate
+// scanner output; dev defaults to allowing synthetic so demos work
+// without every tool installed.
+func New() *Runner { return &Runner{AllowSynthetic: !isProductionEnv()} }
+
+// NewRunnerStrict refuses synthetic output unconditionally. Use from
+// staging or CI smoke tests that should fail loudly if a tool is
+// missing.
+func NewRunnerStrict() *Runner { return &Runner{AllowSynthetic: false} }
 
 // WithPolicy returns a Runner that defers to the supplied policy gate
 // in addition to the hardcoded allow-list. AllowsTool=false on either
@@ -50,9 +75,19 @@ func (r *Runner) WithPolicy(p PolicyGate) *Runner {
 	return r
 }
 
+// AllowsSynthetic surfaces the current flag so callers (the agent
+// shell) can refuse to ingest synthetic output even if upstream
+// somehow forwards it.
+func (r *Runner) AllowsSynthetic() bool { return r.AllowSynthetic }
+
 // ErrToolNotAllowed signals a refusal at the runner level. Callers
 // translate it into a job-status=failed with the same message.
 var ErrToolNotAllowed = errors.New("runner: tool not in agent allow-list")
+
+// ErrSyntheticForbidden is returned when AllowSynthetic is false AND
+// the host binary cannot be found in PATH. The agent treats this as a
+// hard job failure to avoid silently injecting fabricated findings.
+var ErrSyntheticForbidden = errors.New("runner: host binary missing and synthetic output forbidden")
 
 // Output is the raw payload (typically tool stdout/stderr or the artifact
 // path the tool writes to).
@@ -80,7 +115,12 @@ func (r *Runner) Execute(ctx context.Context, tool string, targets []string, max
 	if path, err := exec.LookPath(tool); err == nil {
 		bin = path
 	} else {
-		// Fallback: synthetic output so the dev pipeline can demonstrate end-to-end.
+		// Host binary missing. In production we refuse to substitute
+		// synthetic output — fail the job and let ops investigate
+		// rather than poison findings with fabricated data.
+		if !r.AllowSynthetic {
+			return nil, fmt.Errorf("%w: tool=%s", ErrSyntheticForbidden, tool)
+		}
 		return &Output{
 			Tool:    tool,
 			Command: tool + " " + strings.Join(args, " "),

@@ -47,6 +47,19 @@ type Limiter interface {
 type InMemoryLimiter struct {
 	mu      sync.Mutex
 	buckets map[string]*memBucket
+	// lastSweep is when we last pruned dormant buckets. Without
+	// pruning the map grows unbounded because every unique key
+	// (per-IP, per-tenant, per-user) creates a bucket that is
+	// never deleted. Sweep runs inline on Allow() at most once
+	// per sweepInterval; production deployments still use Redis
+	// for multi-pod fan-out — this guard is for single-pod prod
+	// + dev so a long-running process doesn't OOM.
+	lastSweep    time.Time
+	sweepInterval time.Duration
+	// bucketTTL: a bucket idle for longer than this is evicted on
+	// the next sweep. Must exceed the longest plausible limit
+	// window — 1h is plenty (we never run rate limits >10m).
+	bucketTTL time.Duration
 }
 
 type memBucket struct {
@@ -55,7 +68,11 @@ type memBucket struct {
 }
 
 func NewInMemoryLimiter() *InMemoryLimiter {
-	return &InMemoryLimiter{buckets: map[string]*memBucket{}}
+	return &InMemoryLimiter{
+		buckets:       map[string]*memBucket{},
+		sweepInterval: 5 * time.Minute,
+		bucketTTL:     1 * time.Hour,
+	}
 }
 
 func (l *InMemoryLimiter) Name() string { return "memory" }
@@ -69,6 +86,18 @@ func (l *InMemoryLimiter) Allow(_ context.Context, key string, limit, windowSec 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
+	// Opportunistic sweep — runs at most every sweepInterval and only
+	// while we already hold the lock for an Allow() call. Skipping
+	// when the map is small avoids the iteration cost for low-traffic
+	// processes.
+	if len(l.buckets) > 64 && now.Sub(l.lastSweep) > l.sweepInterval {
+		for k, b := range l.buckets {
+			if now.Sub(b.lastRefill) > l.bucketTTL {
+				delete(l.buckets, k)
+			}
+		}
+		l.lastSweep = now
+	}
 	b, ok := l.buckets[key]
 	if !ok {
 		b = &memBucket{tokens: burst, lastRefill: now}
@@ -85,6 +114,14 @@ func (l *InMemoryLimiter) Allow(_ context.Context, key string, limit, windowSec 
 	}
 	b.tokens--
 	return true, nil
+}
+
+// Size reports the number of live buckets — exposed so tests can
+// assert the eviction logic + so /metrics can publish gauge.
+func (l *InMemoryLimiter) Size() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.buckets)
 }
 
 // ---- Redis sliding-window counter ----------------------------------------

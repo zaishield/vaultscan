@@ -31,6 +31,10 @@ type Verifier struct {
 	// Tokens with alg=HS256 keep using sharedSecret — production
 	// flips to RS256 + JWKS but dev keeps the HS path for tests.
 	keyManager *KeyManager
+	// refuseHMAC forces Parse() to reject any HS256 token. Set via
+	// WithRefuseHMAC() — typically called in production-mode boot so
+	// the API only accepts RS256 from the configured KeyManager.
+	refuseHMAC bool
 }
 
 func NewVerifier(sharedSecret string, pool *pgxpool.Pool) *Verifier {
@@ -43,6 +47,15 @@ func (v *Verifier) WithKeyManager(km *KeyManager) *Verifier {
 	return v
 }
 
+// WithRefuseHMAC turns on the production-mode lockdown: any HS256
+// token is rejected even if sharedSecret would match. Callers wire
+// this in production boot so HS256 dev tokens can never grant access
+// against a production-configured API.
+func (v *Verifier) WithRefuseHMAC(yes bool) *Verifier {
+	v.refuseHMAC = yes
+	return v
+}
+
 func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 	raw = strings.TrimSpace(strings.TrimPrefix(raw, "Bearer "))
 	if raw == "" {
@@ -52,6 +65,15 @@ func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 	tok, err := jwt.ParseWithClaims(raw, claims, func(t *jwt.Token) (any, error) {
 		switch t.Method.(type) {
 		case *jwt.SigningMethodHMAC:
+			// In production with a KeyManager wired, HS256 is the
+			// dev-only path. Reject it so an attacker who exfiltrated
+			// the shared secret (or who is replaying a dev token
+			// against a prod env) can't forge identities. The
+			// production guard ensures the secret is ≥32 random
+			// bytes; this gate is the second line of defense.
+			if v.refuseHMAC {
+				return nil, errors.New("auth: HS256 disabled in production (use RS256 with kid)")
+			}
 			return v.sharedSecret, nil
 		case *jwt.SigningMethodRSA:
 			if v.keyManager == nil {
@@ -61,7 +83,18 @@ func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 			if kid == "" {
 				return nil, fmt.Errorf("RS256 token missing kid header")
 			}
-			return v.keyManager.PublicKeyByKID(ctx, kid)
+			pub, err := v.keyManager.PublicKeyByKID(ctx, kid)
+			if err != nil {
+				return nil, err
+			}
+			// Defense in depth: PublicKeyByKID returns *rsa.PublicKey
+			// by type, so a nil-ness check is the meaningful guard
+			// against a key lookup that succeeded with no key
+			// installed (e.g. row in jwt_signing_keys but PEM blank).
+			if pub == nil {
+				return nil, errors.New("auth: key manager returned nil RSA key")
+			}
+			return pub, nil
 		}
 		return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 	})

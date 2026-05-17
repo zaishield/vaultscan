@@ -26,6 +26,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/dashboards"
 	"github.com/zaishield/vaultscan/backend/internal/db"
 	"github.com/zaishield/vaultscan/backend/internal/engagements"
+	"github.com/zaishield/vaultscan/backend/internal/envmode"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
@@ -196,6 +197,12 @@ func main() {
 			log.Warn().Err(err).Msg("JWT key bootstrap failed")
 		}
 		verifier = verifier.WithKeyManager(keyMgr)
+	}
+	// Production lockdown: forbid HS256 tokens once we have RS256 wired.
+	// HS256 stays available in dev/staging so test tooling keeps working
+	// without standing up a full key manager.
+	if envmode.IsProduction(cfg.Env) {
+		verifier = verifier.WithRefuseHMAC(true)
 	}
 
 	// Optional in-process analytics indexer. The standalone analytics-worker

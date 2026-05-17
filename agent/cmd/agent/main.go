@@ -309,6 +309,15 @@ func (a *Agent) execute(ctx context.Context, j job) {
 			if errors.Is(err, runner.ErrToolNotAllowed) {
 				a.counters.BumpImagePullsFailed()
 			}
+			// ErrSyntheticForbidden is structural: a production
+			// agent has a missing binary that the cloud profile
+			// expected. Fail the job and let ops investigate
+			// rather than silently dropping the tool.
+			if errors.Is(err, runner.ErrSyntheticForbidden) {
+				_ = a.postStatus(ctx, j.ID, "failed",
+					"tool binary missing on agent and synthetic forbidden: "+tool)
+				return
+			}
 			continue
 		}
 		pkg, err := a.packager.Package(out)

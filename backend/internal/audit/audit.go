@@ -11,10 +11,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
 )
+
+// auditLogger emits a structured warning whenever Record fails so that
+// callers using `_ = svc.Record(...)` (the common pattern in handlers
+// + services where audit failure must not block the primary tenant
+// operation) still produce an ops-visible signal. Without this, a
+// silently-failing audit pipeline would be detectable only by the
+// chain-verify cron — and only via row absence.
+var auditLogger = zerolog.New(os.Stderr).With().
+	Timestamp().Str("component", "audit").Logger()
 
 // Event types listed in Blueprint §32.1 (30+ entries) plus operational extras.
 const (
@@ -76,7 +87,25 @@ type Entry struct {
 
 // Record appends a hash-chained entry. If anything fails, the call returns
 // the error - callers should treat audit-failure as a hard error.
+//
+// Failure modes are also emitted as structured warning logs so callers
+// using `_ = svc.Record(...)` still produce an ops-visible signal. The
+// log carries event + actor + target so an operator can correlate the
+// missing row with the in-flight tenant operation.
 func (s *Service) Record(ctx context.Context, e Entry) error {
+	err := s.recordInner(ctx, e)
+	if err != nil {
+		auditLogger.Warn().Err(err).
+			Str("event", e.Event).
+			Str("actor_type", e.ActorType).
+			Str("target_type", e.TargetType).
+			Str("target_id", e.TargetID).
+			Msg("audit: record failed (chain row dropped)")
+	}
+	return err
+}
+
+func (s *Service) recordInner(ctx context.Context, e Entry) error {
 	if e.ActorType == "" {
 		e.ActorType = "user"
 	}
