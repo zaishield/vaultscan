@@ -81,8 +81,25 @@ func (r *ImageDigestRegistry) ImageRefFor(tool, fallbackRegistry string) string 
 	if d, ok := r.digests[tool]; ok && d != "" {
 		return fmt.Sprintf("%s/%s@%s", registry, tool, d)
 	}
+	// Latest-tag fallback. Emit a one-time warning via the hook
+	// (cmd/api binds it to a Prometheus counter + log) so ops know
+	// they're shipping unpinned images. A mutable tag is a known
+	// supply-chain risk: a compromised registry can substitute
+	// malicious images without any audit trail. Production should
+	// have every scanner pinned.
+	if unpinnedSink != nil {
+		unpinnedSink(tool)
+	}
 	return fmt.Sprintf("%s/%s:latest", registry, tool)
 }
+
+// unpinnedSink is called once per tool lookup that falls back to
+// :latest. cmd/api binds it to observability.ScannerUnpinnedHits
+// without the scanorch package importing observability. Nil = no-op.
+var unpinnedSink func(tool string)
+
+// SetUnpinnedSink wires the unpinned-fallback callback.
+func SetUnpinnedSink(f func(tool string)) { unpinnedSink = f }
 
 // IsPinned reports whether tool has an explicit digest entry.
 // Operators alert on this dropping to false for any tool the

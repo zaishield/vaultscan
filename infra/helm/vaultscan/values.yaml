@@ -17,6 +17,9 @@ api:
   image:
     repository: api
     tag: ""
+    # IfNotPresent suits immutable digest-pinned tags (release flow);
+    # Always is required if you ever ship a moving tag (avoid in prod).
+    pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 8080

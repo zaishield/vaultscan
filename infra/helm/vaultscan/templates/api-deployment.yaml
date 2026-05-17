@@ -22,17 +22,34 @@ spec:
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
+      # Give in-flight requests ~30s to drain on rolling deploy.
+      # Combined with the preStop sleep + readinessProbe periodSeconds=5,
+      # this gives the load balancer time to mark the pod NotReady
+      # before kubelet sends SIGTERM, so no request lands on a
+      # half-shut-down api process.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: api
           image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.api.image.repository "tag" .Values.api.image.tag) }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy | default "IfNotPresent" }}
           ports: [{ name: http, containerPort: 8080 }]
           envFrom: {{- include "vaultscan.envFrom" (dict "root" .) | nindent 12 }}
           readinessProbe:
             httpGet: { path: /readyz, port: http }
             periodSeconds: 5
+            failureThreshold: 2
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 15
+            failureThreshold: 3
+          # preStop: stop receiving new traffic and let in-flight
+          # requests drain. /readyz starts failing immediately so
+          # the LB removes us from rotation; the sleep gives kube-
+          # proxy + ingress time to propagate the change.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 15"]
           resources: {{- toYaml .Values.api.resources | nindent 12 }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}

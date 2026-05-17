@@ -1,5 +1,19 @@
-# VAULTSCAN API control plane (Blueprint §11, §26.1).
-# Apply: kubectl apply -f infra/k8s/control-plane/
+# DEPRECATED — raw manifest kept ONLY as a reference for fresh
+# clusters where Helm isn't available. Production deploys MUST use
+# infra/helm/vaultscan/ (helm chart) which adds:
+#   - imagePullPolicy + terminationGracePeriodSeconds + preStop drain
+#   - SecurityContext (runAsNonRoot, readOnlyRootFilesystem, seccomp)
+#   - PodDisruptionBudget, NetworkPolicy, ServiceMonitor
+#   - Digest-pinned images (this file uses :latest which is a
+#     supply-chain hazard)
+#   - HPA + ingress + cert-manager wiring
+#
+# Drift between this file and the Helm chart was flagged in the
+# 2026-05 audit. Removing it outright would break the "kubectl apply
+# the YAML and figure it out" path some operators rely on, so the
+# file stays — but it MUST NOT be applied to production.
+#
+# Apply (dev / lab only): kubectl apply -f infra/k8s/control-plane/
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -11,6 +25,8 @@ metadata:
   name: api
   namespace: vaultscan-control
   labels: { app: vaultscan, component: api }
+  annotations:
+    vaultscan.io/source: "raw-manifest-dev-only — use helm chart in production"
 spec:
   replicas: 3
   selector: { matchLabels: { app: vaultscan, component: api } }
@@ -18,9 +34,17 @@ spec:
     metadata:
       labels: { app: vaultscan, component: api }
     spec:
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: api
+          # NOTE: :latest is acceptable for dev only. Production
+          # deploys via the helm chart use digest pins.
           image: registry.zaishield.com/vaultscan/api:latest
+          imagePullPolicy: Always
           ports: [{ containerPort: 8080 }]
           envFrom:
             - secretRef: { name: vaultscan-api-env }
@@ -31,9 +55,20 @@ spec:
           readinessProbe:
             httpGet: { path: /readyz, port: 8080 }
             periodSeconds: 5
+            failureThreshold: 2
           livenessProbe:
             httpGet: { path: /healthz, port: 8080 }
             periodSeconds: 15
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 15"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
 ---
 apiVersion: v1
 kind: Service
@@ -42,4 +77,4 @@ metadata:
   namespace: vaultscan-control
 spec:
   selector: { app: vaultscan, component: api }
-  ports: [{ port: 8080, targetPort: 8080 }]
+  ports: [{ port: 8080, targetPort: 8080, name: http }]
