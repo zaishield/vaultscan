@@ -96,7 +96,7 @@ func mobileDashboard(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantID, err := tenantIDFromQuery(r)
 		if err != nil {
-			badRequest(w, err.Error())
+			writeTenantError(w, err)
 			return
 		}
 		// Slimmed-down executive-style summary — mobile cares about

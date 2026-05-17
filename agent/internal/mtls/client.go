@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/zaishield/vaultscan/agent/internal/certstore"
 )
 
 // Client builds an *http.Client wired with mTLS for talking to the
@@ -26,17 +28,11 @@ import (
 //	gateway-ca.pem (optional) : CA pool to verify the gateway's cert.
 //	                            Empty = use the system pool.
 func Client(dataDir string) (*http.Client, error) {
-	certPath := filepath.Join(dataDir, "agent.crt")
-	keyPath := filepath.Join(dataDir, "agent.key")
-	certPEM, err := os.ReadFile(certPath)
+	b, err := certstore.Load(dataDir)
 	if err != nil {
 		return nil, err
 	}
-	keyPEM, err := os.ReadFile(keyPath)
-	if err != nil {
-		return nil, err
-	}
-	leaf, err := tls.X509KeyPair(certPEM, keyPEM)
+	leaf, err := tls.X509KeyPair([]byte(b.CertPEM), []byte(b.KeyPEM))
 	if err != nil {
 		return nil, err
 	}
@@ -78,15 +74,11 @@ func UpdateClientCert(client *http.Client, dataDir string) error {
 	if !ok || tr.TLSClientConfig == nil {
 		return errors.New("mtls: client transport is not TLS-aware")
 	}
-	certPEM, err := os.ReadFile(filepath.Join(dataDir, "agent.crt"))
+	b, err := certstore.Load(dataDir)
 	if err != nil {
 		return err
 	}
-	keyPEM, err := os.ReadFile(filepath.Join(dataDir, "agent.key"))
-	if err != nil {
-		return err
-	}
-	leaf, err := tls.X509KeyPair(certPEM, keyPEM)
+	leaf, err := tls.X509KeyPair([]byte(b.CertPEM), []byte(b.KeyPEM))
 	if err != nil {
 		return err
 	}

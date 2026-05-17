@@ -33,10 +33,16 @@ func TestCrossTenant_ReadHandlers_Rejected(t *testing.T) {
 		name string
 		path string
 	}{
-		{"listFindings",    "/api/v1/findings?tenant_id="    + tenantA.String()},
-		{"listEngagements", "/api/v1/engagements?tenant_id=" + tenantA.String()},
-		{"listAssets",      "/api/v1/assets?tenant_id="      + tenantA.String()},
-		{"listScans",       "/api/v1/scans?tenant_id="       + tenantA.String()},
+		{"listFindings",         "/api/v1/findings?tenant_id="                 + tenantA.String()},
+		{"listEngagements",      "/api/v1/engagements?tenant_id="              + tenantA.String()},
+		{"listAssets",           "/api/v1/assets?tenant_id="                   + tenantA.String()},
+		{"listScans",            "/api/v1/scans?tenant_id="                    + tenantA.String()},
+		{"listAgents",        "/api/v1/agents?tenant_id="                      + tenantA.String()},
+		{"execDashboard",     "/api/v1/dashboards/executive?tenant_id="        + tenantA.String()},
+		{"techDashboard",     "/api/v1/dashboards/technical?tenant_id="        + tenantA.String()},
+		{"drillCritical",     "/api/v1/dashboards/findings/critical?tenant_id="     + tenantA.String()},
+		{"drillSLABreaches",  "/api/v1/dashboards/findings/sla-breaches?tenant_id=" + tenantA.String()},
+		{"drillRecentScans",  "/api/v1/dashboards/scans/recent?tenant_id="          + tenantA.String()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

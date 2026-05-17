@@ -90,14 +90,25 @@ func TestForbidden_EnvelopeShape(t *testing.T) {
 func TestInternalErr_EnvelopeShape(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()
-	internalErr(rec, errors.New("boom"))
+	internalErr(rec, errors.New("boom: secret-table.column"))
 	if rec.Result().StatusCode != 500 {
 		t.Errorf("status=%d want 500", rec.Result().StatusCode)
 	}
 	body := decodeEnvelope(t, rec.Body)
 	envelope := body["error"].(map[string]any)
-	if envelope["code"] != "internal" || envelope["message"] != "boom" {
-		t.Errorf("internal envelope wrong: %v", envelope)
+	if envelope["code"] != "internal" {
+		t.Errorf("code = %v want 'internal'", envelope["code"])
+	}
+	// Critical: raw err MUST NOT appear in the response. internalErr
+	// previously echoed err.Error() and leaked SQL table/column names,
+	// file paths, and stack-trace fragments. Operators see the full
+	// err via the package logger; clients see a stable generic message.
+	msg, _ := envelope["message"].(string)
+	if strings.Contains(msg, "boom") || strings.Contains(msg, "secret-table") {
+		t.Errorf("internal err leaked into response: %q", msg)
+	}
+	if msg == "" {
+		t.Errorf("internal response must carry a generic message; got empty")
 	}
 }
 

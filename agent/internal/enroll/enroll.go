@@ -16,11 +16,11 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/zaishield/vaultscan/agent/internal/certstore"
 )
 
 func Run(client *http.Client, gateway string, agentID uuid.UUID, token, dataDir string) error {
@@ -67,22 +67,15 @@ func Run(client *http.Client, gateway string, agentID uuid.UUID, token, dataDir 
 		return fmt.Errorf("enroll: gateway returned %d", resp.StatusCode)
 	}
 
-	if err := os.WriteFile(filepath.Join(dataDir, "agent.crt"), certPEM, 0o600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "agent.key"), keyPEM, 0o600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "fingerprint"), []byte(fp), 0o600); err != nil {
-		return err
-	}
-	return nil
+	return certstore.Save(dataDir, certstore.Bundle{
+		CertPEM:     string(certPEM),
+		KeyPEM:      string(keyPEM),
+		Fingerprint: fp,
+	})
 }
 
+// LoadFingerprint reads the canonical bundle and returns its
+// fingerprint, falling back to the legacy file for pre-bundle installs.
 func LoadFingerprint(dataDir string) (string, error) {
-	b, err := os.ReadFile(filepath.Join(dataDir, "fingerprint"))
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return certstore.LoadFingerprint(dataDir)
 }

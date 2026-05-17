@@ -4,16 +4,26 @@ package middleware
 
 import (
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
 
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/db"
 )
+
+// authLogger emits the rejected-token detail server-side so operators
+// keep diagnosis power without the client learning anything beyond
+// "unauthorized". Echoing err.Error() back leaks whether the kid was
+// unknown, the signature failed, the alg was banned, the token was
+// expired, etc. — exactly the breadcrumbs an attacker tunes against.
+var authLogger = zerolog.New(os.Stderr).With().
+	Timestamp().Str("component", "auth-mw").Logger()
 
 // AuthFunc is the JWT verifier injected by the API server.
 type AuthFunc func(r *http.Request) (*auth.Identity, error)
@@ -24,7 +34,13 @@ func Auth(verify AuthFunc) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, err := verify(r)
 			if err != nil {
-				writeJSONError(w, http.StatusUnauthorized, "unauthorized", err.Error())
+				authLogger.Warn().
+					Err(err).
+					Str("remote_addr", r.RemoteAddr).
+					Str("path", r.URL.Path).
+					Msg("auth: token rejected")
+				writeJSONError(w, http.StatusUnauthorized, "unauthorized",
+					"invalid or missing bearer token")
 				return
 			}
 			r = r.WithContext(auth.ContextWithIdentity(r.Context(), id))

@@ -685,8 +685,12 @@ func listAssets(s *Services) http.HandlerFunc {
 func importAssetsCSV(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		identity, _ := auth.FromContext(r.Context())
+		tenantID, terr := auth.AuthorizeTargetTenant(identity, r.URL.Query().Get("tenant_id"))
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
+		}
 		partnerID, _ := uuid.Parse(r.URL.Query().Get("partner_id"))
-		tenantID, _ := uuid.Parse(r.URL.Query().Get("tenant_id"))
 		var eng *uuid.UUID
 		if v := r.URL.Query().Get("engagement_id"); v != "" {
 			eid, err := uuid.Parse(v)
@@ -929,9 +933,10 @@ func provisionAgent(s *Services) http.HandlerFunc {
 
 func listAgents(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		identity, _ := auth.FromContext(r.Context())
+		tenantID, err := auth.AuthorizeTargetTenant(identity, r.URL.Query().Get("tenant_id"))
 		if err != nil {
-			badRequest(w, "tenant_id required")
+			forbidden(w, err.Error())
 			return
 		}
 		out, err := s.Agents.ListByTenant(r.Context(), tenantID)
@@ -1304,13 +1309,13 @@ func getReport(s *Services) http.HandlerFunc {
 
 func listIntegrations(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var tid, pid *uuid.UUID
-		if v := r.URL.Query().Get("tenant_id"); v != "" {
-			id, err := uuid.Parse(v)
-			if err == nil {
-				tid = &id
-			}
+		identity, _ := auth.FromContext(r.Context())
+		tid, terr := auth.AuthorizeOptionalTenant(identity, r.URL.Query().Get("tenant_id"))
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
 		}
+		var pid *uuid.UUID
 		if v := r.URL.Query().Get("partner_id"); v != "" {
 			id, err := uuid.Parse(v)
 			if err == nil {
@@ -1369,9 +1374,10 @@ func createIntegration(s *Services) http.HandlerFunc {
 
 func execDashboard(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		identity, _ := auth.FromContext(r.Context())
+		tenantID, err := auth.AuthorizeTargetTenant(identity, r.URL.Query().Get("tenant_id"))
 		if err != nil {
-			badRequest(w, "tenant_id required")
+			forbidden(w, err.Error())
 			return
 		}
 		out, err := s.Dashboards.Executive(r.Context(), tenantID)
@@ -1385,9 +1391,10 @@ func execDashboard(s *Services) http.HandlerFunc {
 
 func techDashboard(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		identity, _ := auth.FromContext(r.Context())
+		tenantID, err := auth.AuthorizeTargetTenant(identity, r.URL.Query().Get("tenant_id"))
 		if err != nil {
-			badRequest(w, "tenant_id required")
+			forbidden(w, err.Error())
 			return
 		}
 		out, err := s.Dashboards.Technical(r.Context(), tenantID)
@@ -1420,12 +1427,35 @@ func partnerDashboard(s *Services) http.HandlerFunc {
 func listAudit(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		identity, _ := auth.FromContext(r.Context())
+		// Tenant-level callers MUST be pinned to their own tenant — without
+		// this they could read every tenant under the same platform_id
+		// (the WHERE platform_id=$1 alone gates nothing intra-tenant).
+		// Platform / partner callers may filter by an arbitrary tenant_id
+		// or leave it unset to see platform-wide audit.
+		requested := r.URL.Query().Get("tenant_id")
+		var pinnedTenant *uuid.UUID
+		if len(identity.Roles) > 0 {
+			for _, role := range identity.Roles {
+				if auth.TenantLevelRoles[role] {
+					tid, terr := auth.AuthorizeTargetTenant(identity, requested)
+					if terr != nil {
+						forbidden(w, terr.Error())
+						return
+					}
+					pinnedTenant = &tid
+					break
+				}
+			}
+		}
 		args := []any{identity.PlatformID}
 		q := `SELECT id, event, actor_type, actor_id, target_type, target_id,
 		             tenant_id, partner_id, occurred_at, payload
 		        FROM audit_logs WHERE platform_id=$1`
-		if v := r.URL.Query().Get("tenant_id"); v != "" {
-			id, err := uuid.Parse(v)
+		if pinnedTenant != nil {
+			q += fmt.Sprintf(" AND tenant_id=$%d", len(args)+1)
+			args = append(args, *pinnedTenant)
+		} else if requested != "" {
+			id, err := uuid.Parse(requested)
 			if err == nil {
 				q += fmt.Sprintf(" AND tenant_id=$%d", len(args)+1)
 				args = append(args, id)
@@ -1752,9 +1782,10 @@ func manualEvidenceUpload(s *Services) http.HandlerFunc {
 		// Multipart-free: bytes in body, metadata in query params. Keeps
 		// the handler small; the portal posts with a JSON metadata header
 		// + raw body. Production switches to multipart for >50 MB blobs.
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
-		if err != nil {
-			badRequest(w, "tenant_id required")
+		identity, _ := auth.FromContext(r.Context())
+		tenantID, terr := auth.AuthorizeTargetTenant(identity, r.URL.Query().Get("tenant_id"))
+		if terr != nil {
+			forbidden(w, terr.Error())
 			return
 		}
 		partnerID, err := uuid.Parse(r.URL.Query().Get("partner_id"))
@@ -1780,7 +1811,6 @@ func manualEvidenceUpload(s *Services) http.HandlerFunc {
 			internalErr(w, err)
 			return
 		}
-		identity, _ := auth.FromContext(r.Context())
 		ev, err := s.Vault.Record(r.Context(), evidence.PutInput{
 			TenantID: tenantID, PartnerID: partnerID,
 			FindingID: findingID, EngagementID: engagementID,
@@ -1873,14 +1903,15 @@ func createUser(s *Services) http.HandlerFunc {
 func listUsers(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		identity, _ := auth.FromContext(r.Context())
-		var partnerID, tenantID *uuid.UUID
+		tenantID, terr := auth.AuthorizeOptionalTenant(identity, r.URL.Query().Get("tenant_id"))
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
+		}
+		var partnerID *uuid.UUID
 		if v := r.URL.Query().Get("partner_id"); v != "" {
 			id, _ := uuid.Parse(v)
 			partnerID = &id
-		}
-		if v := r.URL.Query().Get("tenant_id"); v != "" {
-			id, _ := uuid.Parse(v)
-			tenantID = &id
 		}
 		out, err := s.Users.List(r.Context(), identity.PlatformID, partnerID, tenantID)
 		if err != nil {
@@ -2145,11 +2176,13 @@ func testIntegration(s *Services) http.HandlerFunc {
 
 func integrationHealth(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var tid, pid *uuid.UUID
-		if v := r.URL.Query().Get("tenant_id"); v != "" {
-			id, _ := uuid.Parse(v)
-			tid = &id
+		identity, _ := auth.FromContext(r.Context())
+		tid, terr := auth.AuthorizeOptionalTenant(identity, r.URL.Query().Get("tenant_id"))
+		if terr != nil {
+			forbidden(w, terr.Error())
+			return
 		}
+		var pid *uuid.UUID
 		if v := r.URL.Query().Get("partner_id"); v != "" {
 			id, _ := uuid.Parse(v)
 			pid = &id
@@ -2167,9 +2200,10 @@ func integrationHealth(s *Services) http.HandlerFunc {
 
 func drillCriticalFindings(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		identity, _ := auth.FromContext(r.Context())
+		tenantID, err := auth.AuthorizeTargetTenant(identity, r.URL.Query().Get("tenant_id"))
 		if err != nil {
-			badRequest(w, "tenant_id required")
+			forbidden(w, err.Error())
 			return
 		}
 		rng := dashboards.ParseRange(r.URL.Query().Get("since"))
@@ -2185,9 +2219,10 @@ func drillCriticalFindings(s *Services) http.HandlerFunc {
 
 func drillSLABreaches(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		identity, _ := auth.FromContext(r.Context())
+		tenantID, err := auth.AuthorizeTargetTenant(identity, r.URL.Query().Get("tenant_id"))
 		if err != nil {
-			badRequest(w, "tenant_id required")
+			forbidden(w, err.Error())
 			return
 		}
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -2202,9 +2237,10 @@ func drillSLABreaches(s *Services) http.HandlerFunc {
 
 func drillRecentScans(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		identity, _ := auth.FromContext(r.Context())
+		tenantID, err := auth.AuthorizeTargetTenant(identity, r.URL.Query().Get("tenant_id"))
 		if err != nil {
-			badRequest(w, "tenant_id required")
+			forbidden(w, err.Error())
 			return
 		}
 		rng := dashboards.ParseRange(r.URL.Query().Get("since"))

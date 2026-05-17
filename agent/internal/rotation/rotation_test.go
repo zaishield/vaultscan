@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/zaishield/vaultscan/agent/internal/certstore"
 )
 
 // seedExpiringCert writes an agent.crt that's already inside RotateBefore
@@ -37,16 +39,16 @@ func seedExpiringCert(t *testing.T, dir string) {
 		NotAfter:     time.Now().Add(7 * 24 * time.Hour), // 7 days = inside rotateBefore (30d)
 	}
 	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	if err := os.WriteFile(filepath.Join(dir, "agent.crt"),
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "agent.key"),
-		pem.EncodeToMemory(&pem.Block{
-			Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "fingerprint"), []byte("old-fp"), 0o600); err != nil {
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv),
+	})
+	sum := sha256.Sum256(der)
+	if err := certstore.Save(dir, certstore.Bundle{
+		CertPEM:     string(certPEM),
+		KeyPEM:      string(keyPEM),
+		Fingerprint: hex.EncodeToString(sum[:]),
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

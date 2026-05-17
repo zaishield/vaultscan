@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -336,7 +337,7 @@ func listFindingClusters(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantID, err := tenantIDFromQuery(r)
 		if err != nil {
-			badRequest(w, err.Error())
+			writeTenantError(w, err)
 			return
 		}
 		out, err := s.Findings.ListClusters(r.Context(), tenantID)
@@ -352,7 +353,7 @@ func addSeverityOverride(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantID, err := tenantIDFromQuery(r)
 		if err != nil {
-			badRequest(w, err.Error())
+			writeTenantError(w, err)
 			return
 		}
 		var in findings.SeverityOverrideInput
@@ -379,7 +380,7 @@ func addSuppressionRule(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantID, err := tenantIDFromQuery(r)
 		if err != nil {
-			badRequest(w, err.Error())
+			writeTenantError(w, err)
 			return
 		}
 		var in findings.SuppressionInput
@@ -406,7 +407,7 @@ func sarifExport(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantID, err := tenantIDFromQuery(r)
 		if err != nil {
-			badRequest(w, err.Error())
+			writeTenantError(w, err)
 			return
 		}
 		f := findings.ListFilter{TenantID: tenantID, Limit: 1000}
@@ -531,7 +532,7 @@ func uploadEvidenceWithDEK(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantID, err := tenantIDFromQuery(r)
 		if err != nil {
-			badRequest(w, err.Error())
+			writeTenantError(w, err)
 			return
 		}
 		body, err := io.ReadAll(r.Body)
@@ -921,7 +922,7 @@ func complianceSnapshot(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantID, err := tenantIDFromQuery(r)
 		if err != nil {
-			badRequest(w, err.Error())
+			writeTenantError(w, err)
 			return
 		}
 		snaps, err := s.Dashboards.ComplianceForTenant(r.Context(), tenantID)
@@ -946,7 +947,7 @@ func dashboardStreamSSE(s *Services) http.HandlerFunc {
 		}
 		tenantID, err := tenantIDFromQuery(r)
 		if err != nil {
-			badRequest(w, err.Error())
+			writeTenantError(w, err)
 			return
 		}
 		channel := r.URL.Query().Get("channel")
@@ -1078,7 +1079,7 @@ func auditTimeline(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantID, err := tenantIDFromQuery(r)
 		if err != nil {
-			badRequest(w, err.Error())
+			writeTenantError(w, err)
 			return
 		}
 		until := time.Now().UTC()
@@ -1248,15 +1249,28 @@ func listPolicyRules(s *Services) http.HandlerFunc {
 // helpers
 // ============================================================================
 
+// tenantIDFromQuery authorizes the requested tenant against the caller's
+// identity (tenant-level roles can only target their own tenant) and
+// returns the resolved UUID. Previously this just parsed the parameter,
+// which made every caller a cross-tenant read primitive.
 func tenantIDFromQuery(r *http.Request) (uuid.UUID, error) {
 	v := r.URL.Query().Get("tenant_id")
 	if v == "" {
 		v = r.Header.Get("X-Tenant-Id")
 	}
-	if v == "" {
-		return uuid.Nil, fmt.Errorf("tenant_id required")
+	identity, _ := auth.FromContext(r.Context())
+	return auth.AuthorizeTargetTenant(identity, v)
+}
+
+// writeTenantError chooses the right status code for the kind of failure
+// tenantIDFromQuery can return. Authorization failures must be 403 so
+// callers know "you may never do this", not 400 ("payload was malformed").
+func writeTenantError(w http.ResponseWriter, err error) {
+	if errors.Is(err, auth.ErrCrossTenantForbidden) {
+		forbidden(w, err.Error())
+		return
 	}
-	return uuid.Parse(v)
+	badRequest(w, err.Error())
 }
 
 func platformConstID() uuid.UUID {

@@ -3,19 +3,23 @@ package mtls
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/zaishield/vaultscan/agent/internal/certstore"
 )
 
 // makeCertKey returns a self-signed cert+key written to dataDir as
@@ -44,10 +48,14 @@ func makeCertKey(t *testing.T, dataDir, cn string) ([]byte, []byte) {
 		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv),
 	})
 	if dataDir != "" {
-		if err := os.WriteFile(filepath.Join(dataDir, "agent.crt"), certPEM, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dataDir, "agent.key"), keyPEM, 0o600); err != nil {
+		// Use the canonical bundle so the test exercises the same path
+		// the agent uses in production.
+		sum := sha256.Sum256(der)
+		if err := certstore.Save(dataDir, certstore.Bundle{
+			CertPEM:     string(certPEM),
+			KeyPEM:      string(keyPEM),
+			Fingerprint: hex.EncodeToString(sum[:]),
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}

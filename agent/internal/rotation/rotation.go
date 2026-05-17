@@ -22,12 +22,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/zaishield/vaultscan/agent/internal/certstore"
 )
 
 // Rotator runs the rotation loop. Construct one per agent and call Run.
@@ -102,11 +102,11 @@ func (r *Rotator) maybeRotate(ctx context.Context) error {
 }
 
 func (r *Rotator) dueForRotation() (bool, error) {
-	pemBytes, err := os.ReadFile(filepath.Join(r.dataDir, "agent.crt"))
+	b, err := certstore.Load(r.dataDir)
 	if err != nil {
 		return false, err
 	}
-	block, _ := pem.Decode(pemBytes)
+	block, _ := pem.Decode([]byte(b.CertPEM))
 	if block == nil {
 		return false, errors.New("rotation: agent.crt not PEM")
 	}
@@ -175,43 +175,23 @@ func (r *Rotator) rotateOnce(ctx context.Context) error {
 	return r.atomicSwap(out.CertificatePEM, key, out.Fingerprint)
 }
 
-// atomicSwap writes the new cert + key + fingerprint to staging files
-// then renames them over the live ones. POSIX rename is atomic, so we
-// never leave an inconsistent (new cert, old key) pair on disk.
+// atomicSwap commits the new cert + key + fingerprint as a single
+// JSON bundle via certstore.Save. The previous implementation did
+// three sequential os.Rename calls, which is NOT atomic across a
+// crash: a kill between renames left the on-disk pair mismatched
+// (new cert / old key, or new cert / old fingerprint) and the agent
+// permanently locked out of mTLS until manual rebootstrap. The
+// bundle path makes the commit a single rename.
 func (r *Rotator) atomicSwap(certPEM string, key *rsa.PrivateKey, fingerprint string) error {
 	keyPEM := pem.EncodeToMemory(&pem.Block{
 		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
-	stage := func(name string, data []byte) (string, error) {
-		p := filepath.Join(r.dataDir, name+".next")
-		if err := os.WriteFile(p, data, 0o600); err != nil {
-			return "", err
-		}
-		return p, nil
-	}
-	certNext, err := stage("agent.crt", []byte(certPEM))
-	if err != nil {
-		return err
-	}
-	keyNext, err := stage("agent.key", keyPEM)
-	if err != nil {
-		_ = os.Remove(certNext)
-		return err
-	}
-	fpNext, err := stage("fingerprint", []byte(fingerprint))
-	if err != nil {
-		_ = os.Remove(certNext)
-		_ = os.Remove(keyNext)
-		return err
-	}
-	for _, f := range []struct{ from, to string }{
-		{certNext, filepath.Join(r.dataDir, "agent.crt")},
-		{keyNext, filepath.Join(r.dataDir, "agent.key")},
-		{fpNext, filepath.Join(r.dataDir, "fingerprint")},
-	} {
-		if err := os.Rename(f.from, f.to); err != nil {
-			return fmt.Errorf("rotation: rename %s: %w", f.to, err)
-		}
+	if err := certstore.Save(r.dataDir, certstore.Bundle{
+		CertPEM:     certPEM,
+		KeyPEM:      string(keyPEM),
+		Fingerprint: fingerprint,
+	}); err != nil {
+		return fmt.Errorf("rotation: save bundle: %w", err)
 	}
 	r.mu.Lock()
 	r.fingerprint = fingerprint
