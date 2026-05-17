@@ -47,6 +47,13 @@ const (
 	ReportGenerated         = "ReportGenerated"
 	EvidenceDownloaded      = "EvidenceDownloaded"
 	EmergencyStopTriggered  = "EmergencyStopTriggered"
+	// Billing-quota events (Blueprint §8.7). Block is emitted on a
+	// hard rejection (overage_policy=block); Warning is emitted on
+	// soft-cap pass-through (overage_policy=warn); PlanChanged
+	// fires when AssignPlan succeeds.
+	PartnerQuotaBlocked  = "PartnerQuotaBlocked"
+	PartnerQuotaWarning  = "PartnerQuotaWarning"
+	PartnerPlanChanged   = "PartnerPlanChanged"
 )
 
 // AllEventTypes returns every event type the bus knows about.
@@ -58,6 +65,7 @@ func AllEventTypes() []string {
 		ScannerOutputReceived, FindingNormalized, FindingDeduplicated,
 		FindingAssigned, RetestRequested, RetestPassed, RetestFailed,
 		ReportGenerated, EvidenceDownloaded, EmergencyStopTriggered,
+		PartnerQuotaBlocked, PartnerQuotaWarning, PartnerPlanChanged,
 	}
 }
 

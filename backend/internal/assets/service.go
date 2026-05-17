@@ -22,12 +22,29 @@ import (
 )
 
 type Service struct {
-	pool  *pgxpool.Pool
-	audit *audit.Service
+	pool    *pgxpool.Pool
+	audit   *audit.Service
+	billing AssetQuotaChecker
+}
+
+// AssetQuotaChecker is the slice of billing.Service the assets
+// package actually calls. Defined as an interface so assets doesn't
+// import billing directly (clean unit-testability + the import
+// graph stays flat).
+type AssetQuotaChecker interface {
+	CheckAsset(ctx context.Context, partnerID uuid.UUID, actor *uuid.UUID) error
 }
 
 func New(pool *pgxpool.Pool, a *audit.Service) *Service {
 	return &Service{pool: pool, audit: a}
+}
+
+// WithBilling attaches the partner-level asset-quota gate. Create()
+// calls CheckAsset before INSERT; ErrQuotaExceeded propagates so the
+// API can return a 429.
+func (s *Service) WithBilling(b AssetQuotaChecker) *Service {
+	s.billing = b
+	return s
 }
 
 type CreateInput struct {
@@ -67,6 +84,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	}
 	if in.Name == "" {
 		in.Name = in.Value
+	}
+	// Partner asset-quota gate. Returns ErrQuotaExceeded if the
+	// partner's billing plan caps assets and they're at the limit.
+	// nil billing service = no enforcement (legacy dev path).
+	if s.billing != nil {
+		if err := s.billing.CheckAsset(ctx, in.PartnerID, in.CreatedBy); err != nil {
+			return nil, err
+		}
 	}
 	tagsJSON, _ := json.Marshal(in.Tags)
 	metaJSON, _ := json.Marshal(in.Metadata)

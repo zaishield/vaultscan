@@ -23,13 +23,29 @@ import (
 )
 
 type Service struct {
-	pool  *pgxpool.Pool
-	audit *audit.Service
-	bus   *eventbus.Bus
+	pool    *pgxpool.Pool
+	audit   *audit.Service
+	bus     *eventbus.Bus
+	billing AgentQuotaChecker
+}
+
+// AgentQuotaChecker is the per-partner agent enrollment quota gate.
+// Defined as an interface so the agents package doesn't import
+// billing (clean import graph + cheap test stubbing).
+type AgentQuotaChecker interface {
+	CheckAgent(ctx context.Context, partnerID uuid.UUID, actor *uuid.UUID) error
 }
 
 func New(pool *pgxpool.Pool, a *audit.Service, b *eventbus.Bus) *Service {
 	return &Service{pool: pool, audit: a, bus: b}
+}
+
+// WithBilling attaches the agent-quota gate. Provision() calls
+// CheckAgent before INSERT; ErrQuotaExceeded propagates so the
+// /api/v1/agents POST handler can return a 429.
+func (s *Service) WithBilling(b AgentQuotaChecker) *Service {
+	s.billing = b
+	return s
 }
 
 type CreateInput struct {
@@ -49,6 +65,13 @@ func (s *Service) Provision(ctx context.Context, in CreateInput) (*models.Agent,
 	}
 	if in.FormFactor == "" {
 		in.FormFactor = "linux_vm"
+	}
+	// Per-partner agent-enrollment quota. nil billing = no
+	// enforcement (legacy path); production wires this via main.go.
+	if s.billing != nil {
+		if err := s.billing.CheckAgent(ctx, in.PartnerID, in.CreatedBy); err != nil {
+			return nil, "", err
+		}
 	}
 	a := &models.Agent{
 		ID: uuid.New(), PlatformID: in.PlatformID, PartnerID: in.PartnerID,

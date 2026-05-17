@@ -21,6 +21,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/users"
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/authdocs"
+	"github.com/zaishield/vaultscan/backend/internal/billing"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
 	"github.com/zaishield/vaultscan/backend/internal/config"
 	"github.com/zaishield/vaultscan/backend/internal/dashboards"
@@ -151,9 +152,13 @@ func main() {
 	partSvc := partners.New(pool.Pool, auditSvc, bus)
 	engSvc := engagements.New(pool.Pool, auditSvc, bus)
 	docSvc := authdocs.New(pool.Pool, vault, auditSvc, bus)
-	assetSvc := assets.New(pool.Pool, auditSvc)
+	// Billing first so the orchestrator + asset service can pull
+	// in the quota gate during their construction.
+	billingSvc := billing.New(pool.Pool, bus)
+	assetSvc := assets.New(pool.Pool, auditSvc).WithBilling(billingSvc)
 	scope := scopeguard.New(pool.Pool)
-	orch := scanorch.New(pool.Pool, scope, auditSvc, bus, signer)
+	orch := scanorch.New(pool.Pool, scope, auditSvc, bus, signer).
+		WithBilling(billingSvc)
 	if reg, err := scanorch.NewImageDigestRegistry(
 		getenvOr("VAULTSCAN_SCANNER_DIGESTS_PATH", "tools/scanner-images/digests.json"),
 	); err == nil {
@@ -165,7 +170,7 @@ func main() {
 	} else {
 		log.Warn().Err(err).Msg("scanner image digests not loaded; falling back to :latest")
 	}
-	agentSvc := agents.New(pool.Pool, auditSvc, bus)
+	agentSvc := agents.New(pool.Pool, auditSvc, bus).WithBilling(billingSvc)
 	findSvc := findings.New(pool.Pool, auditSvc, bus)
 	retestSvc := retesting.New(pool.Pool, auditSvc, bus, findSvc, orch)
 	reportSvc := reporting.New(pool.Pool, brand, vault, auditSvc, bus)
@@ -277,6 +282,7 @@ func main() {
 		Findings: findSvc, Vault: vault, Retests: retestSvc, Reports: reportSvc,
 		Integrations: intSvc, Dashboards: dashSvc, Users: userSvc, Email: emailSvc,
 		Cosign: cosignSvc, BrandAssets: brandAssets,
+		Billing: billingSvc,
 		Nodes: nodeOps, LiveStream: liveStream,
 		Guardrails: guardrailSvc, Bruteforce: bruteforce,
 		MFA: mfaSvc, Keys: keyMgr,

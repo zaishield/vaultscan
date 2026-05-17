@@ -715,6 +715,9 @@ func createAsset(s *Services) http.HandlerFunc {
 			Tags: req.Tags, Metadata: req.Metadata, CreatedBy: &id.UserID,
 		})
 		if err != nil {
+			if quotaErrorJSON(w, err) {
+				return
+			}
 			badRequest(w, err.Error())
 			return
 		}
@@ -860,6 +863,9 @@ func submitScan(s *Services, plane string, w http.ResponseWriter, r *http.Reques
 		ScheduleAt: schedule, RequestedBy: &id.UserID, Intensity: req.Intensity,
 	})
 	if err != nil {
+		if quotaErrorJSON(w, err) {
+			return
+		}
 		internalErr(w, err)
 		return
 	}
@@ -1005,6 +1011,9 @@ func provisionAgent(s *Services) http.HandlerFunc {
 			Name: req.Name, Location: req.Location, FormFactor: req.FormFactor, CreatedBy: &identity.UserID,
 		})
 		if err != nil {
+			if quotaErrorJSON(w, err) {
+				return
+			}
 			badRequest(w, err.Error())
 			return
 		}

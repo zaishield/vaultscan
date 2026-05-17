@@ -20,6 +20,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/guardrails"
 	"github.com/zaishield/vaultscan/backend/internal/health"
 	"github.com/zaishield/vaultscan/backend/internal/authdocs"
+	"github.com/zaishield/vaultscan/backend/internal/billing"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
 	"github.com/zaishield/vaultscan/backend/internal/config"
 	"github.com/zaishield/vaultscan/backend/internal/cosign"
@@ -69,6 +70,7 @@ type Services struct {
 	Email        *email.Service
 	Cosign       *cosign.Service
 	BrandAssets  *branding.AssetService
+	Billing      *billing.Service
 
 	// Deepened service surface (VS-05..VS-12 + HS-01/HS-02/HS-05).
 	Nodes        *scanorch.NodeOps
@@ -467,6 +469,22 @@ func Mount(s *Services) http.Handler {
 		r.With(middleware.RequirePermission("manage_branding")).
 			Post("/api/v1/partners/{partner_id}/sender-dns/check", checkSenderDNS(s))
 		r.Get("/api/v1/partners/{partner_id}/preview", brandingPreview(s))
+
+		// §8.7 Partner billing / quota surface. GET endpoints are
+		// readable by anyone with the manage_branding floor (partner
+		// admins see their own usage / current plan); plan assignment
+		// requires create_tenant (a platform-admin-grade right, since
+		// it determines paid-tier access).
+		r.Route("/api/v1/partners/{partner_id}/billing", func(r chi.Router) {
+			r.With(middleware.RequirePermission("manage_branding")).
+				Get("/plan", getBillingPlan(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Get("/usage", getBillingUsage(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Get("/blocks", listBillingBlocks(s))
+			r.With(middleware.RequirePermission("create_tenant")).
+				Put("/plan", putBillingPlan(s))
+		})
 
 		// Rules of engagement + blackouts (VS-03)
 		r.Route("/api/v1/engagements/{engagement_id}/roe", func(r chi.Router) {

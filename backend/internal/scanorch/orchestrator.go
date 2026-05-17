@@ -53,6 +53,11 @@ type Orchestrator struct {
 	// the primary region has no eligible node. Optional — nil = no
 	// failover, just error out per the legacy behaviour.
 	Failover *FailoverRegions
+
+	// billing is the per-partner scan-quota gate. nil = no
+	// enforcement (the legacy / dev path); production wires this
+	// via WithBilling.
+	billing QuotaChecker
 }
 
 // WithDigests attaches an ImageDigestRegistry. main.go calls this
@@ -85,6 +90,23 @@ func (o *Orchestrator) WithNodeOps(n *NodeOps) *Orchestrator {
 	return o
 }
 
+// QuotaChecker is the slice of billing.Service the orchestrator
+// actually needs. Defined as an interface so scanorch doesn't pull
+// in the full billing package at link time (and so tests can stub
+// it with a fixture that returns "always allow" or a specific
+// ErrQuotaExceeded).
+type QuotaChecker interface {
+	CheckScan(ctx context.Context, partnerID uuid.UUID, actor *uuid.UUID) error
+}
+
+// WithBilling attaches the billing-quota service. Submit() calls
+// CheckScan before INSERT; ErrQuotaExceeded propagates out so the
+// API handler can return a 429 with structured detail.
+func (o *Orchestrator) WithBilling(b QuotaChecker) *Orchestrator {
+	o.billing = b
+	return o
+}
+
 type SubmitInput struct {
 	PlatformID    uuid.UUID
 	PartnerID     uuid.UUID
@@ -114,6 +136,16 @@ type SubmitInput struct {
 func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.ScanJob, *scopeguard.Decision, error) {
 	if len(in.Targets) == 0 {
 		return nil, nil, errors.New("scanorch: at least one target required")
+	}
+	// Partner billing-quota gate. Runs BEFORE scope-guard because a
+	// quota-blocked partner shouldn't even see the engagement /
+	// scope guard cost; the API returns a 429 and the caller
+	// upgrades their plan. nil billing service = no enforcement
+	// (dev / single-tenant deploys without billing wired).
+	if o.billing != nil {
+		if err := o.billing.CheckScan(ctx, in.PartnerID, in.RequestedBy); err != nil {
+			return nil, nil, err
+		}
 	}
 	// Idempotency: if the caller supplied a key, check for an
 	// existing job with the same key+tenant first. Two Submit() calls
