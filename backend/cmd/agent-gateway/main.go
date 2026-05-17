@@ -436,7 +436,11 @@ func main() {
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      120 * time.Second,
 		IdleTimeout:       2 * time.Minute,
-		TLSConfig:         tlsConfig,
+		// Default 1 MiB is generous for agent headers (mTLS metadata,
+		// X-Agent-Id, content-type). Cap tightly to thwart header-bomb
+		// DoS — same rationale as cmd/api/main.go.
+		MaxHeaderBytes: 32 * 1024,
+		TLSConfig:      tlsConfig,
 	}
 	go func() {
 		log.Info().Str("addr", cfg.AgentGatewayAddr).Bool("mtls", tlsConfig != nil).

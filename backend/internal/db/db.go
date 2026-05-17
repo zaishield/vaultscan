@@ -104,18 +104,28 @@ func OpenWithConfig(ctx context.Context, dsn string, pc PoolConfig) (*DB, error)
 
 func envInt32(key string, def int32) int32 {
 	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return int32(n)
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			fmt.Fprintf(os.Stderr,
+				"vaultscan: %s=%q not a positive int (%v); using default %d\n",
+				key, v, err, def)
+			return def
 		}
+		return int32(n)
 	}
 	return def
 }
 
 func envDur(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			fmt.Fprintf(os.Stderr,
+				"vaultscan: %s=%q not a positive duration (%v); using default %s\n",
+				key, v, err, def)
+			return def
 		}
+		return d
 	}
 	return def
 }

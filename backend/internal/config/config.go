@@ -184,18 +184,35 @@ func getenv(k, def string) string {
 
 func parseInt(k string, def int) int {
 	if v := os.Getenv(k); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			// A misconfigured env var that silently falls back to
+			// the default is a production trap (operator thinks
+			// they raised the pool to 128 conns; actually still
+			// at 32). Emit to stderr so the boot log shows the
+			// mistake. Loud-and-continue is the right trade-off:
+			// we don't crash on a typo in a tunable, but we
+			// don't pretend everything's fine either.
+			fmt.Fprintf(os.Stderr,
+				"vaultscan: %s=%q not parseable as int (%v); using default %d\n",
+				k, v, err, def)
+			return def
 		}
+		return n
 	}
 	return def
 }
 
 func parseDuration(k string, def time.Duration) time.Duration {
 	if v := os.Getenv(k); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"vaultscan: %s=%q not parseable as duration (%v); using default %s\n",
+				k, v, err, def)
+			return def
 		}
+		return d
 	}
 	return def
 }
