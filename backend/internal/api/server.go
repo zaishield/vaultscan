@@ -268,6 +268,13 @@ func Mount(s *Services) http.Handler {
 				Post("/{tenant_id}/suspend", suspendTenant(s))
 			r.With(middleware.RequirePermission("create_tenant")).
 				Post("/{tenant_id}/reactivate", reactivateTenant(s))
+			// Promote shared → dedicated isolation (one-way; the
+			// reverse is a runbook-only operation). After this the
+			// operator must populate tenant_pool_routing and
+			// dedicated_kek_ref; until then the dedicated tenant
+			// degrades to shared isolation rather than going dark.
+			r.With(middleware.RequirePermission("create_tenant")).
+				Post("/{tenant_id}/promote-isolation", promoteTenantIsolation(s))
 			// Tenant-level branding overrides (Blueprint §8.5).
 			// Read is open to any authenticated user of the tenant
 			// (portal chrome needs it on every page); mutate

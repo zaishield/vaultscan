@@ -111,7 +111,15 @@ const (
 // MarkMilestone flips the named milestone to true. Idempotent — a
 // second call leaves the existing timestamp in place. Once all six
 // flip to true the row's completed_at is stamped.
+//
+// Nil-safe on both the receiver and the pool: callers happily fire
+// this from API handlers that may run in test harnesses where
+// Partners isn't fully wired. Rather than gate every call site
+// (six of them in handlers.go) we no-op here.
 func (s *Service) MarkMilestone(ctx context.Context, partnerID uuid.UUID, milestone string) error {
+	if s == nil || s.pool == nil {
+		return nil
+	}
 	col, atCol, ok := milestoneColumns(milestone)
 	if !ok {
 		return errors.New("partners: unknown milestone " + milestone)

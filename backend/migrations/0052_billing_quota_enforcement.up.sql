@@ -22,11 +22,14 @@ ALTER TABLE partner_billing_plans
     ADD COLUMN IF NOT EXISTS created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     ADD COLUMN IF NOT EXISTS updated_at     TIMESTAMPTZ NOT NULL DEFAULT now();
 
--- "Active plan" lookup happens via valid_from/valid_to. Add an
--- index that the quota service hits on every check.
+-- "Active plan" lookup happens via valid_from/valid_to. Postgres
+-- refuses now() in a partial-index predicate (it's not IMMUTABLE),
+-- so we index the full (partner_id, valid_from) range and the
+-- WHERE clause filters at query time. The index is still small
+-- (~one row per partner-plan rotation) so the read cost is
+-- negligible.
 CREATE INDEX IF NOT EXISTS partner_billing_plans_active_idx
-    ON partner_billing_plans(partner_id, valid_from DESC)
-    WHERE valid_to IS NULL OR valid_to > now();
+    ON partner_billing_plans(partner_id, valid_from DESC);
 
 -- Per-quota-check audit row. Helps support understand why a customer
 -- saw a 429 ("you've hit your scan quota for this billing period").

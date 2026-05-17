@@ -141,6 +141,19 @@ type Config struct {
 	// clear error. Default matches migration 0010's seeded
 	// "zaishield-direct" partner.
 	DefaultPartnerSlug string
+
+	// CDNMode selects the brand-asset signed-URL strategy:
+	//   disabled    — legacy: portal fetches via the evidence-vault
+	//                 signed-URL endpoint on every page load
+	//   prefix      — naive prefix swap onto CDNPublicBase
+	//                 (Cloudflare / public-CDN style)
+	//   cloudfront  — AWS CloudFront canned-policy signed URL
+	// See internal/branding/cdn.go for the design notes.
+	CDNMode           string
+	CDNPublicBase     string
+	CDNSignedTTL      time.Duration
+	CDNKeyPairID      string
+	CDNPrivateKeyPath string
 }
 
 func Load() (*Config, error) {
@@ -211,6 +224,11 @@ func Load() (*Config, error) {
 		APIVersion:                   getenv("VAULTSCAN_API_VERSION", "dev"),
 		TSATrustedRootsPath:          os.Getenv("VAULTSCAN_TSA_TRUSTED_ROOTS_PATH"),
 		DefaultPartnerSlug:           getenv("VAULTSCAN_DEFAULT_PARTNER_SLUG", "zaishield-direct"),
+		CDNMode:                      getenv("VAULTSCAN_CDN_MODE", "disabled"),
+		CDNPublicBase:                os.Getenv("VAULTSCAN_CDN_PUBLIC_BASE"),
+		CDNSignedTTL:                 parseDuration("VAULTSCAN_CDN_SIGNED_TTL", time.Hour),
+		CDNKeyPairID:                 os.Getenv("VAULTSCAN_CDN_KEY_PAIR_ID"),
+		CDNPrivateKeyPath:            os.Getenv("VAULTSCAN_CDN_PRIVATE_KEY_PATH"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("VAULTSCAN_DATABASE_URL is required")

@@ -188,6 +188,33 @@ func main() {
 	emailSvc := email.New(pool.Pool, nil) // production wires SMTP/SES; dev uses MemoryTransport
 	cosignSvc := cosign.New(pool.Pool)
 	brandAssets := branding.NewAssetService(pool.Pool, vault, auditSvc)
+	// CDN signing for brand assets, if configured. Modes:
+	//   disabled    — pass-through (legacy default)
+	//   prefix      — naive prefix swap onto VAULTSCAN_CDN_PUBLIC_BASE
+	//   cloudfront  — RSA-SHA1 canned-policy signed URLs
+	if cfg.CDNMode != "" && cfg.CDNMode != "disabled" {
+		cdnCfg := branding.CDNConfig{
+			Mode:       branding.CDNMode(cfg.CDNMode),
+			PublicBase: cfg.CDNPublicBase,
+			SignedTTL:  cfg.CDNSignedTTL,
+			KeyPairID:  cfg.CDNKeyPairID,
+		}
+		if cfg.CDNMode == "cloudfront" && cfg.CDNPrivateKeyPath != "" {
+			if keyPEM, kerr := os.ReadFile(cfg.CDNPrivateKeyPath); kerr == nil {
+				if k, perr := branding.LoadCloudFrontKey(keyPEM); perr == nil {
+					cdnCfg.PrivateKey = k
+				} else {
+					log.Warn().Err(perr).Msg("brand assets: cloudfront key parse failed; falling back to direct fetch")
+				}
+			} else {
+				log.Warn().Err(kerr).Str("path", cfg.CDNPrivateKeyPath).
+					Msg("brand assets: cloudfront key file unreadable; falling back to direct fetch")
+			}
+		}
+		brandAssets.SetCDNConfig(cdnCfg)
+		log.Info().Str("mode", cfg.CDNMode).Str("base", cfg.CDNPublicBase).
+			Msg("brand assets: CDN signing enabled")
+	}
 	verifier := auth.NewVerifier(cfg.JWTSharedSecret, pool.Pool)
 
 	// Deepened-service surface (VS-05/VS-12 + HS-01/HS-05). NodeOps gets

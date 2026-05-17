@@ -46,13 +46,18 @@ var AllowedContentTypes = map[string][]string{
 // served from a CDN, not uploaded.
 const MaxAssetSize = 5 * 1024 * 1024
 
-// AssetService manages partner-uploaded brand assets. It piggy-backs on the
-// evidence vault for storage so logos get the same AES-256-GCM at-rest
-// encryption + signed-URL access controls as scanner output.
+// AssetService manages partner-uploaded brand assets. It piggy-backs
+// on the evidence vault for storage so logos get the same AES-256-GCM
+// at-rest encryption + signed-URL access controls as scanner output.
+// When a CDN is configured (SetCDNConfig) the URLs returned by
+// ListAssets are rewritten through the CDN — either a naive prefix
+// swap or a CloudFront signed URL — so the portal hits the edge
+// instead of the evidence vault on every page load.
 type AssetService struct {
 	pool  *pgxpool.Pool
 	vault *evidence.Vault
 	audit *audit.Service
+	cdn   *CDNConfig
 }
 
 // NewAssetService wires the assets service.
@@ -178,6 +183,10 @@ func (s *AssetService) ListAssets(ctx context.Context, partnerID uuid.UUID) ([]A
 			&a.SizeBytes, &a.StorageURL, &a.UploadedAt); err != nil {
 			return nil, err
 		}
+		// Apply the CDN rewrite if configured. CDNModeDisabled
+		// (default) returns the URL unchanged so the legacy path
+		// continues to work.
+		a.StorageURL = s.rewriteStorageURL(a.StorageURL)
 		out = append(out, a)
 	}
 	return out, rows.Err()

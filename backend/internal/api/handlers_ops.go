@@ -739,17 +739,29 @@ func createReportSchedule(s *Services) http.HandlerFunc {
 			in.PlatformID = platformConstID()
 		}
 		if in.PartnerID == uuid.Nil {
+			// Preferred path: resolve the partner from the
+			// schedule's tenant, so MSSP-owned tenants get audited
+			// under their actual partner rather than the platform
+			// default.
+			if in.TenantID != uuid.Nil {
+				if pid, perr := partnerForTenant(r.Context(), s, in.TenantID); perr == nil {
+					in.PartnerID = pid
+				}
+			}
 			// Fall back to the platform's configured default
 			// partner (resolved at boot from
-			// VAULTSCAN_DEFAULT_PARTNER_SLUG). If that lookup
-			// failed at boot DefaultPartnerID is uuid.Nil and we
-			// refuse — better to 400 than silently file the
-			// schedule under no partner.
-			if s.DefaultPartnerID == uuid.Nil {
-				badRequest(w, "partner_id required (default partner not configured)")
-				return
+			// VAULTSCAN_DEFAULT_PARTNER_SLUG). DefaultPartnerID is
+			// uuid.Nil when the slug lookup failed at boot OR when
+			// the test harness didn't wire it; in that case the
+			// per-tenant lookup above is the only path, and we
+			// refuse cleanly if it didn't work either.
+			if in.PartnerID == uuid.Nil {
+				if s.DefaultPartnerID == uuid.Nil {
+					badRequest(w, "partner_id required (default partner not configured)")
+					return
+				}
+				in.PartnerID = s.DefaultPartnerID
 			}
-			in.PartnerID = s.DefaultPartnerID
 		}
 		schedID, err := s.Reports.CreateSchedule(r.Context(), in)
 		if err != nil {

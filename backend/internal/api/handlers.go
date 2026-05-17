@@ -288,8 +288,9 @@ func createTenant(s *Services) http.HandlerFunc {
 			internalErr(w, err)
 			return
 		}
-		// First-tenant milestone — idempotent, MarkMilestone won't
-		// re-stamp the timestamp if it's already true.
+		// First-tenant milestone — idempotent + nil-safe on the
+		// service so test harnesses without Partners wired keep
+		// working without per-call nil guards.
 		_ = s.Partners.MarkMilestone(r.Context(), partnerID, partners.MilestoneFirstTenant)
 		writeJSON(w, http.StatusCreated, t)
 	}
