@@ -649,17 +649,111 @@ func firstField(s string, sep rune) string {
 
 // ----- Bloodhound CE / NetExec ---------------------------------------------
 
+// bloodhoundDump is the shape we care about from a Bloodhound CE
+// JSON export. Real exports have much more (kerberos / sessions /
+// gpos) but for the parser we only need the high-risk attack-path
+// indicators: counts of nodes and edges, and the top-risk edges
+// (e.g. AdminTo, AddMember, ForceChangePassword on DAs).
+type bloodhoundDump struct {
+	Meta struct {
+		Type  string `json:"type"`
+		Count int    `json:"count"`
+	} `json:"meta"`
+	Nodes []struct {
+		Label string         `json:"label"`
+		Props map[string]any `json:"props"`
+	} `json:"nodes"`
+	Edges []struct {
+		Type   string `json:"edge_type"`
+		Source string `json:"source"`
+		Target string `json:"target"`
+	} `json:"edges"`
+}
+
+// highRiskEdgeKinds are bloodhound edge labels that almost always
+// imply an attack path to Domain Admin. Sourced from
+// SpecterOps's threat catalog; conservatively scoped — extending
+// this list is a deliberate edit.
+var highRiskEdgeKinds = map[string]bool{
+	"GenericAll":           true,
+	"GenericWrite":         true,
+	"WriteOwner":           true,
+	"WriteDacl":            true,
+	"AllExtendedRights":    true,
+	"ForceChangePassword":  true,
+	"AddMember":            true,
+	"DCSync":               true,
+	"GetChangesAll":        true,
+	"AdminTo":              true,
+}
+
 func ParseBloodhound(ctx Context, raw []byte) ([]findings.IngestInput, error) {
-	// Bloodhound emits a JSON dump of nodes/edges; we surface high-risk paths.
-	var doc map[string]any
-	_ = json.Unmarshal(raw, &doc)
-	f := base(ctx)
-	f.Title = "Active Directory privilege paths discovered"
-	f.Severity = "high"
-	f.Scanner = "bloodhound"
-	f.ScanType = "ad"
-	f.EvidenceSummary = "bloodhound graph attached as evidence"
-	return []findings.IngestInput{f}, nil
+	var doc bloodhoundDump
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		// Bloodhound output is sometimes a multi-file zip extracted to
+		// a stream — if the bytes aren't valid JSON, treat that as a
+		// soft failure (one info finding) rather than dropping the
+		// whole scan silently.
+		f := base(ctx)
+		f.Title = "Bloodhound output unparsable"
+		f.Severity = "info"
+		f.Scanner = "bloodhound"
+		f.ScanType = "ad"
+		f.EvidenceSummary = fmt.Sprintf("could not unmarshal bloodhound dump (%d bytes): %v",
+			len(raw), err)
+		return []findings.IngestInput{f}, nil
+	}
+	out := []findings.IngestInput{}
+	if len(doc.Nodes) == 0 && len(doc.Edges) == 0 {
+		// Empty dump = no AD enumeration completed.
+		f := base(ctx)
+		f.Title = "Bloodhound: no nodes or edges collected"
+		f.Severity = "info"
+		f.Scanner = "bloodhound"
+		f.ScanType = "ad"
+		f.EvidenceSummary = "bloodhound returned an empty graph; agent may lack reachability to the DC"
+		return []findings.IngestInput{f}, nil
+	}
+	// Roll up high-risk edges by edge type.
+	counts := map[string]int{}
+	for _, e := range doc.Edges {
+		if highRiskEdgeKinds[e.Type] {
+			counts[e.Type]++
+		}
+	}
+	if len(counts) == 0 {
+		// Graph collected but no privileged edges found.
+		f := base(ctx)
+		f.Title = "Bloodhound: no high-risk attack paths found"
+		f.Severity = "info"
+		f.Scanner = "bloodhound"
+		f.ScanType = "ad"
+		f.EvidenceSummary = fmt.Sprintf("nodes=%d edges=%d, no high-risk edge kinds matched",
+			len(doc.Nodes), len(doc.Edges))
+		return []findings.IngestInput{f}, nil
+	}
+	// One finding per kind of risky edge — cluster keys differ so they
+	// don't dedup into a single row, but stay correlated by scanner.
+	for kind, n := range counts {
+		f := base(ctx)
+		f.Title = "Active Directory attack path: " + kind
+		// Severity tiers by edge count. >100 of any kind in a single
+		// scan is "you have a problem" territory.
+		switch {
+		case n >= 100:
+			f.Severity = "critical"
+		case n >= 10:
+			f.Severity = "high"
+		default:
+			f.Severity = "medium"
+		}
+		f.Scanner = "bloodhound"
+		f.ScanType = "ad"
+		f.EvidenceSummary = fmt.Sprintf("%d %q edges in graph (nodes=%d total_edges=%d)",
+			n, kind, len(doc.Nodes), len(doc.Edges))
+		out = append(out, f)
+	}
+	return out, nil
 }
 
 func ParseNetexec(ctx Context, raw []byte) ([]findings.IngestInput, error) {

@@ -83,3 +83,93 @@ func TestSeverityFromCVSS(t *testing.T) {
 		}
 	}
 }
+
+// Bloodhound used to be a single-line hardcoded "AD privilege paths
+// discovered" stub regardless of content. These tests verify the
+// rewrite produces real, content-derived findings.
+
+func TestParseBloodhound_RealEdgesProduceFindings(t *testing.T) {
+	t.Parallel()
+	dump := `{
+		"meta": {"type": "edges", "count": 150},
+		"nodes": [
+			{"label": "User", "props": {"name": "alice"}},
+			{"label": "Group", "props": {"name": "Domain Admins"}}
+		],
+		"edges": [
+			{"edge_type": "AddMember", "source": "u1", "target": "g1"},
+			{"edge_type": "AddMember", "source": "u2", "target": "g1"},
+			{"edge_type": "GenericAll", "source": "u3", "target": "g1"}
+		]
+	}`
+	out, err := ParseBloodhound(Context{}, []byte(dump))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) == 0 {
+		t.Fatal("expected one finding per high-risk edge kind, got 0")
+	}
+	// Should have findings for AddMember and GenericAll.
+	gotKinds := map[string]bool{}
+	for _, f := range out {
+		gotKinds[f.Title] = true
+	}
+	if !gotKinds["Active Directory attack path: AddMember"] {
+		t.Errorf("missing AddMember finding: %+v", gotKinds)
+	}
+	if !gotKinds["Active Directory attack path: GenericAll"] {
+		t.Errorf("missing GenericAll finding: %+v", gotKinds)
+	}
+}
+
+func TestParseBloodhound_EmptyGraphIsInfo(t *testing.T) {
+	t.Parallel()
+	out, err := ParseBloodhound(Context{}, []byte(`{"nodes":[],"edges":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].Severity != "info" {
+		t.Errorf("expected single info finding for empty graph, got %+v", out)
+	}
+}
+
+func TestParseBloodhound_NoHighRiskEdgesIsInfo(t *testing.T) {
+	t.Parallel()
+	// Graph populated but no privileged edges.
+	dump := `{
+		"nodes": [{"label": "User", "props": {}}],
+		"edges": [{"edge_type": "MemberOf", "source": "u1", "target": "g1"}]
+	}`
+	out, _ := ParseBloodhound(Context{}, []byte(dump))
+	if len(out) != 1 || out[0].Severity != "info" {
+		t.Errorf("graph without risky edges should produce one info finding, got %+v", out)
+	}
+}
+
+func TestParseBloodhound_MalformedInputIsSoftFailure(t *testing.T) {
+	t.Parallel()
+	// Not valid JSON. The old parser returned a hardcoded high-sev
+	// finding regardless; the new parser returns an info finding
+	// describing the parse failure so ops can investigate.
+	out, _ := ParseBloodhound(Context{}, []byte(`not json {{`))
+	if len(out) != 1 || out[0].Severity != "info" {
+		t.Errorf("malformed input should produce one info finding, got %+v", out)
+	}
+}
+
+// Parser-DoS guards: parsers.Lookup wraps every parser with input-
+// size and finding-count caps. These tests exercise the limits.
+
+func TestParserDoS_RefusesOversizedInput(t *testing.T) {
+	t.Parallel()
+	// Find any parser via Lookup; we don't care which — guardSize
+	// runs before parser-specific code.
+	p, ok := Lookup("nmap")
+	if !ok {
+		t.Fatal("nmap parser missing")
+	}
+	huge := make([]byte, MaxParserInputBytes+1)
+	if _, err := p(Context{}, huge); err == nil {
+		t.Error("expected ErrParserInputTooLarge for oversize input")
+	}
+}
