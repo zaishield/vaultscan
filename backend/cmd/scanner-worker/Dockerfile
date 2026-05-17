@@ -1,6 +1,6 @@
 # Multi-stage build for the scanner-worker.
 #
-# Stage 1 — build the binary inside golang:1.25-alpine.
+# Stage 1 — build the binary inside golang:1.26-alpine.
 # Stage 2 — distroless/static-debian12 nonroot.
 #
 # The worker does NOT need any scanner tools installed in its own
@@ -9,7 +9,7 @@
 # When RUNNER=local (dev only), the worker exec's against PATH; that
 # image variant is the responsibility of the dev compose stack.
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 

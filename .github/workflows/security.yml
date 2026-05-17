@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.25" }
+        with: { go-version: "1.26" }
       - name: install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: scan backend
@@ -322,7 +322,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.25" }
+        with: { go-version: "1.26" }
       - name: install go-licenses
         run: go install github.com/google/go-licenses@latest
       - name: backend

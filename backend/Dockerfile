@@ -1,6 +1,6 @@
 # Multi-stage build for the API control plane.
 #
-# Stage 1 — build inside golang:1.22-alpine, vendor go.sum, compile static.
+# Stage 1 — build inside golang:1.26-alpine, vendor go.sum, compile static.
 # Stage 2 — copy the binary into a distroless static base (no shell, no
 # package manager, no setuid binaries).
 #
@@ -8,7 +8,7 @@
 # SemVer release tag, then push to registry.zaishield.com/vaultscan/api
 # and sign with cosign (Blueprint §27.5).
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 

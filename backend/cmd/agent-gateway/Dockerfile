@@ -4,7 +4,7 @@
 #   2. Different ports (8443 default).
 #   3. Production runs it on a separate node pool / NetworkPolicy bind.
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 

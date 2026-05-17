@@ -1,7 +1,7 @@
 # Analytics worker — subscribes to NATS + ingests into the analytics
 # materialised views. No HTTP listener (only /healthz on a probe port).
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 

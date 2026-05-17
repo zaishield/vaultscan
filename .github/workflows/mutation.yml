@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26"
           cache-dependency-path: backend/go.sum
       - name: install go-mutesting
         run: go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest

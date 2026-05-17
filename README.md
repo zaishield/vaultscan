@@ -60,7 +60,7 @@ the implementation artifact that satisfies it.
 
 ## Local Development
 
-Prerequisites: Docker + Docker Compose, Go 1.22+, Node.js 20+, Make.
+Prerequisites: Docker + Docker Compose, Go 1.26+, Node.js 20+, Make.
 
 ```bash
 make bootstrap        # build images, run DB migrations, seed Keycloak
