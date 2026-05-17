@@ -57,6 +57,8 @@ func main() {
 
 	auditSvc := audit.New(pool.Pool)
 	bus := eventbus.New(pool.Pool)
+	// Cross-process delivery for agent-emitted events.
+	bus.EnableNotify()
 	storage, err := evidence.NewStorageFromConfig(evidence.StorageConfig{
 		Backend:          cfg.EvidenceBackend,
 		FilesystemRoot:   cfg.EvidenceFilesystemRoot,

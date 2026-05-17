@@ -80,6 +80,10 @@ type Bus struct {
 	// can block on shutdown until they complete (or the drain deadline
 	// trips).
 	extWg sync.WaitGroup
+
+	// Postgres NOTIFY/LISTEN bridge — see pg_notify.go.
+	notifyMu      sync.RWMutex
+	notifyEnabled bool
 }
 
 func New(pool *pgxpool.Pool) *Bus {
@@ -121,6 +125,9 @@ func (b *Bus) Publish(ctx context.Context, ev Event) error {
 	// don't affect bus_events durability — Publish has already
 	// committed the row.
 	b.publishExternal(ev)
+	// Postgres NOTIFY for cross-process delivery (no-op until
+	// EnableNotify is called by the producer process).
+	b.emitNotify(ctx, ev)
 	return nil
 }
 

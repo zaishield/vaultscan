@@ -51,6 +51,10 @@ func main() {
 
 	auditSvc := audit.New(pool.Pool)
 	bus := eventbus.New(pool.Pool)
+	// Cross-process delivery: events the worker publishes
+	// (ExternalScanStarted, FindingNormalized, ...) reach the API +
+	// analytics-worker via Postgres NOTIFY.
+	bus.EnableNotify()
 	storage, err := evidence.NewStorageFromConfig(evidence.StorageConfig{
 		Backend:          cfg.EvidenceBackend,
 		FilesystemRoot:   cfg.EvidenceFilesystemRoot,

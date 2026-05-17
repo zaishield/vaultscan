@@ -78,6 +78,11 @@ func main() {
 
 	auditSvc := audit.New(pool.Pool)
 	bus := eventbus.New(pool.Pool)
+	// Cross-process delivery via Postgres NOTIFY/LISTEN. No new
+	// infra needed; other processes (analytics-worker, scanner-worker,
+	// agent-gateway) StartListener() to receive events emitted here.
+	bus.EnableNotify()
+	bus.StartListener(ctx)
 
 	// §22: attach the external NATS adapter so cross-process consumers
 	// (analytics-worker, scanner-worker telemetry) see the same events

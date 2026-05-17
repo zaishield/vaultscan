@@ -179,14 +179,19 @@ func (r *K8sJobRunner) Run(ctx context.Context, tool string, targets []string, r
 		return nil, err
 	}
 
-	// 3. Find the Job's Pod + harvest logs.
+	// 3. Find the Job's Pod + harvest logs. The kubelet may garbage-
+	// collect a completed pod aggressively, so be tolerant of "pod
+	// terminated" 400s — return what we have rather than failing the
+	// whole job (the exit code is the authoritative outcome).
 	podName, err := r.podForJob(ctx, jobName)
 	if err != nil {
 		return &Result{Tool: tool, ExitCode: exitCode, Took: time.Since(start)}, nil
 	}
 	output, err := r.podLogs(ctx, podName)
 	if err != nil {
-		return nil, fmt.Errorf("k8s: read logs: %w", err)
+		// Pod was already cleaned up by the kubelet — return the exit
+		// code without logs rather than failing the whole job.
+		return &Result{Tool: tool, ExitCode: exitCode, Took: time.Since(start)}, nil
 	}
 
 	return &Result{

@@ -48,6 +48,9 @@ func main() {
 	}
 
 	bus := eventbus.New(pool.Pool)
+	// Receive events from other processes via Postgres NOTIFY.
+	bus.EnableNotify()
+	bus.StartListener(ctx)
 	indexer := analytics.NewIndexer(client, pool.Pool, log)
 	indexer.Wire(bus)
 
