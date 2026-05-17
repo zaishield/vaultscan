@@ -38,6 +38,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
 	"github.com/zaishield/vaultscan/backend/internal/logging"
+	"github.com/zaishield/vaultscan/backend/internal/middleware"
 	"github.com/zaishield/vaultscan/backend/internal/parsers"
 )
 
@@ -84,6 +85,12 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Use(chiware.Recoverer)
+	// Global per-request body cap. Routes that take large payloads
+	// (results, artifacts) use their own LimitReader at 64 MiB; this
+	// is a defence-in-depth ceiling above that. 128 MiB stops any
+	// agent (or attacker that owns one) from posting a GB body and
+	// exhausting gateway RAM before the per-route check fires.
+	r.Use(middleware.MaxBodySize(128 << 20))
 
 	// Pick the agent-auth strategy. VAULTSCAN_AGENT_GW_TLS:
 	//
