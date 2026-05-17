@@ -38,9 +38,10 @@ type Worker struct {
 	findings     *findings.Service
 	audit        *audit.Service
 	bus          *eventbus.Bus
-	signerPubPEM string // cloud signer's public key, for verifying job signatures
-	poll         time.Duration
-	maxConcurrent int
+	signerPubPEM      string // cloud signer's public key, for verifying job signatures
+	requireSignatures bool   // production: true → refuse to run a job when signerPubPEM is empty
+	poll              time.Duration
+	maxConcurrent     int
 }
 
 type Config struct {
@@ -74,9 +75,10 @@ func NewWorker(log zerolog.Logger, pool *pgxpool.Pool, cfg Config,
 		findings:      findSvc,
 		audit:         auditSvc,
 		bus:           bus,
-		signerPubPEM:  cfg.SignerPubPEM,
-		poll:          cfg.Poll,
-		maxConcurrent: cfg.MaxConcurrent,
+		signerPubPEM:      cfg.SignerPubPEM,
+		requireSignatures: cfg.RequireSignatures,
+		poll:              cfg.Poll,
+		maxConcurrent:     cfg.MaxConcurrent,
 	}
 }
 
@@ -187,6 +189,10 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 	// hard "no scanner executes unsigned jobs" gate from Blueprint §11.3.
 	// Both sides MUST reconstruct the same canonical manifest, hence the
 	// shared helper.
+	//
+	// When RequireSignatures is true the worker refuses to run unsigned
+	// jobs even if the public key is missing — boot-time check has
+	// already fatal'd in production, so this is belt-and-braces.
 	if w.signerPubPEM != "" {
 		manifest := scanorch.CanonicalManifest(
 			j.ID, j.TenantID, j.EngagementID,
@@ -197,6 +203,9 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 			w.failJob(ctx, j, "signature verification failed: "+err.Error())
 			return
 		}
+	} else if w.requireSignatures {
+		w.failJob(ctx, j, "signature verification skipped: no public key cached, but RequireSignatures=true")
+		return
 	}
 
 	_ = w.bus.Publish(ctx, eventbus.Event{

@@ -22,6 +22,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/config"
 	"github.com/zaishield/vaultscan/backend/internal/cosign"
 	"github.com/zaishield/vaultscan/backend/internal/db"
+	"github.com/zaishield/vaultscan/backend/internal/envmode"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
@@ -77,21 +78,35 @@ func main() {
 	}
 	findSvc := findings.New(pool.Pool, auditSvc, bus)
 
-	// Fetch the cloud signer's public key over the trusted API and cache it.
-	// This is what the worker uses to verify per-job signatures; without it
-	// every job would be rejected, so it's a hard prerequisite.
+	// Fetch the cloud signer's public key. Without it the per-job
+	// signature gate in scanner.Worker.execute degrades to "if pubKey
+	// != ''" — i.e. fail-open — and an attacker who can write to
+	// scan_jobs (compromised API or DB) gets arbitrary code execution
+	// on the scanner-worker via unsigned tool commands.
+	//
+	// Production refuses to boot without the key. Dev keeps the
+	// warn-and-continue path so first-time setup doesn't break before
+	// the orchestrator has provisioned its key.
 	pubKey, err := fetchCloudPublicKey(ctx, cfg.APIPublicURL())
 	if err != nil {
-		log.Warn().Err(err).Msg("could not fetch cloud public key — running in unverified mode")
+		if envmode.IsProduction(cfg.Env) {
+			log.Fatal().Err(err).
+				Msg("scanner-worker refuses to boot in production without the cloud public key — unsigned jobs would otherwise execute")
+		}
+		log.Warn().Err(err).Msg("could not fetch cloud public key — running in unverified mode (dev only)")
 	} else {
 		log.Info().Int("pem_bytes", len(pubKey)).Msg("cloud public key cached")
 	}
 
 	cosignSvc := cosign.New(pool.Pool)
-	// Production deployments set VAULTSCAN_REQUIRE_SIGNED_IMAGES=true so the
-	// worker refuses any image that lacks a verified cosign bundle. Default
-	// off so first-boot demos don't break.
-	requireSigs := os.Getenv("VAULTSCAN_REQUIRE_SIGNED_IMAGES") == "true"
+	// Production deployments require both signed images AND signed job
+	// payloads. Default ON in production, off in dev so first-boot demos
+	// don't break. VAULTSCAN_REQUIRE_SIGNED_IMAGES=false overrides ONLY
+	// in dev — production ignores the override and stays strict.
+	requireSigs := envmode.IsProduction(cfg.Env)
+	if !envmode.IsProduction(cfg.Env) {
+		requireSigs = os.Getenv("VAULTSCAN_REQUIRE_SIGNED_IMAGES") == "true"
+	}
 
 	worker := scanner.NewWorker(log, pool.Pool, scanner.Config{
 		Region:            region,
