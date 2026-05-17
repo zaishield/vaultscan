@@ -88,6 +88,17 @@ func main() {
 		log.Fatal().Err(err).Msg("open database")
 	}
 	defer pool.Close()
+	// Optional read-replica routing. nil-replica is a safe no-op —
+	// services with WithReplica() will transparently fall back to
+	// the primary. Used by dashboards.
+	replica, err := db.OpenReplica(ctx, cfg.DatabaseReplicaURL)
+	if err != nil {
+		log.Warn().Err(err).Msg("open replica failed — falling back to primary")
+	}
+	if replica != nil {
+		defer replica.Close()
+		log.Info().Msg("read-replica configured; dashboards will route reads to replica")
+	}
 	// Pool stats → Prometheus every 10s. Lets ops alert on saturation
 	// (acquired ≈ max, sustained waiting > 0) before user-visible
 	// latency spikes.
@@ -183,7 +194,7 @@ func main() {
 	deliverPool := integrations.NewWorkerPool(ctx, intSvc, 16, 256)
 	intSvc.AttachWorkerPool(deliverPool)
 	intSvc.Wire(bus)
-	dashSvc := dashboards.New(pool.Pool)
+	dashSvc := dashboards.New(pool.Pool).WithReplica(replica)
 	userSvc := users.New(pool.Pool, auditSvc)
 	emailSvc := email.New(pool.Pool, nil) // production wires SMTP/SES; dev uses MemoryTransport
 	cosignSvc := cosign.New(pool.Pool)

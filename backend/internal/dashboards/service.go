@@ -8,13 +8,33 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/zaishield/vaultscan/backend/internal/db"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 type Service struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	replica *db.ReplicaPool
 }
 
 func New(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+
+// WithReplica enables read-replica routing for dashboard queries.
+// Returns the same service for chaining. nil-replica is a no-op so
+// callers don't need to branch on whether a replica is configured.
+func (s *Service) WithReplica(r *db.ReplicaPool) *Service {
+	s.replica = r
+	return s
+}
+
+// reader returns the replica pool when configured, else the primary.
+// Dashboard queries are read-only aggregations — the small
+// replication lag (<1s typical) is invisible to a user refreshing
+// every 30s.
+func (s *Service) reader() *pgxpool.Pool {
+	return db.Reader(s.pool, s.replica)
+}
 
 // Executive matches the 11 metrics in Blueprint §7.4.
 type Executive struct {
@@ -49,9 +69,14 @@ type TrendBucket struct {
 	Scans int    `json:"scans"`
 }
 
-func (s *Service) Executive(ctx context.Context, tenantID uuid.UUID) (*Executive, error) {
+func (s *Service) Executive(ctx context.Context, tenantID uuid.UUID) (xOut *Executive, err error) {
+	ctx, end := observability.Span(ctx, "dashboards.Executive",
+		"tenant_id", tenantID.String())
+	defer func() { end(err) }()
+
 	x := &Executive{ComplianceStatus: map[string]int{}}
-	row := s.pool.QueryRow(ctx, `
+	xOut = x
+	row := s.reader().QueryRow(ctx, `
 		SELECT
 		  (SELECT COUNT(*) FROM assets WHERE tenant_id=$1),
 		  (SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND plane='external'),
@@ -67,7 +92,7 @@ func (s *Service) Executive(ctx context.Context, tenantID uuid.UUID) (*Executive
 		&x.CriticalFindings, &x.HighFindings, &x.SLABreaches); err != nil {
 		return nil, err
 	}
-	_ = s.pool.QueryRow(ctx, `
+	_ = s.reader().QueryRow(ctx, `
 		SELECT
 		  COUNT(*) FILTER (WHERE status IN ('pending','assigned','in_progress')),
 		  COUNT(*) FILTER (WHERE status='passed'),
@@ -76,7 +101,7 @@ func (s *Service) Executive(ctx context.Context, tenantID uuid.UUID) (*Executive
 		  JOIN findings f ON f.id = r.finding_id
 		 WHERE f.tenant_id=$1`, tenantID).
 		Scan(&x.RetestStatus.Pending, &x.RetestStatus.Passed, &x.RetestStatus.Failed)
-	_ = s.pool.QueryRow(ctx, `
+	_ = s.reader().QueryRow(ctx, `
 		SELECT
 		  COUNT(*) FILTER (WHERE status='online'),
 		  COUNT(*) FILTER (WHERE status='offline'),
@@ -84,7 +109,7 @@ func (s *Service) Executive(ctx context.Context, tenantID uuid.UUID) (*Executive
 		  COUNT(*) FILTER (WHERE status='quarantined')
 		  FROM agents WHERE tenant_id=$1`, tenantID).
 		Scan(&x.AgentHealth.Online, &x.AgentHealth.Offline, &x.AgentHealth.Pending, &x.AgentHealth.Quarantined)
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.reader().Query(ctx, `
 		SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD'), COUNT(*)
 		  FROM scan_jobs
 		 WHERE tenant_id=$1 AND created_at > now() - INTERVAL '14 days'

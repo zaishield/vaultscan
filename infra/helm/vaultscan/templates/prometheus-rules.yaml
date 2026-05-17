@@ -125,6 +125,82 @@ spec:
               in region {{`{{ $labels.region }}`}}. Scale up scanner-worker
               replicas in this region.
 
+    # ----- SLA / SLO recording rules ---------------------------------------
+    # These pre-compute the values shown on the executive SLO dashboard
+    # so renders don't pay 50× more by re-running the rate() / sum()
+    # heuristics per page refresh.
+    #
+    # SLO targets (per Blueprint §29):
+    #   - API availability:           99.9% over a rolling 28-day window
+    #   - API P95 latency on /api/v1: ≤500ms over a rolling 28-day window
+    #   - Scanner job completion:     ≥99% of jobs reach a terminal state
+    #                                 within their profile SLA
+    #   - Audit chain integrity:      100% — any break is an incident
+    #
+    # The actual SLO objects (PrometheusRule alerts with for: 28d) live
+    # in the customer's monitoring stack; we ship the recording rules
+    # so the customer's dashboards can pick them up by name.
+    - name: vaultscan.slo
+      interval: 30s
+      rules:
+        - record: vaultscan:api_request_success_ratio:5m
+          expr: |
+            sum(rate(vaultscan_http_requests_total{status!~"5..",path!~"/livez|/healthz|/readyz"}[5m]))
+            /
+            clamp_min(sum(rate(vaultscan_http_requests_total{path!~"/livez|/healthz|/readyz"}[5m])), 0.01)
+
+        - record: vaultscan:api_request_success_ratio:28d
+          expr: |
+            sum(rate(vaultscan_http_requests_total{status!~"5..",path!~"/livez|/healthz|/readyz"}[28d]))
+            /
+            clamp_min(sum(rate(vaultscan_http_requests_total{path!~"/livez|/healthz|/readyz"}[28d])), 0.01)
+
+        - record: vaultscan:api_request_latency_p95:5m
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le, path) (rate(vaultscan_http_request_duration_seconds_bucket{path!~"/livez|/healthz|/readyz"}[5m])))
+
+        - record: vaultscan:api_request_latency_p99:5m
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le, path) (rate(vaultscan_http_request_duration_seconds_bucket{path!~"/livez|/healthz|/readyz"}[5m])))
+
+        - record: vaultscan:scan_completion_ratio:1h
+          expr: |
+            sum(increase(vaultscan_scan_jobs_completed_total{outcome="success"}[1h]))
+            /
+            clamp_min(sum(increase(vaultscan_scan_jobs_completed_total[1h])), 1)
+
+        - record: vaultscan:integration_delivery_success_ratio:1h
+          expr: |
+            (sum(increase(vaultscan_integration_delivery_failures_total{outcome="ok"}[1h])))
+            /
+            clamp_min(sum(increase(vaultscan_integration_delivery_failures_total[1h])), 1)
+
+    # SLO burn-rate alerts. Two windows (fast + slow) on an
+    # error-budget burn of 14.4× the 28-day target. Standard
+    # Google SRE Workbook pattern.
+    - name: vaultscan.slo.burn
+      rules:
+        - alert: VaultScanAPISLOBurnRateFast
+          expr: |
+            (1 - vaultscan:api_request_success_ratio:5m) > (14.4 * 0.001)
+              and
+            (1 - sum(rate(vaultscan_http_requests_total{status!~"5..",path!~"/livez|/healthz|/readyz"}[1h]))
+                 /
+                 clamp_min(sum(rate(vaultscan_http_requests_total{path!~"/livez|/healthz|/readyz"}[1h])), 0.01))
+              > (14.4 * 0.001)
+          for: 2m
+          labels:
+            severity: critical
+            slo: api_availability
+          annotations:
+            summary: "API SLO burn rate fast — error budget exhausting in <2 days"
+            description: |
+              The 5m + 1h burn rate is >14.4× the 0.1% allowed error
+              ratio. At this pace the 28-day error budget is fully
+              consumed in under 2 days.
+
     # ----- Auth attack signal ----------------------------------------------
     - name: vaultscan.auth
       rules:
