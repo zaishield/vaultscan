@@ -66,6 +66,9 @@ func OpenWithConfig(ctx context.Context, dsn string, pc PoolConfig) (*DB, error)
 	cfg.MaxConnLifetime = pc.MaxConnLifetime
 	cfg.MaxConnIdleTime = pc.MaxConnIdle
 	cfg.HealthCheckPeriod = pc.HealthCheck
+	// Slow-query tracer logs any statement above the threshold to
+	// stderr with sql + duration + (optional) request_id.
+	cfg.ConnConfig.Tracer = NewSlowQueryTracer(SlowQueryThresholdFromEnv())
 	// AfterConnect runs once per new physical connection. Set the
 	// statement + idle-in-transaction timeouts here so they're
 	// applied to every conn the pool ever hands out, including

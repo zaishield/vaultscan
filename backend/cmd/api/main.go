@@ -63,6 +63,9 @@ func main() {
 	middleware.SetIdempotencyHitSink(func(outcome string) {
 		observability.IdempotencyHits.WithLabelValues(outcome).Inc()
 	})
+	// Let the pgx slow-query tracer correlate to request IDs without
+	// the db package importing middleware (would cycle).
+	db.SetRequestIDExtractor(middleware.RequestIDFromContext)
 
 	// Tracing. No-op when VAULTSCAN_OTEL_EXPORTER is unset; otherwise
 	// ships OTLP/HTTP to the configured endpoint (Tempo/Jaeger/Honeycomb).

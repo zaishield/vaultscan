@@ -66,11 +66,13 @@ func badRequest(w http.ResponseWriter, msg string) {
 func internalErr(w http.ResponseWriter, err error) {
 	internalErrLogger.Error().
 		Err(err).
+		Str("request_id", w.Header().Get("X-Request-Id")).
 		Msg("api: internal error returned to client")
 	writeJSON(w, http.StatusInternalServerError, map[string]any{
 		"error": map[string]string{
-			"code":    "internal",
-			"message": "an internal error occurred; please retry",
+			"code":       "internal",
+			"message":    "an internal error occurred; please retry",
+			"request_id": w.Header().Get("X-Request-Id"),
 		},
 	})
 }

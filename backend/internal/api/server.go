@@ -18,6 +18,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/guardrails"
+	"github.com/zaishield/vaultscan/backend/internal/health"
 	"github.com/zaishield/vaultscan/backend/internal/authdocs"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
 	"github.com/zaishield/vaultscan/backend/internal/config"
@@ -78,6 +79,11 @@ type Services struct {
 	// HS-01 / MFA + JWKS deepening.
 	MFA  *auth.MFAService
 	Keys *auth.KeyManager
+
+	// Health registry. Mount populates the default DB check; cmd/api
+	// can add Redis/OpenSearch/Keycloak via Services.Health.Register
+	// before calling Mount.
+	Health *health.Registry
 }
 
 // Mount returns a fully wired HTTP router.
@@ -87,6 +93,11 @@ func Mount(s *Services) http.Handler {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.MaxBodySize(32 << 20)) // 32 MiB cap on any request body
+	// ETag / If-None-Match on GET responses — saves bandwidth and
+	// lets clients trust their local cache. Outside Gzip so the
+	// hash covers raw bytes (gzip output isn't stable across
+	// compression levels).
+	r.Use(middleware.ETag())
 	// Gzip responses ≥1 KiB when the client asks via Accept-Encoding.
 	// Saves 70-90% bytes on the JSON-heavy audit / findings / dashboard
 	// endpoints; passes SSE / pre-encoded responses through unchanged.
@@ -103,30 +114,53 @@ func Mount(s *Services) http.Handler {
 	})
 	r.Use(cors.Handler)
 
+	// Health registry — default DB check; cmd/api may register more
+	// components (Redis, OpenSearch, Keycloak) before Mount.
+	healthReg := s.Health
+	if healthReg == nil {
+		healthReg = health.NewRegistry()
+	}
+	healthReg.Register("database", health.PostgresCheck(s.Pool), false)
+
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		// /healthz answers "is the process alive?" — does NOT check
+		// downstream dependencies. kubelet's liveness probe hits this;
+		// flapping on a downstream blip would force a pod restart
+		// when the right answer is "stay up, wait for the dep to
+		// recover". /readyz handles the dependency-aware check.
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
-
+	r.Get("/livez", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	})
 	// /metrics is mounted before the auth group so Prometheus can scrape
 	// without a token. Network policy restricts the scrape source to the
 	// monitoring namespace (Blueprint §27.1).
 	r.Handle("/metrics", observability.PromHandler())
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		// 2s is generous: the DB roundtrip should be <100ms in any
-		// healthy deployment; >2s means we're already past the point
-		// where /readyz should be flagging a problem.
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
-		if err := s.Pool.Ping(ctx); err != nil {
-			// Don't leak the underlying error to anonymous callers —
-			// it can carry the DSN host. Operators see the detail
-			// via the internal logger.
-			internalErrLogger.Warn().Err(err).Msg("api: readyz db ping failed")
-			writeJSON(w, http.StatusServiceUnavailable,
-				map[string]any{"status": "not_ready", "component": "database"})
-			return
+		res := healthReg.Snapshot(ctx, 2*time.Second)
+		res.Timestamp = time.Now().UTC()
+		// Anonymous endpoint — strip component detail to avoid
+		// leaking internal hostnames. Authenticated /api/v1/health
+		// keeps the detail for operators.
+		safe := struct {
+			Status     string `json:"status"`
+			Components []struct {
+				Name     string `json:"name"`
+				Status   string `json:"status"`
+				Optional bool   `json:"optional,omitempty"`
+			} `json:"components"`
+		}{Status: string(res.Status)}
+		for _, c := range res.Components {
+			safe.Components = append(safe.Components, struct {
+				Name     string `json:"name"`
+				Status   string `json:"status"`
+				Optional bool   `json:"optional,omitempty"`
+			}{Name: c.Name, Status: string(c.Status), Optional: c.Optional})
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})
+		writeJSON(w, res.HTTPStatusFor(), safe)
 	})
 
 	// Public branding endpoint (Blueprint §8.5)
@@ -218,6 +252,18 @@ func Mount(s *Services) http.Handler {
 
 		// Effective identity + session management (VS-01 hardening).
 		r.Get("/api/v1/auth/me", whoAmI(s))
+		// Operator-only detailed health snapshot — includes per-
+		// component detail strings (DB error text, pool saturation,
+		// upstream HTTP status) that we strip from /readyz to avoid
+		// leaking infra hostnames to anonymous callers.
+		r.With(middleware.RequirePermission("view_audit_log")).
+			Get("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				defer cancel()
+				res := healthReg.Snapshot(ctx, 3*time.Second)
+				res.Timestamp = time.Now().UTC()
+				writeJSON(w, http.StatusOK, res)
+			})
 		r.Post("/api/v1/auth/logout", logoutAndRevoke(s))
 		r.With(middleware.RequirePermission("create_tenant")).
 			Post("/api/v1/users/{user_id}/revoke-tokens", revokeUserTokens(s))

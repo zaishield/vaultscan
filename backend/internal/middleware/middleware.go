@@ -3,6 +3,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strings"
@@ -142,8 +143,24 @@ func TenantBinding(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	}
 }
 
-// RequestID stamps every request with a correlation ID surfaced in responses
-// and audit log entries.
+// RequestIDKey is the ctx key under which the request ID lives.
+// Handlers and services pull it via RequestIDFromContext for log
+// correlation. Operators tracing a slow request across the API +
+// scanner-worker logs all key off this same UUID.
+type requestIDCtxKey struct{}
+
+// RequestIDFromContext returns the request ID stamped by the
+// RequestID middleware, or "" if none.
+func RequestIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(requestIDCtxKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// RequestID stamps every request with a correlation ID surfaced in
+// responses, the request ctx (for downstream log correlation), and
+// audit log entries.
 func RequestID() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +169,7 @@ func RequestID() func(http.Handler) http.Handler {
 				rid = uuid.New().String()
 			}
 			w.Header().Set("X-Request-Id", rid)
+			r = r.WithContext(context.WithValue(r.Context(), requestIDCtxKey{}, rid))
 			next.ServeHTTP(w, r)
 		})
 	}

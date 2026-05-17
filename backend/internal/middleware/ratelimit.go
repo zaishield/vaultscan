@@ -372,8 +372,15 @@ func (m *RateLimitMiddleware) Wrap(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Always emit the limit headers — successful responses too,
+		// so clients can self-throttle BEFORE they hit 429.
+		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(m.limit))
+		w.Header().Set("X-RateLimit-Reset",
+			strconv.FormatInt(time.Now().Add(time.Duration(m.window)*time.Second).Unix(), 10))
 		if !ok {
 			rateLimitHits("identity")
+			// Standard Retry-After in seconds (window cap).
+			w.Header().Set("Retry-After", strconv.Itoa(m.window))
 			writeJSONError(w, 429, "rate_limited", "slow down")
 			return
 		}
