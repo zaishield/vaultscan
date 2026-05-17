@@ -27,73 +27,103 @@ type VerifyResult struct {
 	Detail       string    `json:"detail,omitempty"`
 }
 
+// verifyDeepChunkSize is the page size for the keyset-paginated scan
+// over audit_logs. 10k rows per query keeps each statement well under
+// the 30s pool-wide statement_timeout even on a multi-million row
+// audit table. A single full-table SELECT would otherwise blow past
+// the timeout once the table grows past ~1M rows in production.
+const verifyDeepChunkSize = 10_000
+
 // VerifyDeep is Verify's audit-grade sibling: returns the full forensic
 // report AND writes a row into audit_chain_breaks for every break it
 // finds, so subsequent dashboard queries can show "chain broken on Mar 4
 // 02:17 between rows 9134 and 9135".
+//
+// Chunked via keyset (WHERE id > $1 ORDER BY id LIMIT N) so each
+// underlying statement returns in milliseconds regardless of total
+// table size. The chain-prev byte slice is carried across chunks so
+// the verifier still sees the contiguous chain.
 func (s *Service) VerifyDeep(ctx context.Context) (*VerifyResult, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, event, actor_type, actor_id, host(ip), user_agent,
-		       platform_id, partner_id, tenant_id,
-		       target_type, target_id, payload, chain_prev, chain_hash
-		  FROM audit_logs ORDER BY id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var (
-		prev       []byte
-		total      int64
-		lastGood   int64
-		firstBad   int64
-		expectHex  string
-		storedHex  string
-		detail     string
+		prev      []byte
+		total     int64
+		lastGood  int64
+		firstBad  int64
+		lastID    int64
+		expectHex string
+		storedHex string
+		detail    string
 	)
-	for rows.Next() {
-		var (
-			id              int64
-			event, actor    string
-			actorID         *uuid.UUID
-			ipStr           *string
-			userAgent       *string
-			platID          uuid.UUID
-			partID, tenID   *uuid.UUID
-			tType, tID      *string
-			payload         string
-			chainPrev, hash []byte
-		)
-		if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
-			&platID, &partID, &tenID,
-			&tType, &tID, &payload, &chainPrev, &hash); err != nil {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		rows, err := s.pool.Query(ctx, `
+			SELECT id, event, actor_type, actor_id, host(ip), user_agent,
+			       platform_id, partner_id, tenant_id,
+			       target_type, target_id, payload, chain_prev, chain_hash
+			  FROM audit_logs
+			 WHERE id > $1
+			 ORDER BY id ASC
+			 LIMIT $2`, lastID, verifyDeepChunkSize)
+		if err != nil {
 			return nil, err
 		}
-		total++
-		h := sha256.New()
-		if prev != nil {
-			h.Write(prev)
+		chunkRows := 0
+		for rows.Next() {
+			chunkRows++
+			var (
+				id              int64
+				event, actor    string
+				actorID         *uuid.UUID
+				ipStr           *string
+				userAgent       *string
+				platID          uuid.UUID
+				partID, tenID   *uuid.UUID
+				tType, tID      *string
+				payload         string
+				chainPrev, hash []byte
+			)
+			if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
+				&platID, &partID, &tenID,
+				&tType, &tID, &payload, &chainPrev, &hash); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			total++
+			lastID = id
+			h := sha256.New()
+			if prev != nil {
+				h.Write(prev)
+			}
+			fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
+				event, actor, canonicalActorID(actorID), derefStr(ipStr),
+				canonicalString(derefStr(userAgent)),
+				platID, partID, tenID,
+				derefStr(tType), derefStr(tID))
+			h.Write([]byte(payload))
+			expect := h.Sum(nil)
+			if firstBad == 0 && !equal(expect, hash) {
+				firstBad = id
+				expectHex = hex.EncodeToString(expect)
+				storedHex = hex.EncodeToString(hash)
+				detail = fmt.Sprintf("row %d hash mismatch (event=%s)", id, event)
+			}
+			if firstBad == 0 {
+				lastGood = id
+			}
+			prev = hash
 		}
-		fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
-			event, actor, canonicalActorID(actorID), derefStr(ipStr),
-			canonicalString(derefStr(userAgent)),
-			platID, partID, tenID,
-			derefStr(tType), derefStr(tID))
-		h.Write([]byte(payload))
-		expect := h.Sum(nil)
-		if firstBad == 0 && !equal(expect, hash) {
-			firstBad = id
-			expectHex = hex.EncodeToString(expect)
-			storedHex = hex.EncodeToString(hash)
-			detail = fmt.Sprintf("row %d hash mismatch (event=%s)", id, event)
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
 		}
-		if firstBad == 0 {
-			lastGood = id
+		rows.Close()
+		if chunkRows < verifyDeepChunkSize {
+			break // last page reached
 		}
-		prev = hash
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	res := &VerifyResult{
 		Total: total, FirstBadID: firstBad, LastGoodID: lastGood,
