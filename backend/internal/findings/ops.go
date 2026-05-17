@@ -41,10 +41,18 @@ var (
 )
 
 func stripVariableTokens(s string) string {
-	s = portRe.ReplaceAllString(s, "#PORT")
-	s = ipRe.ReplaceAllString(s, "#IP")
+	// Order matters: strip the most-specific patterns first so they
+	// aren't eaten by less-specific ones. UUIDs and IPs contain
+	// digit groups that look like ports to portRe; if portRe runs
+	// first it breaks the UUID into "#PORT-#PORT-#PORT-..." which
+	// then doesn't match uuidRe — so two findings with different
+	// embedded UUIDs would cluster to DIFFERENT keys instead of
+	// the same. The 2026-05 audit pass added a test for this and
+	// the order swap is the fix.
 	s = uuidRe.ReplaceAllString(s, "#UUID")
+	s = ipRe.ReplaceAllString(s, "#IP")
 	s = hostRe.ReplaceAllString(s, "#HOST")
+	s = portRe.ReplaceAllString(s, "#PORT")
 	s = wsRe.ReplaceAllString(s, " ")
 	return strings.TrimSpace(s)
 }
