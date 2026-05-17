@@ -132,6 +132,15 @@ type Config struct {
 	// build a per-tenant ceiling (e.g. 5x means a tenant collectively
 	// gets 5× the single-user limit). 0 disables the per-tenant cap.
 	PerTenantRateLimitMultiplier int
+
+	// DefaultPartnerSlug is the partner used as a fallback for
+	// operations that don't carry a partner_id (admin tools,
+	// platform-wide schedules, uploads via the operator console).
+	// Resolved to a real partner_id at boot; if the slug doesn't
+	// exist the API still starts but those handlers return a
+	// clear error. Default matches migration 0010's seeded
+	// "zaishield-direct" partner.
+	DefaultPartnerSlug string
 }
 
 func Load() (*Config, error) {
@@ -201,6 +210,7 @@ func Load() (*Config, error) {
 		PerTenantRateLimitMultiplier: parseInt("VAULTSCAN_RATE_LIMIT_TENANT_MULTIPLIER", 10),
 		APIVersion:                   getenv("VAULTSCAN_API_VERSION", "dev"),
 		TSATrustedRootsPath:          os.Getenv("VAULTSCAN_TSA_TRUSTED_ROOTS_PATH"),
+		DefaultPartnerSlug:           getenv("VAULTSCAN_DEFAULT_PARTNER_SLUG", "zaishield-direct"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("VAULTSCAN_DATABASE_URL is required")

@@ -73,15 +73,28 @@ func (s *Service) Create(ctx context.Context, actor *uuid.UUID, in CreateInput) 
 			return nil, err
 		}
 	}
-	// Default branding stub so the portal always has something to render.
+	// Starter branding palette derived from the partner's slug so
+	// every new partner looks visually distinct from day 0. The
+	// hash is stable (same slug → same palette across rebuilds) so
+	// test fixtures don't drift. Partners overwrite this via the
+	// branding wizard; the onboarding checklist tracks that step.
+	primary, secondary := starterPalette(p.Slug)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO partner_branding(partner_id, product_name, primary_color, secondary_color)
-		VALUES ($1,$2,'#0F172A','#38BDF8')`, p.ID, p.Name); err != nil {
+		VALUES ($1,$2,$3,$4)`, p.ID, p.Name, primary, secondary); err != nil {
 		return nil, err
 	}
 	// Default support settings.
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO partner_support_settings(partner_id) VALUES ($1)`, p.ID); err != nil {
+		return nil, err
+	}
+	// Seed the onboarding checklist so the portal can show
+	// "0 of 6 complete" immediately and walk the partner-admin
+	// through the first-day setup steps.
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO partner_onboarding(partner_id) VALUES ($1)
+		 ON CONFLICT (partner_id) DO NOTHING`, p.ID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -173,3 +186,27 @@ func (s *Service) HierarchyForTenant(ctx context.Context, tenantID uuid.UUID) (*
 }
 
 var ErrNotFound = errors.New("partner not found")
+
+// DefaultBySlug resolves a partner by slug. Used at boot to look up
+// the platform's "direct customer" partner (typically
+// "zaishield-direct") so handlers that need a fallback partner_id
+// can do it via a typed service call rather than a hardcoded
+// sentinel UUID buried in code. Operators renaming / re-slugging
+// the default partner via a runbook still works as long as the
+// VAULTSCAN_DEFAULT_PARTNER_SLUG env var moves with them.
+func (s *Service) DefaultBySlug(ctx context.Context, slug string) (*models.Partner, error) {
+	if slug == "" {
+		return nil, errors.New("partners: empty slug")
+	}
+	p := &models.Partner{}
+	err := s.pool.QueryRow(ctx, `
+		SELECT p.id, p.platform_id, p.parent_id, t.code, p.name, p.slug, p.status, p.created_at
+		  FROM partners p JOIN partner_types t ON t.id = p.type_id
+		 WHERE p.slug=$1`, slug).
+		Scan(&p.ID, &p.PlatformID, &p.ParentID, &p.TypeCode,
+			&p.Name, &p.Slug, &p.Status, &p.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return p, err
+}

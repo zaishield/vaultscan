@@ -288,6 +288,9 @@ func createTenant(s *Services) http.HandlerFunc {
 			internalErr(w, err)
 			return
 		}
+		// First-tenant milestone — idempotent, MarkMilestone won't
+		// re-stamp the timestamp if it's already true.
+		_ = s.Partners.MarkMilestone(r.Context(), partnerID, partners.MilestoneFirstTenant)
 		writeJSON(w, http.StatusCreated, t)
 	}
 }
@@ -414,6 +417,11 @@ func updateBranding(s *Services) http.HandlerFunc {
 			internalErr(w, err)
 			return
 		}
+		// Onboarding-checklist milestone. Best-effort — failing to
+		// update the row is operator-visible via logs but doesn't
+		// fail the branding update (the actual branding has been
+		// saved already).
+		_ = s.Partners.MarkMilestone(r.Context(), pid, partners.MilestoneBranding)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
@@ -453,6 +461,8 @@ func addPartnerDomain(s *Services) http.HandlerFunc {
 			internalErr(w, err)
 			return
 		}
+		// Onboarding-checklist milestone.
+		_ = s.Partners.MarkMilestone(r.Context(), pid, partners.MilestoneDomain)
 		writeJSON(w, http.StatusCreated, map[string]string{"status": "ok"})
 	}
 }
@@ -2552,6 +2562,12 @@ func uploadBrandAsset(s *Services) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
+		// Logo uploads complete the "logo_uploaded" onboarding step.
+		// Other asset types (favicon / pdf_cover / watermark) don't
+		// trip this milestone — those are post-onboarding polish.
+		if assetType == branding.AssetLogoDark || assetType == branding.AssetLogoLight {
+			_ = s.Partners.MarkMilestone(r.Context(), pid, partners.MilestoneLogo)
+		}
 		writeJSON(w, http.StatusCreated, map[string]string{"id": id.String()})
 	}
 }
@@ -2575,6 +2591,13 @@ func checkSenderDNS(s *Services) http.HandlerFunc {
 		if err != nil {
 			badRequest(w, err.Error())
 			return
+		}
+		// SenderDNS milestone — only marked when SPF passes AND
+		// DMARC passes (DKIM is selector-dependent so we don't
+		// gate the milestone on it). Half-configured DNS still
+		// shows in the portal but doesn't auto-tick the box.
+		if out.SPFStatus == "pass" && (out.DMARCStatus == "pass" || out.DMARCStatus == "configured") {
+			_ = s.Partners.MarkMilestone(r.Context(), pid, partners.MilestoneSenderDNS)
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

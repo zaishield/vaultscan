@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/zaishield/vaultscan/backend/internal/agents"
 	"github.com/zaishield/vaultscan/backend/internal/analytics"
 	"github.com/zaishield/vaultscan/backend/internal/api"
@@ -274,6 +276,20 @@ func main() {
 		}
 	}
 
+	// Resolve the default partner ID once at boot from the
+	// configured slug. Replaces the previous hardcoded sentinel
+	// UUID (00000000-0000-0000-0000-0000000000b1) that several
+	// handlers used as a fallback partner — renaming / re-slugging
+	// the seeded partner now keeps working as long as the operator
+	// updates VAULTSCAN_DEFAULT_PARTNER_SLUG to match.
+	var defaultPartnerID uuid.UUID
+	if dp, derr := partSvc.DefaultBySlug(ctx, cfg.DefaultPartnerSlug); derr == nil {
+		defaultPartnerID = dp.ID
+	} else {
+		log.Warn().Err(derr).Str("slug", cfg.DefaultPartnerSlug).
+			Msg("api: default partner slug not found; handlers that need a fallback partner will return 400")
+	}
+
 	router := api.Mount(&api.Services{
 		Pool: pool.Pool, Cfg: cfg, Log: log, Verifier: verifier,
 		Audit: auditSvc, Bus: bus, Branding: brand,
@@ -282,7 +298,8 @@ func main() {
 		Findings: findSvc, Vault: vault, Retests: retestSvc, Reports: reportSvc,
 		Integrations: intSvc, Dashboards: dashSvc, Users: userSvc, Email: emailSvc,
 		Cosign: cosignSvc, BrandAssets: brandAssets,
-		Billing: billingSvc,
+		Billing:          billingSvc,
+		DefaultPartnerID: defaultPartnerID,
 		Nodes: nodeOps, LiveStream: liveStream,
 		Guardrails: guardrailSvc, Bruteforce: bruteforce,
 		MFA: mfaSvc, Keys: keyMgr,

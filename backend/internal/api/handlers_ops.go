@@ -546,8 +546,18 @@ func uploadEvidenceWithDEK(s *Services) http.HandlerFunc {
 			a := id.UserID
 			actor = &a
 		}
+		// Resolve the tenant's partner — that's the correct
+		// partner_id for evidence rows tied to this tenant. The
+		// previous code used a hardcoded "direct partner" sentinel
+		// which was wrong (uploads from MSSP-owned tenants got
+		// audited under the platform-direct partner).
+		partnerID, err := partnerForTenant(r.Context(), s, tenantID)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
 		evID, err := s.Vault.RecordWithDEK(r.Context(), evidence.PutInput{
-			TenantID: tenantID, PartnerID: directPartnerID(),
+			TenantID: tenantID, PartnerID: partnerID,
 			Kind: r.URL.Query().Get("kind"),
 			ContentType: r.Header.Get("Content-Type"),
 			Body: body, UploadedBy: actor,
@@ -729,7 +739,17 @@ func createReportSchedule(s *Services) http.HandlerFunc {
 			in.PlatformID = platformConstID()
 		}
 		if in.PartnerID == uuid.Nil {
-			in.PartnerID = directPartnerID()
+			// Fall back to the platform's configured default
+			// partner (resolved at boot from
+			// VAULTSCAN_DEFAULT_PARTNER_SLUG). If that lookup
+			// failed at boot DefaultPartnerID is uuid.Nil and we
+			// refuse — better to 400 than silently file the
+			// schedule under no partner.
+			if s.DefaultPartnerID == uuid.Nil {
+				badRequest(w, "partner_id required (default partner not configured)")
+				return
+			}
+			in.PartnerID = s.DefaultPartnerID
 		}
 		schedID, err := s.Reports.CreateSchedule(r.Context(), in)
 		if err != nil {
@@ -1289,8 +1309,20 @@ func platformConstID() uuid.UUID {
 	return uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
 }
 
-func directPartnerID() uuid.UUID {
-	return uuid.MustParse("00000000-0000-0000-0000-0000000000b1")
+// partnerForTenant resolves the partner_id of a tenant. Used by
+// handlers that need the partner context (audit attribution,
+// evidence row partner_id) but only carry the tenant_id at the
+// HTTP layer. Replaces the previous directPartnerID() sentinel
+// which was wrong — it pointed every tenant's evidence rows at
+// the platform-direct partner regardless of who actually owned
+// the tenant.
+func partnerForTenant(ctx context.Context, s *Services, tenantID uuid.UUID) (uuid.UUID, error) {
+	var partnerID uuid.UUID
+	if err := s.Pool.QueryRow(ctx,
+		`SELECT partner_id FROM tenants WHERE id=$1`, tenantID).Scan(&partnerID); err != nil {
+		return uuid.Nil, err
+	}
+	return partnerID, nil
 }
 
 // retesting + reporting need a method on s, this stub keeps the linter happy

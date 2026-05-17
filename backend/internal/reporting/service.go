@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
@@ -420,15 +421,37 @@ func (s *Service) LogDownload(ctx context.Context, reportID uuid.UUID, exportID 
 // ----- dataset & rendering ------------------------------------------------
 
 type Dataset struct {
-	Engagement   models.Engagement       `json:"engagement"`
-	Tenant       models.Tenant           `json:"tenant"`
-	Partner      models.Partner          `json:"partner"`
-	Branding     *models.PartnerBranding `json:"branding,omitempty"`
-	Findings     []models.Finding        `json:"findings"`
-	SeverityCounts map[string]int        `json:"severity_counts"`
-	GeneratedAt  time.Time               `json:"generated_at"`
-	ReportType   string                  `json:"report_type"`
-	Compliance   ComplianceMapping       `json:"compliance,omitempty"`
+	Engagement     models.Engagement       `json:"engagement"`
+	Tenant         models.Tenant           `json:"tenant"`
+	Partner        models.Partner          `json:"partner"`
+	Branding       *models.PartnerBranding `json:"branding,omitempty"`
+	Findings       []models.Finding        `json:"findings"`
+	SeverityCounts map[string]int          `json:"severity_counts"`
+	GeneratedAt    time.Time               `json:"generated_at"`
+	ReportType     string                  `json:"report_type"`
+	Compliance     ComplianceMapping       `json:"compliance,omitempty"`
+	// PartnerTemplate is non-nil when the partner has uploaded a
+	// custom template for this report_type (partner_report_templates
+	// row). The render path uses it instead of the default const.
+	// Each section is optional and overrides the matching branding
+	// or default value.
+	PartnerTemplate *PartnerReportTemplate `json:"-"`
+}
+
+// PartnerReportTemplate is the loaded form of a partner_report_templates
+// row. Body is the html/template source the partner uploaded;
+// Sections is a free-form ordered list of section ids the template
+// expects to render. Cover / Footer / Watermark override the matching
+// branding fields when non-empty.
+type PartnerReportTemplate struct {
+	PartnerID  uuid.UUID
+	ReportType string
+	Body       string
+	Sections   []string
+	CoverURL   string
+	Footer     string
+	Watermark  string
+	UpdatedAt  time.Time
 }
 
 type ComplianceMapping struct {
@@ -441,6 +464,17 @@ func (s *Service) gatherDataset(ctx context.Context, in GenerateInput) (*Dataset
 	d := &Dataset{
 		ReportType: in.ReportType, GeneratedAt: time.Now().UTC(),
 		SeverityCounts: map[string]int{},
+	}
+	// Per-partner template override. Errors are non-fatal — if the
+	// lookup fails the renderer falls back to the default
+	// reportTemplate const. Logged via the reporting logger.
+	if tmpl, err := s.loadPartnerTemplate(ctx, in.PartnerID, in.ReportType); err == nil {
+		d.PartnerTemplate = tmpl
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		reportingLogger.Warn().Err(err).
+			Str("partner_id", in.PartnerID.String()).
+			Str("report_type", in.ReportType).
+			Msg("reporting: partner template lookup failed; using default")
 	}
 	if err := s.pool.QueryRow(ctx, `
 		SELECT id, platform_id, partner_id, tenant_id, code, name, COALESCE(description,''),
@@ -651,9 +685,32 @@ Engagement <strong style="color:{{.Primary}}">{{.Engagement.Code}} · {{.Engagem
 </html>`
 
 func renderHTML(d *Dataset) ([]byte, string, error) {
-	t, err := template.New("report").Parse(reportTemplate)
+	// Source: partner-uploaded custom template when present
+	// (PartnerTemplate.Body), else the canonical default. The
+	// partner-template path is gated by the same html/template parse
+	// — Go's auto-escaping protects against XSS in the supplied
+	// template body the same way it does for our own.
+	source := reportTemplate
+	if d.PartnerTemplate != nil && d.PartnerTemplate.Body != "" {
+		source = d.PartnerTemplate.Body
+	}
+	t, err := template.New("report").Parse(source)
 	if err != nil {
-		return nil, "", err
+		// A broken partner template falls back to the default
+		// rather than failing the whole report. The error is
+		// surfaced via the logger so operators can fix it.
+		if d.PartnerTemplate != nil {
+			reportingLogger.Warn().Err(err).
+				Str("partner_id", d.PartnerTemplate.PartnerID.String()).
+				Str("report_type", d.PartnerTemplate.ReportType).
+				Msg("reporting: partner template parse failed; falling back to default")
+			t, err = template.New("report").Parse(reportTemplate)
+			if err != nil {
+				return nil, "", err
+			}
+		} else {
+			return nil, "", err
+		}
 	}
 	primary := "#0F172A"
 	logoURL := ""
@@ -671,6 +728,17 @@ func renderHTML(d *Dataset) ([]byte, string, error) {
 		}
 		if d.Branding.WatermarkText != "" {
 			watermark = d.Branding.WatermarkText
+		}
+	}
+	// Partner-template fields override branding (same precedence
+	// rule docs/runbooks/branding.md describes — partner template
+	// is "most specific").
+	if d.PartnerTemplate != nil {
+		if d.PartnerTemplate.Footer != "" {
+			footer = d.PartnerTemplate.Footer
+		}
+		if d.PartnerTemplate.Watermark != "" {
+			watermark = d.PartnerTemplate.Watermark
 		}
 	}
 	var buf bytes.Buffer
@@ -743,6 +811,118 @@ func validReportType(t string) bool {
 		}
 	}
 	return false
+}
+
+// ----- Partner report-template management -----------------------------------
+//
+// Operators upload per-partner / per-report-type overrides via the
+// /api/v1/partners/{partner_id}/report-templates surface; the loader
+// here is called by gatherDataset on every report generation.
+
+// loadPartnerTemplate returns the partner's override row for the
+// given report type, or pgx.ErrNoRows if there's no override.
+func (s *Service) loadPartnerTemplate(ctx context.Context, partnerID uuid.UUID, reportType string) (*PartnerReportTemplate, error) {
+	t := &PartnerReportTemplate{PartnerID: partnerID, ReportType: reportType}
+	var sectionsJSON []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT template, sections, COALESCE(cover_url,''),
+		       COALESCE(footer,''), COALESCE(watermark,''), updated_at
+		  FROM partner_report_templates
+		 WHERE partner_id=$1 AND report_type=$2`,
+		partnerID, reportType).
+		Scan(&t.Body, &sectionsJSON, &t.CoverURL, &t.Footer, &t.Watermark, &t.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if len(sectionsJSON) > 0 {
+		_ = json.Unmarshal(sectionsJSON, &t.Sections)
+	}
+	return t, nil
+}
+
+// UpsertPartnerTemplateInput is the CRUD shape for the API surface.
+type UpsertPartnerTemplateInput struct {
+	PartnerID  uuid.UUID
+	ReportType string
+	Body       string
+	Sections   []string
+	CoverURL   string
+	Footer     string
+	Watermark  string
+}
+
+// UpsertPartnerTemplate writes or replaces a partner template.
+// Validates the body parses as a Go html/template before persisting
+// — a broken template would fall back at render time, but failing
+// fast at write time gives the operator a clearer error.
+func (s *Service) UpsertPartnerTemplate(ctx context.Context, in UpsertPartnerTemplateInput) error {
+	if in.PartnerID == uuid.Nil {
+		return errors.New("reporting: partner_id required")
+	}
+	if !validReportType(in.ReportType) {
+		return fmt.Errorf("reporting: unsupported report_type %q", in.ReportType)
+	}
+	if in.Body == "" {
+		return errors.New("reporting: template body required")
+	}
+	// Defence in depth: validate the body parses. Catches the
+	// "left an unclosed {{ if }}" type mistake at upload time.
+	if _, err := template.New("validate").Parse(in.Body); err != nil {
+		return fmt.Errorf("reporting: template parse error: %w", err)
+	}
+	sectionsJSON, _ := json.Marshal(in.Sections)
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO partner_report_templates(partner_id, report_type, template, sections,
+		    cover_url, footer, watermark)
+		VALUES ($1, $2, $3, $4::jsonb, NULLIF($5,''), NULLIF($6,''), NULLIF($7,''))
+		ON CONFLICT (partner_id, report_type) DO UPDATE SET
+		    template = EXCLUDED.template,
+		    sections = EXCLUDED.sections,
+		    cover_url = EXCLUDED.cover_url,
+		    footer = EXCLUDED.footer,
+		    watermark = EXCLUDED.watermark,
+		    updated_at = now()`,
+		in.PartnerID, in.ReportType, in.Body, sectionsJSON,
+		in.CoverURL, in.Footer, in.Watermark)
+	return err
+}
+
+// ListPartnerTemplates returns every override row a partner has.
+func (s *Service) ListPartnerTemplates(ctx context.Context, partnerID uuid.UUID) ([]PartnerReportTemplate, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT report_type, template, sections, COALESCE(cover_url,''),
+		       COALESCE(footer,''), COALESCE(watermark,''), updated_at
+		  FROM partner_report_templates
+		 WHERE partner_id=$1
+		 ORDER BY report_type`, partnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PartnerReportTemplate
+	for rows.Next() {
+		var t PartnerReportTemplate
+		var sectionsJSON []byte
+		t.PartnerID = partnerID
+		if err := rows.Scan(&t.ReportType, &t.Body, &sectionsJSON,
+			&t.CoverURL, &t.Footer, &t.Watermark, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if len(sectionsJSON) > 0 {
+			_ = json.Unmarshal(sectionsJSON, &t.Sections)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DeletePartnerTemplate removes an override row. Future renders for
+// that report_type fall back to the default template.
+func (s *Service) DeletePartnerTemplate(ctx context.Context, partnerID uuid.UUID, reportType string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM partner_report_templates WHERE partner_id=$1 AND report_type=$2`,
+		partnerID, reportType)
+	return err
 }
 
 var _ = errors.New

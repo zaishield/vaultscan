@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
@@ -71,6 +72,13 @@ type Services struct {
 	Cosign       *cosign.Service
 	BrandAssets  *branding.AssetService
 	Billing      *billing.Service
+
+	// DefaultPartnerID is resolved at boot from
+	// cfg.DefaultPartnerSlug. Handlers that lack a request-supplied
+	// partner_id (operator-console uploads, platform-wide report
+	// schedules) fall back to this. uuid.Nil means the slug wasn't
+	// found — handlers should refuse rather than guess.
+	DefaultPartnerID uuid.UUID
 
 	// Deepened service surface (VS-05..VS-12 + HS-01/HS-02/HS-05).
 	Nodes        *scanorch.NodeOps
@@ -260,6 +268,15 @@ func Mount(s *Services) http.Handler {
 				Post("/{tenant_id}/suspend", suspendTenant(s))
 			r.With(middleware.RequirePermission("create_tenant")).
 				Post("/{tenant_id}/reactivate", reactivateTenant(s))
+			// Tenant-level branding overrides (Blueprint §8.5).
+			// Read is open to any authenticated user of the tenant
+			// (portal chrome needs it on every page); mutate
+			// requires manage_branding.
+			r.Get("/{tenant_id}/branding", getTenantBranding(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Put("/{tenant_id}/branding", putTenantBranding(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Delete("/{tenant_id}/branding", clearTenantBranding(s))
 		})
 
 		// Effective identity + session management (VS-01 hardening).
@@ -469,6 +486,34 @@ func Mount(s *Services) http.Handler {
 		r.With(middleware.RequirePermission("manage_branding")).
 			Post("/api/v1/partners/{partner_id}/sender-dns/check", checkSenderDNS(s))
 		r.Get("/api/v1/partners/{partner_id}/preview", brandingPreview(s))
+
+		// Partner support settings PUT (previously write-only at
+		// create time + read-only via LoadBundle; operators had to
+		// UPDATE the table by hand to change them).
+		r.With(middleware.RequirePermission("manage_branding")).
+			Put("/api/v1/partners/{partner_id}/support", putPartnerSupport(s))
+
+		// Partner onboarding checklist (Blueprint §8.8). Read is
+		// open to any user with manage_branding so the portal can
+		// drive the "X of 6 setup steps left" banner. Steps are
+		// automatically marked complete by the matching mutating
+		// handlers — no PATCH endpoint needed.
+		r.With(middleware.RequirePermission("manage_branding")).
+			Get("/api/v1/partners/{partner_id}/onboarding", getPartnerOnboarding(s))
+
+		// Partner report-template overrides. Each (partner, report_type)
+		// pair gets at most one custom template; absent that the
+		// renderer falls back to the default const. A broken template
+		// at render time falls back too with a warn log so a buggy
+		// upload doesn't break the partner's report pipeline.
+		r.Route("/api/v1/partners/{partner_id}/report-templates", func(r chi.Router) {
+			r.With(middleware.RequirePermission("manage_branding")).
+				Get("/", listPartnerReportTemplates(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Put("/{report_type}", upsertPartnerReportTemplate(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Delete("/{report_type}", deletePartnerReportTemplate(s))
+		})
 
 		// §8.7 Partner billing / quota surface. GET endpoints are
 		// readable by anyone with the manage_branding floor (partner
