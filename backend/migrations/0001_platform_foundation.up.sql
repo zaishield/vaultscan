@@ -27,7 +27,8 @@ INSERT INTO partner_types(code, description) VALUES
     ('reseller',     'Sells and supports customers'),
     ('mssp',         'Operates scans and remediation workflows'),
     ('white_label',  'Fully rebrands the product'),
-    ('direct',       'Direct customer of ZAISHIELD');
+    ('direct',       'Direct customer of ZAISHIELD')
+ON CONFLICT (code) DO NOTHING;
 
 CREATE TABLE partners (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -134,7 +135,8 @@ INSERT INTO roles(code, name, scope_level) VALUES
     ('remediation_owner',       'Remediation Owner',         'engagement'),
     ('client_viewer',           'Client Viewer',             'tenant'),
     ('auditor',                 'Auditor',                   'platform'),
-    ('agent_installer',         'Agent Installer',           'tenant');
+    ('agent_installer',         'Agent Installer',           'tenant')
+ON CONFLICT (code) DO NOTHING;
 
 CREATE TABLE permissions (
     id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -159,7 +161,8 @@ INSERT INTO permissions(code, description) VALUES
     ('download_evidence',       'Download evidence artifacts'),
     ('manage_agents',           'Enroll, configure, and remove agents'),
     ('trigger_emergency_stop',  'Trigger emergency stop on agents or scans'),
-    ('view_audit_logs',         'Read audit logs');
+    ('view_audit_logs',         'Read audit logs')
+ON CONFLICT (code) DO NOTHING;
 
 CREATE TABLE role_permissions (
     role_id       UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,

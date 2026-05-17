@@ -190,21 +190,25 @@ func (s *Service) LaunchScan(ctx context.Context, retestID uuid.UUID, actor *uui
 	// pinpoint scan: same tenant/engagement, same scanner/profile, same
 	// affected endpoint.
 	var (
-		findingID                        uuid.UUID
+		findingID                                     uuid.UUID
 		tenantID, partnerID, engagementID, platformID uuid.UUID
-		scanner, scanType, endpoint, plane string
-		port                               int
+		scanner, scanType, endpoint                   string
+		port                                          int
 	)
+	// NB: an earlier version of this query joined scan_profiles to
+	// pick a plane via CASE, but both branches returned 'external'
+	// AND the joined plane was never read by the caller — the
+	// authoritative plane is derived from profileForScanner(scanner)
+	// below. The buggy CASE/JOIN was removed in 2026-05 as part of
+	// the audit cleanup.
 	if err := s.pool.QueryRow(ctx, `
 		SELECT f.id, f.tenant_id, f.partner_id, f.engagement_id, f.platform_id,
-		       f.scanner, f.scan_type, COALESCE(f.affected_endpoint, ''), COALESCE(f.port, 0),
-		       CASE WHEN e.code IS NOT NULL THEN 'external' ELSE 'external' END
+		       f.scanner, f.scan_type, COALESCE(f.affected_endpoint, ''), COALESCE(f.port, 0)
 		  FROM retest_requests r
-		  JOIN findings f       ON f.id = r.finding_id
-		  LEFT JOIN scan_profiles e ON e.id IS NULL
+		  JOIN findings f ON f.id = r.finding_id
 		 WHERE r.id = $1`, retestID).
 		Scan(&findingID, &tenantID, &partnerID, &engagementID, &platformID,
-			&scanner, &scanType, &endpoint, &port, &plane); err != nil {
+			&scanner, &scanType, &endpoint, &port); err != nil {
 		return uuid.Nil, fmt.Errorf("retesting: locate finding: %w", err)
 	}
 	if endpoint == "" {

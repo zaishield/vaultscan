@@ -2662,7 +2662,11 @@ func registerCosignKey(s *Services) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		identity, _ := auth.FromContext(r.Context())
+		identity, err := auth.FromContext(r.Context())
+		if err != nil || identity == nil {
+			forbidden(w, "authentication required")
+			return
+		}
 		id, err := s.Cosign.Register(r.Context(), cosign.RegisterInput{
 			KeyID: req.KeyID, Algorithm: req.Algorithm,
 			PublicKeyPEM: req.PublicKeyPEM, Plane: req.Plane,
@@ -2751,9 +2755,6 @@ func (b *byteReadCloser) Read(p []byte) (int, error) {
 func (b *byteReadCloser) Close() error { return nil }
 
 func byteReader(b []byte) *byteReadCloser { return &byteReadCloser{p: b} }
-
-// ensure audit pkg referenced in case future expansion adds direct event consts.
-var _ = audit.EventEmergencyStop
 
 // jwtClaimsRegistered builds default RegisteredClaims for a dev token.
 func jwtClaimsRegistered(sub string, ttl time.Duration) jwt.RegisteredClaims {

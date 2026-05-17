@@ -266,6 +266,17 @@ func Mount(s *Services) http.Handler {
 				writeJSON(w, http.StatusOK, res)
 			})
 		r.Post("/api/v1/auth/logout", logoutAndRevoke(s))
+		// Cosign trust-policy management. Gated by manage_signers
+		// (granted by default to roles that hold create_tenant via
+		// migration 0048).
+		r.With(middleware.RequirePermission("manage_signers")).
+			Get("/api/v1/cosign/keys", listCosignKeys(s))
+		r.With(middleware.RequirePermission("manage_signers")).
+			Post("/api/v1/cosign/keys", registerCosignKey(s))
+		r.With(middleware.RequirePermission("manage_signers")).
+			Delete("/api/v1/cosign/keys/{key_id}", revokeCosignKey(s))
+		r.With(middleware.RequirePermission("manage_signers")).
+			Get("/api/v1/cosign/verify/{tool}", cosignVerifyTool(s))
 		r.With(middleware.RequirePermission("create_tenant")).
 			Post("/api/v1/users/{user_id}/revoke-tokens", revokeUserTokens(s))
 		r.With(middleware.RequirePermission("create_tenant")).

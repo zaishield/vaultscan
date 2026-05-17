@@ -54,28 +54,90 @@ func AllReportTypes() []string {
 // All export formats from Blueprint §19.3.
 const (
 	FormatPDF  = "pdf"
-	FormatDOCX = "docx"
-	FormatXLSX = "xlsx"
 	FormatHTML = "html"
 	FormatJSON = "json"
 	FormatCSV  = "csv"
+	// FormatDOCX / FormatXLSX are accepted for API compatibility but
+	// only succeed if a real DOCX/XLSX renderer has been wired into
+	// the Service (Service.docxRenderer / Service.xlsxRenderer).
+	// In the default build neither is wired and Generate() will
+	// reject these formats up-front rather than silently writing
+	// HTML/CSV bytes labelled with the wrong MIME type (which
+	// corrupted files in Word/Excel).
+	FormatDOCX = "docx"
+	FormatXLSX = "xlsx"
 )
 
+// AllFormats lists every format the renderer code can produce in
+// principle. Generate() additionally calls formatAvailable() per
+// item, which is the source of truth for "what this build can
+// actually emit". Callers wanting a safe default set should use
+// DefaultFormats().
 func AllFormats() []string {
-	return []string{FormatPDF, FormatDOCX, FormatXLSX, FormatHTML, FormatJSON, FormatCSV}
+	return []string{FormatPDF, FormatHTML, FormatJSON, FormatCSV, FormatDOCX, FormatXLSX}
+}
+
+// DefaultFormats is what Generate() picks when the caller passes no
+// formats. We deliberately omit DOCX/XLSX from this list — they
+// only work when a renderer has been wired — so a "give me
+// everything" request never silently downgrades to a corrupt file.
+func DefaultFormats() []string {
+	return []string{FormatHTML, FormatJSON, FormatCSV, FormatPDF}
 }
 
 type Service struct {
-	pool        *pgxpool.Pool
-	branding    *branding.Service
-	store       *evidence.Vault
-	audit       *audit.Service
-	bus         *eventbus.Bus
-	pdfRenderer PDFRenderer
+	pool         *pgxpool.Pool
+	branding     *branding.Service
+	store        *evidence.Vault
+	audit        *audit.Service
+	bus          *eventbus.Bus
+	pdfRenderer  PDFRenderer
+	docxRenderer DOCXRenderer
+	xlsxRenderer XLSXRenderer
+}
+
+// DOCXRenderer / XLSXRenderer let an operator plug real Office-doc
+// generators into the Service from cmd/api at startup. The default
+// build leaves both nil — Generate() will reject DOCX/XLSX requests
+// rather than emit corrupt files with the wrong MIME type.
+type DOCXRenderer interface {
+	Render(ctx context.Context, d *Dataset) ([]byte, error)
+	Name() string
+}
+
+type XLSXRenderer interface {
+	Render(ctx context.Context, d *Dataset) ([]byte, error)
+	Name() string
 }
 
 func New(pool *pgxpool.Pool, b *branding.Service, st *evidence.Vault, a *audit.Service, bus *eventbus.Bus) *Service {
 	return &Service{pool: pool, branding: b, store: st, audit: a, bus: bus}
+}
+
+// SetDOCXRenderer / SetXLSXRenderer / SetPDFRenderer wire real
+// renderers from cmd/api at startup.
+func (s *Service) SetPDFRenderer(r PDFRenderer)   { s.pdfRenderer = r }
+func (s *Service) SetDOCXRenderer(r DOCXRenderer) { s.docxRenderer = r }
+func (s *Service) SetXLSXRenderer(r XLSXRenderer) { s.xlsxRenderer = r }
+
+// formatAvailable returns true if Generate can actually produce the
+// named format end-to-end in this build. HTML / JSON / CSV are
+// always available because they're rendered inline. PDF works via
+// the wired renderer if present and falls back to HTML-with-PDF-
+// MIME otherwise (intentional — chromium isn't always packaged).
+// DOCX / XLSX require an explicitly-wired renderer; without one
+// they are unavailable so callers see a real error instead of a
+// corrupt file.
+func (s *Service) formatAvailable(format string) bool {
+	switch format {
+	case FormatHTML, FormatJSON, FormatCSV, FormatPDF:
+		return true
+	case FormatDOCX:
+		return s.docxRenderer != nil
+	case FormatXLSX:
+		return s.xlsxRenderer != nil
+	}
+	return false
 }
 
 type GenerateInput struct {
@@ -106,28 +168,37 @@ type Export struct {
 }
 
 // Generate produces the report in all requested formats.
+//
+// Atomicity: the previous version inserted the `reports` row with
+// status='generating' BEFORE gathering data or rendering. A render
+// failure (PDF chromium crash, branding load error) would orphan the
+// row in 'generating' state permanently, and the scheduler had no
+// signal to retry it. We now do the heavy work first and only INSERT
+// once everything is materialised in memory; on failure we never
+// write anything to `reports`. The render+export+UPDATE final-status
+// runs inside a single transaction so partial failures don't leak
+// half-built reports either.
 func (s *Service) Generate(ctx context.Context, in GenerateInput) (*Report, error) {
 	if !validReportType(in.ReportType) {
 		return nil, fmt.Errorf("reporting: unsupported report_type %q", in.ReportType)
 	}
 	if len(in.Formats) == 0 {
-		in.Formats = []string{FormatHTML, FormatJSON, FormatCSV, FormatPDF, FormatDOCX, FormatXLSX}
+		in.Formats = DefaultFormats()
+	}
+	// Validate that every requested format is real. DOCX/XLSX were
+	// previously accepted but silently served HTML/CSV bytes with the
+	// wrong MIME type — invalid files when opened in Word/Excel. We
+	// now reject those formats up-front unless a real renderer has
+	// been wired (s.docxRenderer / s.xlsxRenderer are nil today, so
+	// the formats are unavailable; AllFormats / DefaultFormats no
+	// longer include them).
+	for _, f := range in.Formats {
+		if !s.formatAvailable(f) {
+			return nil, fmt.Errorf("reporting: format %q is not available in this build", f)
+		}
 	}
 	id := uuid.New()
-	// Approval is required when the partner has opted in via the
-	// reports.approval_required feature flag. Reports that need approval
-	// are generated but stay in status='pending_approval' until an
-	// approver acts.
 	requiresApproval := s.partnerApprovalRequired(ctx, in.PartnerID)
-	initialStatus := "generating"
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO reports(id, platform_id, partner_id, tenant_id, engagement_id,
-		    report_type, title, status, generated_by, requires_approval)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		id, in.PlatformID, in.PartnerID, in.TenantID, in.EngagementID,
-		in.ReportType, in.Title, initialStatus, in.GeneratedBy, requiresApproval); err != nil {
-		return nil, err
-	}
 
 	dataset, err := s.gatherDataset(ctx, in)
 	if err != nil {
@@ -139,11 +210,14 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*Report, erro
 	}
 	dataset.Branding = &bundle.Branding
 
-	r := &Report{
-		ID: id, ReportType: in.ReportType, Title: in.Title,
-		Status: "ready", GeneratedAt: time.Now().UTC(),
+	// Render every format into memory before touching `reports`.
+	type renderedExport struct {
+		Format     string
+		Body       []byte
+		StorageURL string
+		SHA256     string
 	}
-
+	rendered := make([]renderedExport, 0, len(in.Formats))
 	for _, format := range in.Formats {
 		body, ct, err := s.render(ctx, format, in.ReportType, dataset)
 		if err != nil {
@@ -157,17 +231,12 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*Report, erro
 			return nil, err
 		}
 		sum := sha256.Sum256(body)
-		hashHex := hex.EncodeToString(sum[:])
-		if _, err := s.pool.Exec(ctx, `
-			INSERT INTO report_exports(report_id, format, storage_url, sha256, size_bytes)
-			VALUES ($1,$2,$3,$4,$5)`,
-			id, format, storageURL, hashHex, int64(len(body))); err != nil {
-			return nil, err
-		}
-		r.Exports = append(r.Exports, Export{
-			Format: format, StorageURL: storageURL, SHA256: hashHex, SizeBytes: int64(len(body)),
+		rendered = append(rendered, renderedExport{
+			Format: format, Body: body,
+			StorageURL: storageURL, SHA256: hex.EncodeToString(sum[:]),
 		})
 	}
+
 	finalStatus := "ready"
 	if requiresApproval {
 		finalStatus = "pending_approval"
@@ -176,12 +245,45 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*Report, erro
 	if s.pdfRenderer != nil {
 		rendererName = s.pdfRenderer.Name()
 	}
-	if _, err := s.pool.Exec(ctx,
-		`UPDATE reports SET status=$2, generated_at=now(), pdf_renderer=$3 WHERE id=$1`,
-		id, finalStatus, rendererName); err != nil {
+
+	// Persist the report + every export atomically. If any of these
+	// fails, nothing is left in `reports` and the caller can retry
+	// without leaving an orphan row behind.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
 		return nil, err
 	}
-	r.Status = finalStatus
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO reports(id, platform_id, partner_id, tenant_id, engagement_id,
+		    report_type, title, status, generated_by, requires_approval,
+		    generated_at, pdf_renderer)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), $11)`,
+		id, in.PlatformID, in.PartnerID, in.TenantID, in.EngagementID,
+		in.ReportType, in.Title, finalStatus, in.GeneratedBy, requiresApproval,
+		rendererName); err != nil {
+		return nil, err
+	}
+	r := &Report{
+		ID: id, ReportType: in.ReportType, Title: in.Title,
+		Status: finalStatus, GeneratedAt: time.Now().UTC(),
+	}
+	for _, e := range rendered {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO report_exports(report_id, format, storage_url, sha256, size_bytes)
+			VALUES ($1,$2,$3,$4,$5)`,
+			id, e.Format, e.StorageURL, e.SHA256, int64(len(e.Body))); err != nil {
+			return nil, err
+		}
+		r.Exports = append(r.Exports, Export{
+			Format: e.Format, StorageURL: e.StorageURL,
+			SHA256: e.SHA256, SizeBytes: int64(len(e.Body)),
+		})
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	_ = s.audit.Record(ctx, audit.Entry{
 		PlatformID: in.PlatformID, PartnerID: &in.PartnerID, TenantID: &in.TenantID,
 		ActorID: in.GeneratedBy, Event: audit.EventReportGenerated,
@@ -390,14 +492,22 @@ func (s *Service) render(ctx context.Context, format, reportType string, d *Data
 		}
 		return html, "application/pdf", nil
 	case FormatDOCX:
-		body, _, err := renderHTML(d)
+		// formatAvailable() in Generate() guarantees docxRenderer is
+		// non-nil before we reach this branch; the nil check is
+		// defence-in-depth in case render() is called directly.
+		if s.docxRenderer == nil {
+			return nil, "", fmt.Errorf("reporting: docx renderer not wired")
+		}
+		body, err := s.docxRenderer.Render(ctx, d)
 		if err != nil {
 			return nil, "", err
 		}
 		return body, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", nil
 	case FormatXLSX:
-		// Same data as CSV; production pipeline converts via xlsxwriter.
-		body, _, err := renderCSV(d)
+		if s.xlsxRenderer == nil {
+			return nil, "", fmt.Errorf("reporting: xlsx renderer not wired")
+		}
+		body, err := s.xlsxRenderer.Render(ctx, d)
 		if err != nil {
 			return nil, "", err
 		}

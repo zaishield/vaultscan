@@ -8,6 +8,7 @@ DROP TABLE IF EXISTS users                  CASCADE;
 DROP TABLE IF EXISTS tenant_settings        CASCADE;
 DROP TABLE IF EXISTS tenants                CASCADE;
 DROP TABLE IF EXISTS partners               CASCADE;
+DROP TABLE IF EXISTS partner_types          CASCADE;
 DROP TABLE IF EXISTS platforms              CASCADE;
 DROP EXTENSION IF EXISTS citext;
 DROP EXTENSION IF EXISTS pgcrypto;

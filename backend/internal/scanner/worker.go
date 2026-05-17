@@ -235,19 +235,35 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 	// When RequireSignatures is true the worker refuses to run unsigned
 	// jobs even if the public key is missing — boot-time check has
 	// already fatal'd in production, so this is belt-and-braces.
-	if w.signerPubPEM != "" {
+	switch {
+	case w.signerPubPEM != "":
 		manifest := scanorch.CanonicalManifest(
 			j.ID, j.TenantID, j.EngagementID,
 			j.ProfileCode, "external", nil,
 			j.Tools, j.Targets,
 		)
 		if err := scanorch.VerifyExternal(w.signerPubPEM, manifest, j.JobSignature); err != nil {
+			w.log.Error().Err(err).Str("scan_job_id", j.ID.String()).
+				Msg("scanner: refusing to run job — signature verification failed")
 			w.failJob(ctx, j, "signature verification failed: "+err.Error())
 			return
 		}
-	} else if w.requireSignatures {
+	case w.requireSignatures:
+		// Production posture: refuse to run if the worker booted
+		// without a cached public key. The boot-time guard in
+		// cmd/scanner-worker should have fatal'd already; this
+		// branch is a defence-in-depth net so a runtime config
+		// reload that clears the key can't allow unsigned jobs.
+		w.log.Error().Str("scan_job_id", j.ID.String()).
+			Msg("scanner: refusing to run job — RequireSignatures=true and no cached public key")
 		w.failJob(ctx, j, "signature verification skipped: no public key cached, but RequireSignatures=true")
 		return
+	default:
+		// Dev / single-tenant deploy: signatures disabled by config.
+		// Emit one warn-level breadcrumb per job so this is visible
+		// in production-by-accident misconfigurations.
+		w.log.Warn().Str("scan_job_id", j.ID.String()).
+			Msg("scanner: running job WITHOUT signature verification (RequireSignatures=false)")
 	}
 
 	_ = w.bus.Publish(ctx, eventbus.Event{
