@@ -121,8 +121,13 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+	log.Info().Msg("scanner-worker: shutdown requested, draining in-flight jobs")
 	cancel()
-	time.Sleep(500 * time.Millisecond) // brief drain
+	// 30s grace lets a typical mid-flight scan land its final
+	// scan_jobs UPDATE + findings INSERTs. Process supervisor's
+	// terminationGracePeriodSeconds must be >= this.
+	worker.Shutdown(30 * time.Second)
+	log.Info().Msg("scanner-worker: shutdown complete")
 }
 
 // fetchCloudPublicKey pulls the orchestrator's RSA public key from the API.

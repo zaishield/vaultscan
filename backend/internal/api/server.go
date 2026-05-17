@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chiware "github.com/go-chi/chi/v5/middleware"
@@ -107,10 +108,18 @@ func Mount(s *Services) http.Handler {
 	// monitoring namespace (Blueprint §27.1).
 	r.Handle("/metrics", observability.PromHandler())
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*1e9)
+		// 2s is generous: the DB roundtrip should be <100ms in any
+		// healthy deployment; >2s means we're already past the point
+		// where /readyz should be flagging a problem.
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		if err := s.Pool.Ping(ctx); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "db down", "err": err.Error()})
+			// Don't leak the underlying error to anonymous callers —
+			// it can carry the DSN host. Operators see the detail
+			// via the internal logger.
+			internalErrLogger.Warn().Err(err).Msg("api: readyz db ping failed")
+			writeJSON(w, http.StatusServiceUnavailable,
+				map[string]any{"status": "not_ready", "component": "database"})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})

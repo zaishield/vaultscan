@@ -121,9 +121,42 @@ func (d *DB) RollbackTo(ctx context.Context, dir, targetVersion string) ([]strin
 	}
 }
 
+// migrationsAdvisoryLockKey is a stable int64 derived from the string
+// "vaultscan-schema-migrations". Picked once; never change — every
+// process applying migrations must take this same key.
+const migrationsAdvisoryLockKey = int64(0x5641554c54534341) // "VAULTSCA"
+
 // Migrate applies any new versioned migrations from dir.
+//
+// Multi-pod safety: when N API pods (or N migrate-binary invocations)
+// start simultaneously, all of them race on `SELECT hash WHERE
+// version=$1` and miss; without protection each one then tries to
+// INSERT, two of them succeed at the schema change before the third
+// commits and breaks on the primary-key conflict — but the side
+// effect (CREATE TABLE / ALTER) has already run twice. The advisory
+// lock serialises the entire Migrate call across pods so exactly
+// one runs the loop while the others block, then no-op after they
+// acquire (every migration is now recorded).
 func (d *DB) Migrate(ctx context.Context, dir string) (applied []string, err error) {
-	if _, err := d.Exec(ctx, `
+	// Acquire a dedicated session-scoped lock for the duration of
+	// this call. pgxpool.Conn keeps a fixed underlying conn until
+	// Release, so the lock won't drop mid-loop.
+	conn, err := d.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("migrate: acquire conn: %w", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx,
+		`SELECT pg_advisory_lock($1)`, migrationsAdvisoryLockKey); err != nil {
+		return nil, fmt.Errorf("migrate: acquire advisory lock: %w", err)
+	}
+	defer func() {
+		// Best-effort release. Conn close drops the lock too.
+		_, _ = conn.Exec(context.Background(),
+			`SELECT pg_advisory_unlock($1)`, migrationsAdvisoryLockKey)
+	}()
+
+	if _, err := conn.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    TEXT PRIMARY KEY,
 			filename   TEXT NOT NULL,
@@ -138,7 +171,7 @@ func (d *DB) Migrate(ctx context.Context, dir string) (applied []string, err err
 	}
 	for _, m := range ms {
 		var existing string
-		err := d.QueryRow(ctx,
+		err := conn.QueryRow(ctx,
 			`SELECT hash FROM schema_migrations WHERE version=$1`, m.Version).Scan(&existing)
 		switch {
 		case err == nil:
@@ -148,7 +181,7 @@ func (d *DB) Migrate(ctx context.Context, dir string) (applied []string, err err
 			}
 			continue
 		}
-		tx, err := d.Begin(ctx)
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return applied, err
 		}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,12 @@ type Worker struct {
 	requireSignatures bool   // production: true → refuse to run a job when signerPubPEM is empty
 	poll              time.Duration
 	maxConcurrent     int
+
+	// inflight tracks goroutines spawned by Run so Shutdown can block
+	// until every in-flight execute returns. Without this, a
+	// SIGTERM at the wrong moment leaves a half-written scan_job
+	// row in the DB while the binary exits.
+	inflight sync.WaitGroup
 }
 
 type Config struct {
@@ -104,10 +111,31 @@ func (w *Worker) Run(ctx context.Context) {
 			continue
 		}
 		sem <- struct{}{}
+		w.inflight.Add(1)
 		go func() {
+			defer w.inflight.Done()
 			defer func() { <-sem }()
 			w.execute(ctx, job)
 		}()
+	}
+}
+
+// Shutdown blocks until either every in-flight execute() returns or
+// the deadline elapses. Designed to be called from main after the
+// process ctx is cancelled — gives running jobs a bounded chance
+// to land their final scan_jobs UPDATE + findings INSERT instead of
+// leaving the system mid-write.
+func (w *Worker) Shutdown(deadline time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		w.inflight.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(deadline):
+		w.log.Warn().Dur("deadline", deadline).
+			Msg("scanner worker shutdown deadline elapsed with jobs still in flight")
 	}
 }
 
