@@ -88,11 +88,12 @@ func AllFormats() []string {
 }
 
 // DefaultFormats is what Generate() picks when the caller passes no
-// formats. We deliberately omit DOCX/XLSX from this list — they
-// only work when a renderer has been wired — so a "give me
-// everything" request never silently downgrades to a corrupt file.
+// formats. Includes DOCX and XLSX because the default renderers
+// (defaultDOCXRenderer / defaultXLSXRenderer) are always wired by
+// New(). Operators who haven't customised report formats get every
+// useful format out of the box.
 func DefaultFormats() []string {
-	return []string{FormatHTML, FormatJSON, FormatCSV, FormatPDF}
+	return []string{FormatHTML, FormatJSON, FormatCSV, FormatPDF, FormatDOCX, FormatXLSX}
 }
 
 type Service struct {
@@ -121,7 +122,16 @@ type XLSXRenderer interface {
 }
 
 func New(pool *pgxpool.Pool, b *branding.Service, st *evidence.Vault, a *audit.Service, bus *eventbus.Bus) *Service {
-	return &Service{pool: pool, branding: b, store: st, audit: a, bus: bus}
+	s := &Service{pool: pool, branding: b, store: st, audit: a, bus: bus}
+	// Default XLSX renderer uses the in-repo xlsxgen package (zero
+	// extra deps, valid Open XML SpreadsheetML). Operators can
+	// override via SetXLSXRenderer if they want excelize/unioffice.
+	s.xlsxRenderer = defaultXLSXRenderer{}
+	// Default DOCX renderer emits a minimal Office Open XML
+	// WordprocessingML document (also zero extra deps). Same override
+	// path as XLSX.
+	s.docxRenderer = defaultDOCXRenderer{}
+	return s
 }
 
 // SetDOCXRenderer / SetXLSXRenderer / SetPDFRenderer wire real
