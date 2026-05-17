@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -115,6 +116,19 @@ func (w *Worker) Run(ctx context.Context) {
 		go func() {
 			defer w.inflight.Done()
 			defer func() { <-sem }()
+			// Recover from panics inside execute so a single bad
+			// parser / scanner output doesn't crash the entire
+			// worker process and require pod restart. Stack
+			// trace logged for forensics; job left in 'running'
+			// (operator can use emergency-stop to clear it).
+			defer func() {
+				if r := recover(); r != nil {
+					w.log.Error().Interface("panic", r).
+						Str("job_id", job.ID.String()).
+						Bytes("stack", debug.Stack()).
+						Msg("scanner: panic recovered in execute")
+				}
+			}()
 			w.execute(ctx, job)
 		}()
 	}

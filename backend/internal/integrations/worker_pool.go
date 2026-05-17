@@ -17,13 +17,21 @@ package integrations
 
 import (
 	"context"
+	"os"
+	"runtime/debug"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 )
+
+// workerPoolLogger surfaces panic recoveries that would otherwise be
+// invisible (the goroutine simply silently exits). One per package.
+var workerPoolLogger = zerolog.New(os.Stderr).With().
+	Timestamp().Str("component", "integrations-worker-pool").Logger()
 
 // DeliveryJob is one queued outbound webhook/integration call.
 type DeliveryJob struct {
@@ -83,14 +91,33 @@ func (p *WorkerPool) runWorker() {
 			if !ok {
 				return
 			}
-			// Each delivery gets a fresh per-job timeout derived from
-			// the pool ctx. If the pool is cancelled mid-delivery, the
-			// HTTP client honours that cancellation and exits the call.
-			jobCtx, cancel := context.WithTimeout(p.ctx, 60*time.Second)
-			p.svc.deliver(jobCtx, job.IntegrationID, job.Type, job.Name, job.Config, job.Event)
-			cancel()
+			p.deliverWithRecover(job)
 		}
 	}
+}
+
+// deliverWithRecover wraps a single delivery so a panic inside
+// p.svc.deliver (bad config marshal, nil dereference in an adapter)
+// is contained to one job rather than killing the entire worker
+// goroutine and dropping the queue depth by one for the lifetime of
+// the process.
+func (p *WorkerPool) deliverWithRecover(job DeliveryJob) {
+	defer func() {
+		if r := recover(); r != nil {
+			workerPoolLogger.Error().
+				Interface("panic", r).
+				Str("integration_id", job.IntegrationID.String()).
+				Str("type", job.Type).
+				Bytes("stack", debug.Stack()).
+				Msg("integrations: panic recovered in deliver")
+		}
+	}()
+	// Each delivery gets a fresh per-job timeout derived from the
+	// pool ctx. If the pool is cancelled mid-delivery, the HTTP
+	// client honours that cancellation and exits the call.
+	jobCtx, cancel := context.WithTimeout(p.ctx, 60*time.Second)
+	defer cancel()
+	p.svc.deliver(jobCtx, job.IntegrationID, job.Type, job.Name, job.Config, job.Event)
 }
 
 // Submit enqueues a job. Returns false if the queue is full — caller
