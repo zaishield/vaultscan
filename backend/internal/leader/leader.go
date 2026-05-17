@@ -35,6 +35,7 @@ package leader
 import (
 	"context"
 	"hash/fnv"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -76,13 +77,21 @@ func TryAcquire(ctx context.Context, pool *pgxpool.Pool, jobName string) (*pgxpo
 
 // Release drops the lock and returns the connection to the pool.
 // Always pair with a deferred call right after a successful TryAcquire.
-func Release(ctx context.Context, conn *pgxpool.Conn, jobName string) {
+//
+// Uses a fresh background context with a tight timeout rather than the
+// caller's work ctx. Reason: if the work ctx was already cancelled
+// (timeout, SIGTERM mid-tick) the conn.Exec returns immediately, the
+// unlock never reaches PG, and the lock leaks for the lifetime of the
+// pooled connection (MaxConnLifetime, default 1h). Every other
+// replica follows for that entire window. With the dedicated cleanup
+// ctx the unlock always runs.
+func Release(_ context.Context, conn *pgxpool.Conn, jobName string) {
 	if conn == nil {
 		return
 	}
-	// Best-effort; even if unlock fails, conn.Release will drop the
-	// session lock since pg_advisory_lock is session-scoped.
-	_, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, jobKey(jobName))
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = conn.Exec(cleanupCtx, `SELECT pg_advisory_unlock($1)`, jobKey(jobName))
 	conn.Release()
 }
 

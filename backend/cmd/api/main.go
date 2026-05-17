@@ -262,13 +262,20 @@ func main() {
 		MFA: mfaSvc, Keys: keyMgr,
 	})
 
+	// Wrap the router so every request gets an OTel span with the route
+	// label attached. When VAULTSCAN_OTEL_EXPORTER is unset the global
+	// provider is a no-op and this adds ~microseconds per request; when
+	// it's configured the spans flow to Tempo/Jaeger/Honeycomb.
+	tracedRouter := observability.TracingHandler(router, "vaultscan-api")
+
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           router,
+		Handler:           tracedRouter,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    32 * 1024, // 32 KiB header cap; default 1 MiB is too generous
 	}
 
 	go func() {
