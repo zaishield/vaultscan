@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"time"
@@ -93,13 +94,31 @@ func (r Runner) Run(ctx context.Context, tool string, targets []string, runtime 
 
 	start := time.Now()
 	cmd := exec.CommandContext(cctx, bin, args...)
-	out, err := cmd.Output()
+	// Cap stdout/stderr at 64 MiB so a runaway tool can't OOM the
+	// worker. The cap matches the K8s runner's pod-log cap. Real
+	// scanner output is well under 64 MiB; anything larger is
+	// either misconfiguration or hostile.
+	const maxOutput = 64 << 20
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("scanner: stdout pipe: %w", err)
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("scanner: stderr pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("scanner: start %s: %w", tool, err)
+	}
+	out, _ := io.ReadAll(io.LimitReader(stdoutPipe, maxOutput))
+	errBytes, _ := io.ReadAll(io.LimitReader(stderrPipe, maxOutput))
+	err = cmd.Wait()
 	took := time.Since(start)
 	res := &Result{Tool: tool, Output: out, Took: took}
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errAs(err, &exitErr) {
-			res.Output = append(res.Output, exitErr.Stderr...)
+			res.Output = append(res.Output, errBytes...)
 			res.ExitCode = exitErr.ExitCode()
 			return res, nil
 		}

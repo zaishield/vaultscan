@@ -447,9 +447,14 @@ func getEngagement(s *Services) http.HandlerFunc {
 
 func listEngagements(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		id, ierr := auth.FromContext(r.Context())
+		if ierr != nil {
+			internalErr(w, ierr)
+			return
+		}
+		tenantID, err := auth.AuthorizeTargetTenant(id, r.URL.Query().Get("tenant_id"))
 		if err != nil {
-			badRequest(w, "tenant_id required")
+			forbidden(w, err.Error())
 			return
 		}
 		out, err := s.Engagements.ListByTenant(r.Context(), tenantID)
@@ -623,9 +628,14 @@ func createAsset(s *Services) http.HandlerFunc {
 
 func listAssets(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		id, ierr := auth.FromContext(r.Context())
+		if ierr != nil {
+			internalErr(w, ierr)
+			return
+		}
+		tenantID, err := auth.AuthorizeTargetTenant(id, r.URL.Query().Get("tenant_id"))
 		if err != nil {
-			badRequest(w, "tenant_id required")
+			forbidden(w, err.Error())
 			return
 		}
 		f := assets.ListFilter{TenantID: tenantID}
@@ -779,9 +789,14 @@ func getScan(s *Services) http.HandlerFunc {
 
 func listScans(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		id, ierr := auth.FromContext(r.Context())
+		if ierr != nil {
+			internalErr(w, ierr)
+			return
+		}
+		tenantID, err := auth.AuthorizeTargetTenant(id, r.URL.Query().Get("tenant_id"))
 		if err != nil {
-			badRequest(w, "tenant_id required")
+			forbidden(w, err.Error())
 			return
 		}
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
