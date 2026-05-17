@@ -56,6 +56,12 @@ type Manifest struct {
 	StderrSHA   string    `json:"stderr_sha256"`
 	EnvelopeID  string    `json:"envelope_id"`   // random; lets the gateway dedup
 	HMACEnvelop string    `json:"hmac_envelope"` // hex; over (manifest_no_hmac_bytes || stdout || stderr)
+	// Synthetic = true when the agent fabricated the output because
+	// the scanner binary was missing AND AllowSynthetic was set.
+	// The gateway uses this to tag the upload as synthetic so it
+	// does not flow into compliance metrics. Omit when false to
+	// keep the manifest compact.
+	Synthetic bool `json:"synthetic,omitempty"`
 }
 
 type Packager struct {
@@ -129,6 +135,7 @@ func (p *Packager) Package(out *runner.Output) ([]byte, string, error) {
 		StdoutSHA:  hex.EncodeToString(stdoutHash[:]),
 		StderrSHA:  hex.EncodeToString(stderrHash[:]),
 		EnvelopeID: hex.EncodeToString(envID),
+		Synthetic:  out.Synthetic,
 	}
 
 	// Compute HMAC over (manifest_without_hmac || stdout || stderr).

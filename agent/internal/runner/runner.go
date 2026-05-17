@@ -100,6 +100,13 @@ type Output struct {
 	Stderr   []byte
 	Took     time.Duration
 	ExitCode int
+	// Synthetic is true when the host binary was missing AND the
+	// runner is in AllowSynthetic mode — the Stdout was fabricated
+	// for development pipeline testing. The agent uploader stamps
+	// this on the X-Vaultscan-Envelope-Synthetic header so the
+	// gateway can tag the upload and the dashboard can suppress
+	// synthetic data from compliance views.
+	Synthetic bool
 }
 
 // Execute runs `tool` against `targets` with rough CPU/memory caps.
@@ -132,10 +139,11 @@ func (r *Runner) Execute(ctx context.Context, tool string, targets []string, max
 			return nil, fmt.Errorf("%w: tool=%s", ErrSyntheticForbidden, tool)
 		}
 		return &Output{
-			Tool:    tool,
-			Command: tool + " " + strings.Join(args, " "),
-			Stdout:  []byte(synth(tool, targets)),
-			ExitCode: 0,
+			Tool:      tool,
+			Command:   tool + " " + strings.Join(args, " "),
+			Stdout:    []byte(synth(tool, targets)),
+			ExitCode:  0,
+			Synthetic: true,
 		}, nil
 	}
 	wallCap := 30 * time.Minute

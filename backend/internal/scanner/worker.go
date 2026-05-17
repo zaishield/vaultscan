@@ -346,25 +346,40 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 		// MaxFindingsPerParse) so a hostile scan output can't OOM
 		// the worker or saturate the findings dedup index.
 		var ingestedCount int
-		if parser, ok := parsers.Lookup(tool); ok {
-			ingested, err := parser(parsers.Context{
-				PlatformID: j.PlatformID, PartnerID: j.PartnerID,
-				TenantID: j.TenantID, EngagementID: j.EngagementID,
-				ScanJobID: &j.ID,
-			}, res.Output)
-			if err != nil {
-				w.log.Warn().Err(err).Str("tool", tool).Msg("parse output")
-				w.markTaskState(ctx, j.ID, tool, "failed",
-					intPtr(res.ExitCode),
-					map[string]any{"parse_error": err.Error(), "synthetic": res.Synthetic})
-				continue
-			}
-			for _, in := range ingested {
-				if _, _, err := w.findings.Upsert(ctx, in); err != nil {
-					w.log.Warn().Err(err).Str("tool", tool).Msg("ingest finding")
-				} else {
-					ingestedCount++
-				}
+		parser, parserOK := parsers.Lookup(tool)
+		if !parserOK {
+			// The tool ran and produced output, but no parser is
+			// registered for it — the result would be silently
+			// discarded. Surface as a warning + a failed task
+			// state so ops can wire the missing parser.
+			w.log.Warn().Str("tool", tool).
+				Msg("scanner: no parser registered for tool — output discarded; add to parsers.Registry")
+			w.markTaskState(ctx, j.ID, tool, "succeeded_unparsed",
+				intPtr(res.ExitCode),
+				map[string]any{
+					"reason":       "no parser registered",
+					"output_bytes": len(res.Output),
+					"synthetic":    res.Synthetic,
+				})
+			continue
+		}
+		ingested, err := parser(parsers.Context{
+			PlatformID: j.PlatformID, PartnerID: j.PartnerID,
+			TenantID: j.TenantID, EngagementID: j.EngagementID,
+			ScanJobID: &j.ID,
+		}, res.Output)
+		if err != nil {
+			w.log.Warn().Err(err).Str("tool", tool).Msg("parse output")
+			w.markTaskState(ctx, j.ID, tool, "failed",
+				intPtr(res.ExitCode),
+				map[string]any{"parse_error": err.Error(), "synthetic": res.Synthetic})
+			continue
+		}
+		for _, in := range ingested {
+			if _, _, err := w.findings.Upsert(ctx, in); err != nil {
+				w.log.Warn().Err(err).Str("tool", tool).Msg("ingest finding")
+			} else {
+				ingestedCount++
 			}
 		}
 		w.markTaskState(ctx, j.ID, tool, "succeeded",

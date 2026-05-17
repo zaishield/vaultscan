@@ -1,8 +1,9 @@
 // Package reporting generates branded reports in multiple formats
 // (Blueprint §19). The implementation produces canonical HTML, JSON, CSV,
-// XML/DOCX-stub and tabular XLSX-CSV. PDF generation in production is via
-// headless Chromium; for the development build we render an HTML payload that
-// is suitable for the headless renderer.
+// and PDF. DOCX/XLSX are accepted at the API surface for compatibility
+// but only succeed if a real renderer has been wired into the
+// Service (Service.SetDOCXRenderer / SetXLSXRenderer) — otherwise
+// Generate() rejects them rather than emitting corrupt files.
 package reporting
 
 import (
@@ -15,11 +16,13 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog"
 
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/branding"
@@ -27,6 +30,13 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/models"
 )
+
+// reportingLogger surfaces post-commit audit/bus failures. We log
+// rather than rollback because the report rows are committed and
+// useful — a missing audit event is a known-and-monitored degradation,
+// not a reason to throw away the user's report.
+var reportingLogger = zerolog.New(os.Stderr).With().
+	Timestamp().Str("component", "reporting").Logger()
 
 // Eleven report types from Blueprint §19.1.
 const (
@@ -284,17 +294,29 @@ func (s *Service) Generate(ctx context.Context, in GenerateInput) (*Report, erro
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	_ = s.audit.Record(ctx, audit.Entry{
+	// Audit + bus emission AFTER commit. We deliberately don't roll
+	// the report back if audit fails — the report row + exports are
+	// committed and useful; a missing audit event surfaces via the
+	// hourly audit-chain Verify cron and the audit-record-failures
+	// metric. Bus.Publish is best-effort by design. If either fails
+	// we log loudly so an operator can backfill manually.
+	if err := s.audit.Record(ctx, audit.Entry{
 		PlatformID: in.PlatformID, PartnerID: &in.PartnerID, TenantID: &in.TenantID,
 		ActorID: in.GeneratedBy, Event: audit.EventReportGenerated,
 		TargetType: "report", TargetID: id.String(),
 		Payload: map[string]any{"type": in.ReportType, "formats": in.Formats},
-	})
-	_ = s.bus.Publish(ctx, eventbus.Event{
+	}); err != nil {
+		reportingLogger.Error().Err(err).Str("report_id", id.String()).
+			Msg("reporting: report committed but audit.Record failed — operator must backfill")
+	}
+	if err := s.bus.Publish(ctx, eventbus.Event{
 		Type: eventbus.ReportGenerated, TenantID: &in.TenantID, PartnerID: &in.PartnerID,
 		ActorID: in.GeneratedBy,
 		Payload: map[string]any{"report_id": id, "type": in.ReportType, "formats": in.Formats},
-	})
+	}); err != nil {
+		reportingLogger.Warn().Err(err).Str("report_id", id.String()).
+			Msg("reporting: report committed but bus.Publish failed — downstream consumers may miss this event")
+	}
 	return r, nil
 }
 

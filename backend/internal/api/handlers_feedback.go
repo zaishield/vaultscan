@@ -142,17 +142,27 @@ func triageFeedback(s *Services) http.HandlerFunc {
 			badRequest(w, "status must be triaged|in_progress|resolved|dismissed")
 			return
 		}
-		id, _ := auth.FromContext(r.Context())
-		resolvedAt := "NULL::timestamptz"
+		id, ierr := auth.FromContext(r.Context())
+		if ierr != nil || id == nil {
+			forbidden(w, "authentication required")
+			return
+		}
+		// resolved_at is parameterised as a *time.Time so the SQL is
+		// fully parameterised — the previous version concatenated
+		// one of two literal strings into the query body which,
+		// while safe today (values are bound from a switch on
+		// req.Status), was a latent injection pattern.
+		var resolvedAt *time.Time
 		if req.Status == "resolved" || req.Status == "dismissed" {
-			resolvedAt = "now()"
+			now := time.Now().UTC()
+			resolvedAt = &now
 		}
 		tag, err := s.Pool.Exec(r.Context(), `
 			UPDATE customer_feedback
 			   SET status = $2, triaged_by = $3,
 			       resolution = NULLIF($4,''),
-			       resolved_at = `+resolvedAt+`
-			 WHERE id = $1`, fbID, req.Status, id.UserID, req.Resolution)
+			       resolved_at = $5
+			 WHERE id = $1`, fbID, req.Status, id.UserID, req.Resolution, resolvedAt)
 		if err != nil {
 			internalErr(w, err)
 			return

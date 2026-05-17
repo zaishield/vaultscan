@@ -82,11 +82,13 @@ func Lookup(tool string) (ParseFunc, bool) {
 			return nil, err
 		}
 		out, err := raw(ctx, in)
-		if err != nil {
-			return out, err
-		}
+		// truncate even when the parser returned partial results
+		// alongside an error — those partial results would otherwise
+		// either bypass the 50k cap (if propagated) or be lost (if
+		// dropped). Cap them and surface the error so the caller
+		// can decide.
 		out, _ = truncateFindings(out)
-		return out, nil
+		return out, err
 	}, true
 }
 

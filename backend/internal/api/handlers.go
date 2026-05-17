@@ -2763,6 +2763,13 @@ func cosignVerifyTool(s *Services) http.HandlerFunc {
 		if plane == "" {
 			plane = "both"
 		}
+		switch plane {
+		case "external", "internal", "both":
+			// ok
+		default:
+			badRequest(w, "plane must be one of: external, internal, both")
+			return
+		}
 		var (
 			ref, digest, payload, sig, keyID string
 			verifiedAt                       any
