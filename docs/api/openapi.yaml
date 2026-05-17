@@ -2,10 +2,31 @@ openapi: 3.1.0
 info:
   title: ZAISHIELD VAULTSCAN API
   version: 1.0.0
-  description: Auto-generated baseline. Operation summaries + response schemas SHOULD be deepened by hand.
+  description: |
+    Multi-tenant security platform API. Every endpoint requires bearer
+    authentication unless explicitly marked `security: []` (public health
+    + branding lookup endpoints).
+
+    Rate limits: per-identity defaults to 100 RPS / 60s window;
+    per-tenant cap is 10× the identity limit. Limits are exposed via
+    `X-RateLimit-Limit` and `X-RateLimit-Reset` on every response.
+
+    Deprecation policy: endpoints scheduled for removal emit
+    `Deprecation: true` + `Sunset: <RFC1123 date>` + `Link: <successor>`
+    headers at least 90 days before retirement.
+
+    Pagination: list endpoints use `before_id`/`limit` keyset cursors;
+    `next_before_id` in the response body advances the page.
+  contact:
+    name: ZAISHIELD Support
+    url: https://docs.vaultscan.zaishield.com/support
+  license:
+    name: Proprietary
 servers:
   - url: "https://api.vaultscan.zaishield.com"
+    description: Production
   - url: "http://localhost:8080"
+    description: Local dev
 paths:
   /api/v1/mobile/devices/{device_id}:
     delete:
@@ -1203,6 +1224,220 @@ paths:
             schema: {type: object, additionalProperties: true}
       responses:
         201: {description: Created, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
+  /api/v1/usage:
+    get:
+      summary: Self-service usage, plan, and rate-limit visibility
+      description: |
+        Returns the calling identity's current billing plan + live
+        usage counts (assets/scans/agents) plus the API rate-limit
+        caps configured for this deployment.
+
+        Partner resolution: identity.partner_id wins; otherwise the
+        tenant's partner via partner_customer_mapping; otherwise the
+        platform-default partner. Returns empty plan + zero usage if
+        no partner mapping exists.
+      operationId: getMyUsage
+      tags:
+        - billing
+      responses:
+        200:
+          description: Usage snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  identity:
+                    type: object
+                    properties:
+                      user_id: {type: string, format: uuid}
+                      tenant_id: {type: string, format: uuid, nullable: true}
+                      partner_id: {type: string, format: uuid}
+                  plan:
+                    type: object
+                    nullable: true
+                    properties:
+                      plan_code: {type: string}
+                      name: {type: string}
+                      asset_quota: {type: integer}
+                      scan_quota: {type: integer}
+                      agent_quota: {type: integer}
+                      overage_policy: {type: string, enum: [block, warn, allow]}
+                  usage:
+                    type: object
+                    nullable: true
+                    properties:
+                      assets: {type: integer}
+                      scans_current_cycle: {type: integer}
+                      agents: {type: integer}
+                      as_of: {type: string, format: date-time}
+                  rate_limit:
+                    type: object
+                    properties:
+                      per_identity_rps: {type: integer}
+                      window_seconds: {type: integer}
+                      per_tenant_multiplier: {type: integer}
+        401: {$ref: "#/components/responses/Unauthorized"}
+  /api/v1/status:
+    get:
+      summary: Public status (version, uptime, component health)
+      description: |
+        Unauthenticated status snapshot for status-page integrations.
+        Component detail strings (DB error text, upstream HTTP codes)
+        are stripped to avoid leaking internal hostnames; the
+        authenticated /api/v1/health endpoint returns the full detail.
+
+        Response is cacheable for 30 seconds.
+      operationId: getStatus
+      tags:
+        - health
+      security: []
+      responses:
+        200:
+          description: Status snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [ok, degraded, fail]}
+                  version: {type: string}
+                  uptime_seconds: {type: integer}
+                  timestamp: {type: string, format: date-time}
+                  components:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: {type: string}
+                        status: {type: string}
+                        optional: {type: boolean}
+  /api/v1/audit/export:
+    get:
+      summary: Bulk audit-log export (NDJSON or CSV)
+      description: |
+        Streams audit rows matching the filter as NDJSON (default) or
+        CSV (?format=csv). Designed for SIEM / compliance pulls — the
+        response is unbounded so memory stays flat for million-row
+        tenants.
+
+        Tenant-level callers MUST scope by ?from=<rfc3339> to bound
+        the pull; platform admins may omit for full-archive exports.
+      operationId: exportAudit
+      tags:
+        - audit
+      parameters:
+        - name: tenant_id
+          in: query
+          schema: {type: string, format: uuid}
+        - name: event
+          in: query
+          schema: {type: string}
+        - name: from
+          in: query
+          schema: {type: string, format: date-time}
+        - name: to
+          in: query
+          schema: {type: string, format: date-time}
+        - name: format
+          in: query
+          schema: {type: string, enum: [ndjson, csv], default: ndjson}
+      responses:
+        200:
+          description: Streamed export
+          content:
+            application/x-ndjson:
+              schema: {type: string}
+            text/csv:
+              schema: {type: string}
+        400: {$ref: "#/components/responses/BadRequest"}
+        401: {$ref: "#/components/responses/Unauthorized"}
+        403: {$ref: "#/components/responses/Forbidden"}
+  /api/v1/users/{user_id}/erase:
+    post:
+      summary: GDPR Article 17 right-to-erasure
+      description: |
+        Pseudonymises the user's PII (email, full_name, keycloak_sub),
+        revokes all active sessions, and emits a user.erased audit row.
+        The audit history is retained under a separate legal basis
+        (accountability), per regulator guidance.
+
+        Cannot be self-served — the actor must be a different
+        operator. MFA-required.
+      operationId: eraseUser
+      tags:
+        - users
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  description: Regulator request, consent withdrawal, etc.
+      responses:
+        200:
+          description: Erased
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [erased]}
+                  note: {type: string}
+        400: {$ref: "#/components/responses/BadRequest"}
+        401: {$ref: "#/components/responses/Unauthorized"}
+        403: {$ref: "#/components/responses/Forbidden"}
+  /api/v1/tenants/{tenant_id}/residency:
+    put:
+      summary: Pin or clear the tenant's data-residency commitment
+      description: |
+        Updates the tenant's data_region pin. Empty region clears the
+        pin. Only operators with create_tenant may invoke this — the
+        residency commitment is contractual.
+
+        Allowed regions: ae | eu | uk | in | us | sg | au | jp.
+      operationId: setTenantResidency
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                region:
+                  type: string
+                  enum: [ae, eu, uk, in, us, sg, au, jp, ""]
+                reason:
+                  type: string
+      responses:
+        200:
+          description: Pinned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [ok]}
+                  region: {type: string}
+        400: {$ref: "#/components/responses/BadRequest"}
+        401: {$ref: "#/components/responses/Unauthorized"}
+        403: {$ref: "#/components/responses/Forbidden"}
   /api/v1/auth/jwt-keys/rotate:
     post:
       summary: Rotate the JWT signing key
