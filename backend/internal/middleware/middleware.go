@@ -187,6 +187,15 @@ func RequestID() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rid := r.Header.Get("X-Request-Id")
+			// Sanitise + bound the client-supplied value. Without
+			// this a malicious client can collide with concurrent
+			// requests (log confusion) or inject CR/LF into the
+			// response header. We accept the client's value if it
+			// matches a strict charset and is reasonable length;
+			// otherwise mint a fresh UUID.
+			if rid != "" && !isValidRequestID(rid) {
+				rid = ""
+			}
 			if rid == "" {
 				rid = uuid.New().String()
 			}
@@ -195,6 +204,28 @@ func RequestID() func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// isValidRequestID accepts the strict set: lowercase hex, uppercase
+// hex, digits, hyphen, underscore. 8-128 chars (UUID = 36, slack for
+// distributed tracing IDs like W3C traceparent). Rejects anything
+// else — quiet defence against header injection and log poisoning
+// via the client-supplied X-Request-Id header.
+func isValidRequestID(s string) bool {
+	if len(s) < 8 || len(s) > 128 {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c == '-' || c == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // MaxBodySize caps the request body bytes a handler can read. Wraps

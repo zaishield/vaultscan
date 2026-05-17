@@ -11,6 +11,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -211,6 +212,10 @@ func mobileEmergencyStop(s *Services) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
+		// Cap reason length. The value is echoed in the response
+		// AND persisted via the audit log; a hostile client could
+		// otherwise flood the audit table with multi-MB strings.
+		req.Reason = capString(strings.TrimSpace(req.Reason), 500)
 		tid, terr := auth.AuthorizeTargetTenant(id, req.TenantID)
 		if terr != nil {
 			forbidden(w, terr.Error())

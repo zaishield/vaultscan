@@ -44,12 +44,30 @@ func watchMem(ctx context.Context, pid int, maxMemMiB int) {
 				// Kill the whole process group. Negative PID =
 				// process group ID. SIGKILL not SIGTERM — a
 				// runaway scanner doesn't deserve graceful.
-				_ = syscall.Kill(-pid, syscall.SIGKILL)
+				// ESRCH (no such process) is normal when the
+				// scanner exited just before the kill; anything
+				// else (EPERM = lost permission to signal the
+				// pgrp) is operator-visible: log via the package
+				// sink.
+				if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+					if killErrSink != nil {
+						killErrSink(pid, err)
+					}
+				}
 				return
 			}
 		}
 	}
 }
+
+// killErrSink is wired by the agent main at startup to log Kill
+// failures (e.g. EPERM — the agent lost permission to signal the
+// scanner's process group, which should never happen on a healthy
+// host). Nil = silent (acceptable for unit-test builds).
+var killErrSink func(pid int, err error)
+
+// SetKillErrSink installs the callback.
+func SetKillErrSink(f func(pid int, err error)) { killErrSink = f }
 
 // readVmRSSKB returns the VmRSS field (in KB) from /proc/<pid>/status,
 // or (0, false) if the file can't be read (process gone, perm denied).

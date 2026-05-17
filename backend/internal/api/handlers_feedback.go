@@ -40,6 +40,32 @@ func submitFeedback(s *Services) http.HandlerFunc {
 			badRequest(w, "category must be one of: nps, bug, feature, thumbs_up, thumbs_down, other")
 			return
 		}
+		// Length caps. Customer-supplied strings stored directly in
+		// the DB need bounds so a hostile (or buggy) client can't
+		// flood the table with multi-MB rows. The global 32 MiB
+		// body limit catches the gross case; these per-field caps
+		// keep individual rows reasonable. Aligns with the column
+		// widths in the migration.
+		const (
+			maxTitle     = 200
+			maxBody      = 4000
+			maxFeature   = 100
+			maxPortalURL = 2048
+		)
+		switch {
+		case len(req.Title) > maxTitle:
+			badRequest(w, "title too long (max 200 chars)")
+			return
+		case len(req.Body) > maxBody:
+			badRequest(w, "body too long (max 4000 chars)")
+			return
+		case len(req.Feature) > maxFeature:
+			badRequest(w, "feature too long (max 100 chars)")
+			return
+		case len(req.PortalURL) > maxPortalURL:
+			badRequest(w, "portal_url too long (max 2048 chars)")
+			return
+		}
 		// body is the customer-facing message — required for every
 		// category except NPS (where rating is the signal).
 		if req.Category != "nps" && strings.TrimSpace(req.Body) == "" {
@@ -68,7 +94,7 @@ func submitFeedback(s *Services) http.HandlerFunc {
 			RETURNING id`,
 			id.TenantID, id.UserID, req.Category, req.Severity, req.Rating,
 			req.Title, req.Body, req.Feature, req.PortalURL,
-			r.Header.Get("User-Agent")).Scan(&fbID)
+			capString(r.Header.Get("User-Agent"), 512)).Scan(&fbID)
 		if err != nil {
 			internalErr(w, err)
 			return

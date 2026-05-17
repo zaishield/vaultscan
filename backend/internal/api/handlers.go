@@ -89,6 +89,20 @@ func notFound(w http.ResponseWriter) {
 		"error": map[string]string{"code": "not_found", "message": "resource not found"}})
 }
 
+// capString truncates s to at most max bytes. Used to bound
+// untrusted string columns (User-Agent, free-text reasons) before
+// hitting the DB so a hostile client can't flood rows with multi-
+// MB blobs. Byte-counted (not rune-counted) — the goal is row size,
+// and Postgres TEXT charges by byte too. For multibyte UTF-8 input
+// truncation could leave a partial rune at the boundary; callers
+// using this for display should re-validate.
+func capString(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
+}
+
 // parsePagination reads `limit` and `offset` query params with two
 // guarantees the old `strconv.Atoi(...); _ =` pattern didn't provide:
 //

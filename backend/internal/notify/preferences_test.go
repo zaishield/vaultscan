@@ -125,6 +125,42 @@ func TestInQuietHours_TimezoneApplies(t *testing.T) {
 	}
 }
 
+// Invalid timezone strings should never panic and should return
+// "not quiet" — fail-safe = always-loud rather than always-silent.
+// Without this test a regression that flipped the fallback to true
+// would silently mute notifications for users with corrupt prefs.
+func TestInQuietHours_InvalidTimezoneFallsThroughNotQuiet(t *testing.T) {
+	t.Parallel()
+	spec := []byte(`{"timezone":"Etc/Definitely-Not-Real","start_hour":9,"end_hour":17}`)
+	when := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	if inQuietHours(spec, when) {
+		t.Error("invalid timezone should fall through to NOT quiet (fail-safe loud)")
+	}
+}
+
+// Wrap-midnight quiet + WeekdayOnly: on a weekend the rule should
+// not apply at all, even though the wrap-midnight hour math would
+// otherwise mark 23:00 as quiet. Regression catcher for the audit
+// finding about the WeekdayOnly check being skipped in the
+// wrap-midnight branch.
+func TestInQuietHours_WrapMidnightWeekdayOnlyOnWeekend(t *testing.T) {
+	t.Parallel()
+	spec := []byte(`{"timezone":"UTC","start_hour":22,"end_hour":6,"weekday_only":true}`)
+	// 2026-05-16 is Saturday. 23:00 would be inside the quiet
+	// wrap-midnight window — BUT weekday_only=true means the rule
+	// doesn't apply on weekends.
+	sat := time.Date(2026, 5, 16, 23, 0, 0, 0, time.UTC)
+	if inQuietHours(spec, sat) {
+		t.Error("Saturday 23:00 with weekday_only=true should NOT be quiet")
+	}
+	// 2026-05-15 is Friday. 23:00 is inside the wrap-midnight quiet
+	// window AND it's a weekday → should be quiet.
+	fri := time.Date(2026, 5, 15, 23, 0, 0, 0, time.UTC)
+	if !inQuietHours(spec, fri) {
+		t.Error("Friday 23:00 with weekday_only=true should be quiet")
+	}
+}
+
 func TestInQuietHours_BadJSONIsNotQuiet(t *testing.T) {
 	t.Parallel()
 	if inQuietHours([]byte("not json"), time.Now()) {
