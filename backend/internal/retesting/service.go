@@ -229,6 +229,10 @@ func (s *Service) LaunchScan(ctx context.Context, retestID uuid.UUID, actor *uui
 		Region:       "ae", // default region; caller can override later
 		Targets:      []string{endpoint},
 		RequestedBy:  actor,
+		// Stable key derived from the retest_id: re-calling LaunchScan
+		// for the same retest (operator clicks "retry") returns the
+		// already-created job instead of duplicating it.
+		IdempotencyKey: "retest:" + retestID.String(),
 	})
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("retesting: submit scan: %w", err)

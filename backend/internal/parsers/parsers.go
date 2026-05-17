@@ -28,7 +28,71 @@ type Context struct {
 // ParseFunc is the canonical parser signature.
 type ParseFunc func(ctx Context, raw []byte) ([]findings.IngestInput, error)
 
+// MaxParserInputBytes caps the raw output a parser will accept. A
+// 200 MB hostile JSON blob would otherwise OOM the worker (the
+// scanner runner already truncates at 64 MiB, but a misconfigured
+// tool or a malicious target embedded in cloud output could still
+// approach that ceiling). Parsers consult guardSize() before
+// unmarshalling.
+const MaxParserInputBytes = 32 * 1024 * 1024 // 32 MiB
+
+// MaxFindingsPerParse caps how many findings a single parser run
+// will emit. The cap is generous (most real scans produce <1000
+// findings) but stops a hostile result set from emitting 10M
+// near-duplicates that pin the dedup index.
+const MaxFindingsPerParse = 50_000
+
+// ErrParserInputTooLarge is returned by parsers that refuse to
+// process oversize input. Callers should log + emit a metric +
+// continue with the next tool rather than failing the job.
+var ErrParserInputTooLarge = fmt.Errorf("parsers: input exceeds MaxParserInputBytes")
+
+// guardSize is the cheap first check before json.Unmarshal /
+// xml.Unmarshal. Returns nil if `raw` is within bounds.
+func guardSize(raw []byte) error {
+	if len(raw) > MaxParserInputBytes {
+		return ErrParserInputTooLarge
+	}
+	return nil
+}
+
+// truncateFindings clips a parser's output to MaxFindingsPerParse.
+// Returns the (possibly-truncated) slice and a boolean indicating
+// whether truncation actually happened so the caller can emit a
+// "scanner output truncated" warning finding for visibility.
+func truncateFindings(in []findings.IngestInput) ([]findings.IngestInput, bool) {
+	if len(in) <= MaxFindingsPerParse {
+		return in, false
+	}
+	return in[:MaxFindingsPerParse], true
+}
+
+// Lookup returns the parser for `tool` wrapped with the universal
+// input-size and output-count guards. Callers MUST go through
+// Lookup rather than touching Registry directly so the guards are
+// not bypassable by a future caller. Returns (nil, false) when the
+// tool has no registered parser.
+func Lookup(tool string) (ParseFunc, bool) {
+	raw, ok := Registry[tool]
+	if !ok {
+		return nil, false
+	}
+	return func(ctx Context, in []byte) ([]findings.IngestInput, error) {
+		if err := guardSize(in); err != nil {
+			return nil, err
+		}
+		out, err := raw(ctx, in)
+		if err != nil {
+			return out, err
+		}
+		out, _ = truncateFindings(out)
+		return out, nil
+	}, true
+}
+
 // Registry maps tool codes to their parser implementations.
+// External callers should use Lookup() instead so the universal
+// guards (input-size cap + finding-count cap) are always applied.
 var Registry = map[string]ParseFunc{
 	"nmap":       ParseNmap,
 	"openvas":    ParseOpenVAS,

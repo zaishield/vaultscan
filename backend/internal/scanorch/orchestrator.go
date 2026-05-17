@@ -97,6 +97,15 @@ type SubmitInput struct {
 	ScheduleAt    *time.Time
 	RequestedBy   *uuid.UUID
 	Intensity     string
+
+	// IdempotencyKey is an optional caller-supplied identifier. When
+	// present, two Submit() calls with the same key return the same
+	// job (the second call is a no-op insert). Without this, a
+	// caller that retries Submit() after a transient DB failure can
+	// land two near-identical jobs in the queue. Internal callers
+	// (retesting.LaunchScan) should derive a stable key from their
+	// own identifiers (e.g. retest_id) so re-execution is safe.
+	IdempotencyKey string
 }
 
 // Submit performs Scope Guard evaluation, persists the job, signs it, and
@@ -104,6 +113,25 @@ type SubmitInput struct {
 func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.ScanJob, *scopeguard.Decision, error) {
 	if len(in.Targets) == 0 {
 		return nil, nil, errors.New("scanorch: at least one target required")
+	}
+	// Idempotency: if the caller supplied a key, check for an
+	// existing job with the same key+tenant first. Two Submit() calls
+	// with the same key always return the same job (no duplicate
+	// insert), closing the window where a transient DB failure
+	// causes the caller to retry and land two near-identical rows.
+	if in.IdempotencyKey != "" {
+		var existingID uuid.UUID
+		err := o.pool.QueryRow(ctx, `
+			SELECT id FROM scan_jobs
+			 WHERE tenant_id=$1 AND idempotency_key=$2
+			 ORDER BY created_at DESC LIMIT 1`,
+			in.TenantID, in.IdempotencyKey).Scan(&existingID)
+		if err == nil {
+			existing, lerr := o.Get(ctx, existingID)
+			if lerr == nil {
+				return existing, nil, nil
+			}
+		}
 	}
 	// Resolve the profile.
 	prof, err := o.profileByCode(ctx, in.ProfileCode)
@@ -175,8 +203,10 @@ func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.Scan
 	if err := o.pool.QueryRow(ctx, `
 		INSERT INTO scan_jobs(id, platform_id, partner_id, tenant_id, engagement_id, profile_id,
 		    plane, region, agent_id, scanner_node_id, status, target_summary, targets,
-		    schedule_at, requires_approval, job_signature, signing_key_id, requested_by)
-		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18
+		    schedule_at, requires_approval, job_signature, signing_key_id, requested_by,
+		    idempotency_key)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18,
+		       NULLIF($19,'')
 		-- TOCTOU guard: revalidate the two critical Scope Guard
 		-- preconditions atomically with the INSERT. If the
 		-- engagement was paused/expired OR the auth doc was deleted
@@ -196,7 +226,7 @@ func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.Scan
 		job.ID, job.PlatformID, job.PartnerID, job.TenantID, job.EngagementID, job.ProfileID,
 		job.Plane, nullIfEmpty(job.Region), job.AgentID, job.ScannerNodeID, job.Status,
 		job.TargetSummary, targetsJSON, job.ScheduleAt, job.RequiresApproval,
-		job.JobSignature, job.SigningKeyID, job.RequestedBy,
+		job.JobSignature, job.SigningKeyID, job.RequestedBy, in.IdempotencyKey,
 	).Scan(&job.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Late-arriving denial: engagement state changed under us.

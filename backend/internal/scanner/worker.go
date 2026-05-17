@@ -341,9 +341,12 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 			},
 		})
 
-		// Parse + ingest.
+		// Parse + ingest. Lookup wraps the raw parser with the
+		// universal size/count guards (MaxParserInputBytes /
+		// MaxFindingsPerParse) so a hostile scan output can't OOM
+		// the worker or saturate the findings dedup index.
 		var ingestedCount int
-		if parser, ok := parsers.Registry[tool]; ok {
+		if parser, ok := parsers.Lookup(tool); ok {
 			ingested, err := parser(parsers.Context{
 				PlatformID: j.PlatformID, PartnerID: j.PartnerID,
 				TenantID: j.TenantID, EngagementID: j.EngagementID,

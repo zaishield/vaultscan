@@ -92,6 +92,9 @@ func ParseGobuster(ctx Context, raw []byte) ([]findings.IngestInput, error) {
 //    "url":"...", "content-length":1234, "redirect":""}]}
 
 func ParseDirsearch(ctx Context, raw []byte) ([]findings.IngestInput, error) {
+	if err := guardSize(raw); err != nil {
+		return nil, err
+	}
 	var doc struct {
 		Results []struct {
 			Status   int    `json:"status"`
@@ -126,6 +129,7 @@ func ParseDirsearch(ctx Context, raw []byte) ([]findings.IngestInput, error) {
 			r.Path, r.Status, r.Length, r.Redirect)
 		out = append(out, f)
 	}
+	out, _ = truncateFindings(out)
 	return out, nil
 }
 
