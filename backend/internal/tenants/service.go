@@ -112,6 +112,13 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]models.Tenant, erro
 	if f.Limit <= 0 || f.Limit > 500 {
 		f.Limit = 100
 	}
+	// Bound OFFSET to stop hostile callers forcing a billion-row scan.
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	if f.Offset > 100_000 {
+		f.Offset = 100_000
+	}
 	args := []any{f.PlatformID, f.Limit, f.Offset}
 	q := `SELECT id, platform_id, partner_id, name, slug, status, isolation_mode, created_at
 	        FROM tenants WHERE platform_id=$1`

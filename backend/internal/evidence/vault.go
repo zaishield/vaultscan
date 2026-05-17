@@ -105,24 +105,72 @@ func (v *Vault) Put(ctx context.Context, in PutInput) (storageURL string, err er
 	return objectURL(in.TenantID, id), nil
 }
 
-// Record creates a finding_evidence row for an existing object.
-func (v *Vault) Record(ctx context.Context, in PutInput) (*models.Evidence, error) {
-	storageURL, err := v.Put(ctx, in)
-	if err != nil {
-		return nil, err
+// putPreferDEK tries the per-tenant DEK path first; if EnsureTenantKey
+// fails (e.g. tenant_data_keys schema not present yet, or KMS unreachable
+// for the wrap step) it falls back to the master-key Put so the upload
+// still completes. Read dispatches on the stored key_version, so the
+// fallback objects are decryptable by the same Read path as legacy ones.
+func (v *Vault) putPreferDEK(ctx context.Context, in PutInput) (string, *int, error) {
+	if in.TenantID == uuid.Nil {
+		return "", nil, errors.New("evidence: tenant_id required")
 	}
+	url, version, dekErr := v.PutWithDEK(ctx, in.TenantID, in.Body)
+	if dekErr == nil {
+		v := version
+		return url, &v, nil
+	}
+	// Fall back so a transient KMS or migration issue doesn't drop
+	// evidence on the floor. Operators see the legacy-key row via
+	// encryption_key_version IS NULL counts in the metrics dashboard.
+	legacyURL, err := v.Put(ctx, in)
+	if err != nil {
+		return "", nil, err
+	}
+	return legacyURL, nil, nil
+}
+
+// Record creates a finding_evidence row for an existing object.
+//
+// Encrypts with the tenant's per-tenant DEK (wrapped under the master
+// KEK). Falls back to the master-key path ONLY if EnsureTenantKey fails
+// — typically when tenant_data_keys hasn't been migrated yet or the
+// caller is the agent-gateway running before tenant provisioning has
+// landed. The fallback preserves availability; new tenants always end
+// up on the DEK path because EnsureTenantKey self-provisions.
+//
+// Previously Record always used the master key, so a KEK compromise
+// would reveal every tenant's evidence at once. With per-tenant DEK,
+// each tenant's wrapped DEK is the unit of compromise.
+func (v *Vault) Record(ctx context.Context, in PutInput) (*models.Evidence, error) {
 	digest := sha256.Sum256(in.Body)
 	hashHex := hex.EncodeToString(digest[:])
 	id := uuid.New()
 	now := time.Now().UTC()
 
-	_, err = v.pool.Exec(ctx, `
-		INSERT INTO finding_evidence(id, tenant_id, partner_id, finding_id, engagement_id,
-		    scan_job_id, evidence_type, storage_url, sha256, size_bytes, content_type,
-		    encrypted, uploaded_by, uploaded_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12,$13)`,
-		id, in.TenantID, in.PartnerID, in.FindingID, in.EngagementID, in.ScanJobID,
-		in.Kind, storageURL, hashHex, int64(len(in.Body)), in.ContentType, in.UploadedBy, now)
+	storageURL, keyVersion, err := v.putPreferDEK(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+
+	if keyVersion != nil {
+		_, err = v.pool.Exec(ctx, `
+			INSERT INTO finding_evidence(id, tenant_id, partner_id, finding_id, engagement_id,
+			    scan_job_id, evidence_type, storage_url, sha256, size_bytes, content_type,
+			    encrypted, encryption_key_version, uploaded_by, uploaded_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12,$13,$14)`,
+			id, in.TenantID, in.PartnerID, in.FindingID, in.EngagementID, in.ScanJobID,
+			in.Kind, storageURL, hashHex, int64(len(in.Body)), in.ContentType,
+			*keyVersion, in.UploadedBy, now)
+	} else {
+		_, err = v.pool.Exec(ctx, `
+			INSERT INTO finding_evidence(id, tenant_id, partner_id, finding_id, engagement_id,
+			    scan_job_id, evidence_type, storage_url, sha256, size_bytes, content_type,
+			    encrypted, uploaded_by, uploaded_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12,$13)`,
+			id, in.TenantID, in.PartnerID, in.FindingID, in.EngagementID, in.ScanJobID,
+			in.Kind, storageURL, hashHex, int64(len(in.Body)), in.ContentType,
+			in.UploadedBy, now)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("evidence: insert: %w", err)
 	}
@@ -142,7 +190,10 @@ func (v *Vault) Record(ctx context.Context, in PutInput) (*models.Evidence, erro
 	}, nil
 }
 
-// Read returns plaintext bytes for a recorded evidence row.
+// Read returns plaintext bytes for a recorded evidence row. Dispatches
+// on encryption_key_version: NOT NULL → unwrap the per-tenant DEK and
+// decrypt with it; NULL → legacy master-key decrypt (pre-VS-08 rows
+// and the rare fallback path inside Record).
 func (v *Vault) Read(ctx context.Context, evidenceID uuid.UUID, actor *uuid.UUID, ip net.IP, ua string) ([]byte, *models.Evidence, error) {
 	ev, err := v.GetMeta(ctx, evidenceID)
 	if err != nil {
@@ -155,6 +206,14 @@ func (v *Vault) Read(ctx context.Context, evidenceID uuid.UUID, actor *uuid.UUID
 	if tenantID != ev.TenantID {
 		return nil, nil, errors.New("evidence: tenant id mismatch in storage url")
 	}
+	// Look up the key version separately rather than expanding GetMeta's
+	// scan list — fewer downstream changes for a tiny extra query.
+	var keyVersion *int
+	if err := v.pool.QueryRow(ctx,
+		`SELECT encryption_key_version FROM finding_evidence WHERE id=$1`,
+		evidenceID).Scan(&keyVersion); err != nil {
+		return nil, nil, fmt.Errorf("evidence: load key_version: %w", err)
+	}
 	raw, err := v.storage.Get(ctx, tenantID, objectID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("evidence: storage.Get: %w", err)
@@ -162,9 +221,21 @@ func (v *Vault) Read(ctx context.Context, evidenceID uuid.UUID, actor *uuid.UUID
 	if len(raw) < 12 {
 		return nil, nil, errors.New("evidence: ciphertext too short")
 	}
-	plain, err := v.decrypt(raw[12:], raw[:12])
-	if err != nil {
-		return nil, nil, err
+	var plain []byte
+	if keyVersion != nil {
+		dek, derr := v.tenantKeyByVersion(ctx, tenantID, *keyVersion)
+		if derr != nil {
+			return nil, nil, fmt.Errorf("evidence: load DEK v%d: %w", *keyVersion, derr)
+		}
+		plain, err = decryptWithDEK(dek, raw[12:], raw[:12])
+		if err != nil {
+			return nil, nil, fmt.Errorf("evidence: decrypt with tenant DEK: %w", err)
+		}
+	} else {
+		plain, err = v.decrypt(raw[12:], raw[:12])
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	_ = v.logAccess(ctx, evidenceID, actor, ip, ua, "download")
 	_ = v.audit.Record(ctx, audit.Entry{

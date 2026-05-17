@@ -247,6 +247,16 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]models.Finding, err
 	if f.Limit <= 0 || f.Limit > 1000 {
 		f.Limit = 100
 	}
+	// Bound OFFSET so a hostile caller can't force PostgreSQL to walk
+	// past a billion rows on every request. Deep pagination should use
+	// keyset cursors (since/before-id); offset beyond 100k is almost
+	// certainly an attack or a runaway client.
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	if f.Offset > 100_000 {
+		f.Offset = 100_000
+	}
 	args := []any{f.TenantID}
 	q := `SELECT id, platform_id, tenant_id, partner_id, engagement_id, asset_id, scan_job_id,
 	             title, COALESCE(description,''), severity, confidence,

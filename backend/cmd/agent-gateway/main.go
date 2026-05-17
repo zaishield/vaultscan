@@ -325,16 +325,15 @@ func main() {
 				writeJSON(w, 400, map[string]string{"error": "tool query required"})
 				return
 			}
-			body := make([]byte, 0, 64*1024)
-			buf := make([]byte, 32*1024)
-			for {
-				n, err := r.Body.Read(buf)
-				if n > 0 {
-					body = append(body, buf[:n]...)
-				}
-				if err != nil {
-					break
-				}
+			// Cap raw scanner output at 64 MiB. Without this an
+			// agent (or an attacker that owns one) can post a GB-
+			// sized body and exhaust the gateway's RAM. The
+			// scanner-side runner already enforces the same cap;
+			// this is defense in depth.
+			body, err := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+			if err != nil {
+				writeJSON(w, 400, map[string]string{"error": "body read failed"})
+				return
 			}
 			// Resolve tenant/partner/engagement context for the job.
 			var tenantID, partnerID, engagementID, platformID uuid.UUID
@@ -348,11 +347,15 @@ func main() {
 				return
 			}
 
-			ev, _ := vault.Record(r.Context(), evidence.PutInput{
+			ev, err := vault.Record(r.Context(), evidence.PutInput{
 				TenantID: tenantID, PartnerID: partnerID,
 				EngagementID: &engagementID, ScanJobID: &jobID,
 				Kind: "raw_output", ContentType: "application/octet-stream", Body: body,
 			})
+			if err != nil || ev == nil {
+				writeJSON(w, 500, map[string]string{"error": "evidence persist failed"})
+				return
+			}
 
 			parser, ok := parsers.Registry[tool]
 			if !ok {
@@ -384,16 +387,10 @@ func main() {
 				writeJSON(w, 400, map[string]string{"error": err.Error()})
 				return
 			}
-			body := make([]byte, 0, 64*1024)
-			buf := make([]byte, 32*1024)
-			for {
-				n, err := r.Body.Read(buf)
-				if n > 0 {
-					body = append(body, buf[:n]...)
-				}
-				if err != nil {
-					break
-				}
+			body, err := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+			if err != nil {
+				writeJSON(w, 400, map[string]string{"error": "body read failed"})
+				return
 			}
 			var tenantID, partnerID, engagementID uuid.UUID
 			err = pool.Pool.QueryRow(r.Context(),
@@ -403,13 +400,17 @@ func main() {
 				writeJSON(w, 404, map[string]string{"error": "job not found"})
 				return
 			}
-			ev, _ := vault.Record(r.Context(), evidence.PutInput{
+			ev, err := vault.Record(r.Context(), evidence.PutInput{
 				TenantID: tenantID, PartnerID: partnerID,
 				EngagementID: &engagementID, ScanJobID: &jobID,
 				Kind:        r.URL.Query().Get("kind"),
 				ContentType: r.Header.Get("Content-Type"),
 				Body:        body,
 			})
+			if err != nil || ev == nil {
+				writeJSON(w, 500, map[string]string{"error": "evidence persist failed"})
+				return
+			}
 			writeJSON(w, 200, map[string]any{"evidence_id": ev.ID})
 		})
 

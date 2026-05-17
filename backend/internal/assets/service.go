@@ -152,6 +152,15 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]models.Asset, error
 	if f.Limit <= 0 || f.Limit > 1000 {
 		f.Limit = 100
 	}
+	// See findings.Service.List for the OFFSET-bound rationale: deep
+	// offsets force PG to walk past every preceding row, turning a
+	// /list request into an O(N) table scan. Cap at 100k.
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	if f.Offset > 100_000 {
+		f.Offset = 100_000
+	}
 	args := []any{f.TenantID}
 	q := `SELECT id, platform_id, partner_id, tenant_id, engagement_id, asset_type,
 	             name, value, plane, criticality, COALESCE(owner,''), COALESCE(environment,''),
