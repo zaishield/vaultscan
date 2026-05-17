@@ -1471,7 +1471,28 @@ func listAudit(s *Services) http.HandlerFunc {
 			q += fmt.Sprintf(" AND event=$%d", len(args)+1)
 			args = append(args, v)
 		}
-		q += " ORDER BY occurred_at DESC LIMIT 200"
+		// Keyset pagination via ?before_id=<int64>. Cursor walks
+		// strictly descending; clients pass the smallest id from
+		// the previous page to fetch older rows. SOC2 audit walks
+		// otherwise hit the prior 200-row cap with no path to the
+		// remaining history.
+		if v := r.URL.Query().Get("before_id"); v != "" {
+			if cursor, err := strconv.ParseInt(v, 10, 64); err == nil && cursor > 0 {
+				q += fmt.Sprintf(" AND id < $%d", len(args)+1)
+				args = append(args, cursor)
+			}
+		}
+		// Bound the page size: configurable up to 500, default 100.
+		limit := 100
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				if n > 500 {
+					n = 500
+				}
+				limit = n
+			}
+		}
+		q += fmt.Sprintf(" ORDER BY id DESC LIMIT %d", limit)
 		rows, err := s.Pool.Query(r.Context(), q, args...)
 		if err != nil {
 			internalErr(w, err)
@@ -1479,6 +1500,7 @@ func listAudit(s *Services) http.HandlerFunc {
 		}
 		defer rows.Close()
 		var out []map[string]any
+		var lastID int64
 		for rows.Next() {
 			var (
 				id              int64
@@ -1501,8 +1523,15 @@ func listAudit(s *Services) http.HandlerFunc {
 				"target_type": tType, "target_id": tID, "tenant_id": tenantID,
 				"partner_id": partID, "occurred_at": occ, "payload": pl,
 			})
+			lastID = id
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": out})
+		resp := map[string]any{"items": out}
+		// next_before_id is non-empty when there's likely more —
+		// caller passes it as ?before_id= to walk the next page.
+		if len(out) == limit && lastID > 0 {
+			resp["next_before_id"] = lastID
+		}
+		writeJSON(w, http.StatusOK, resp)
 	}
 }
 
