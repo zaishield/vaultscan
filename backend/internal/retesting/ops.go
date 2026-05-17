@@ -66,7 +66,7 @@ func (s *Service) AutoLaunchIfEnabled(ctx context.Context, findingID uuid.UUID, 
 	// compare against once the retest result lands.
 	_ = s.captureOriginalSnapshot(ctx, id, findingID)
 	_ = s.audit.Record(ctx, audit.Entry{
-		PlatformID: f.PartnerID, PartnerID: &f.PartnerID, TenantID: &f.TenantID,
+		PlatformID: f.PlatformID, PartnerID: &f.PartnerID, TenantID: &f.TenantID,
 		ActorID: actor, Event: "retest.auto_launched",
 		TargetType: "retest_request", TargetID: id.String(),
 		Payload: map[string]any{"finding_id": findingID},

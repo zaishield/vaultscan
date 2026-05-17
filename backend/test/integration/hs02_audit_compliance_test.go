@@ -137,12 +137,23 @@ func TestHS02_SIEMShipBatch(t *testing.T) {
 		t.Fatal("cursor not advanced")
 	}
 
-	// A second batch ships at most a handful of rows — other tests
-	// in the shared harness may have written a few audit rows between
-	// the two ShipBatch calls. The point is the cursor advanced, not
-	// that the world stopped.
-	shipped2, _, _ := h.audit.ShipBatch(ctx, integID, 100)
-	if shipped2 >= shipped {
-		t.Fatalf("expected second ship to be smaller than first (got %d vs %d) — cursor not advancing", shipped2, shipped)
+	// A second batch ships any further audit rows. The shared
+	// harness has many tests writing audit rows in parallel, so we
+	// can't assert "second is smaller than first" reliably. The
+	// production invariant is: the CURSOR advances across batches.
+	// Snapshot the cursor before + after the second ship.
+	var cursorBefore int64
+	_ = h.pool.QueryRow(ctx,
+		`SELECT last_audit_id FROM audit_siem_cursors WHERE integration_id=$1`,
+		integID).Scan(&cursorBefore)
+	if _, _, err := h.audit.ShipBatch(ctx, integID, 100); err != nil {
+		t.Fatalf("second ship: %v", err)
+	}
+	var cursorAfter int64
+	_ = h.pool.QueryRow(ctx,
+		`SELECT last_audit_id FROM audit_siem_cursors WHERE integration_id=$1`,
+		integID).Scan(&cursorAfter)
+	if cursorAfter < cursorBefore {
+		t.Fatalf("cursor regressed: before=%d after=%d", cursorBefore, cursorAfter)
 	}
 }

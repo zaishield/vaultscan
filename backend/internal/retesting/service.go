@@ -52,7 +52,7 @@ func (s *Service) Request(ctx context.Context, in RequestInput) (uuid.UUID, erro
 		// already in retest_requested is acceptable
 	}
 	_ = s.audit.Record(ctx, audit.Entry{
-		PlatformID: f.PartnerID, PartnerID: &f.PartnerID, TenantID: &f.TenantID,
+		PlatformID: f.PlatformID, PartnerID: &f.PartnerID, TenantID: &f.TenantID,
 		ActorID: in.RequestedBy, Event: audit.EventRetestRequested,
 		TargetType: "retest_request", TargetID: id.String(),
 		Payload: map[string]any{"finding_id": in.FindingID},
@@ -124,7 +124,7 @@ func (s *Service) RecordResult(ctx context.Context, in ResultInput) error {
 	f, _ := s.findings.Get(ctx, findingID)
 	if f != nil {
 		_ = s.audit.Record(ctx, audit.Entry{
-			PlatformID: f.PartnerID, PartnerID: &f.PartnerID, TenantID: &f.TenantID,
+			PlatformID: f.PlatformID, PartnerID: &f.PartnerID, TenantID: &f.TenantID,
 			ActorID: in.DecidedBy, Event: event,
 			TargetType: "retest_request", TargetID: in.RetestRequestID.String(),
 			Payload: map[string]any{"finding_id": findingID, "outcome": in.Outcome},

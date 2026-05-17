@@ -210,7 +210,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*models.Finding, error
 	f := &models.Finding{}
 	var refs []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, partner_id, engagement_id, asset_id, scan_job_id,
+		SELECT id, platform_id, tenant_id, partner_id, engagement_id, asset_id, scan_job_id,
 		       title, COALESCE(description,''), severity, confidence,
 		       COALESCE(cvss_score, 0), COALESCE(cvss_vector,''),
 		       COALESCE(cwe,''), COALESCE(cve,''), scanner, scan_type,
@@ -219,7 +219,7 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*models.Finding, error
 		       COALESCE(technical_impact,''), COALESCE(remediation,''), "references",
 		       status, assigned_to, first_seen, last_seen, dedup_fingerprint
 		  FROM findings WHERE id=$1`, id).
-		Scan(&f.ID, &f.TenantID, &f.PartnerID, &f.EngagementID, &f.AssetID, &f.ScanJobID,
+		Scan(&f.ID, &f.PlatformID, &f.TenantID, &f.PartnerID, &f.EngagementID, &f.AssetID, &f.ScanJobID,
 			&f.Title, &f.Description, &f.Severity, &f.Confidence, &f.CVSSScore, &f.CVSSVector,
 			&f.CWE, &f.CVE, &f.Scanner, &f.ScanType, &f.AffectedEndpoint, &f.Port, &f.Protocol,
 			&f.EvidenceSummary, &f.BusinessImpact, &f.TechnicalImpact, &f.Remediation, &refs,
@@ -248,7 +248,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]models.Finding, err
 		f.Limit = 100
 	}
 	args := []any{f.TenantID}
-	q := `SELECT id, tenant_id, partner_id, engagement_id, asset_id, scan_job_id,
+	q := `SELECT id, platform_id, tenant_id, partner_id, engagement_id, asset_id, scan_job_id,
 	             title, COALESCE(description,''), severity, confidence,
 	             COALESCE(cvss_score, 0), COALESCE(cvss_vector,''),
 	             COALESCE(cwe,''), COALESCE(cve,''), scanner, scan_type,
@@ -292,7 +292,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]models.Finding, err
 	for rows.Next() {
 		var fi models.Finding
 		var refs []byte
-		if err := rows.Scan(&fi.ID, &fi.TenantID, &fi.PartnerID, &fi.EngagementID, &fi.AssetID,
+		if err := rows.Scan(&fi.ID, &fi.PlatformID, &fi.TenantID, &fi.PartnerID, &fi.EngagementID, &fi.AssetID,
 			&fi.ScanJobID, &fi.Title, &fi.Description, &fi.Severity, &fi.Confidence,
 			&fi.CVSSScore, &fi.CVSSVector, &fi.CWE, &fi.CVE, &fi.Scanner, &fi.ScanType,
 			&fi.AffectedEndpoint, &fi.Port, &fi.Protocol, &fi.EvidenceSummary,
@@ -342,7 +342,7 @@ func (s *Service) Transition(ctx context.Context, actor *uuid.UUID, id uuid.UUID
 		event = audit.EventFindingAccepted
 	}
 	_ = s.audit.Record(ctx, audit.Entry{
-		PlatformID: current.PartnerID, PartnerID: &current.PartnerID, TenantID: &current.TenantID,
+		PlatformID: current.PlatformID, PartnerID: &current.PartnerID, TenantID: &current.TenantID,
 		ActorID: actor, Event: event,
 		TargetType: "finding", TargetID: id.String(),
 		Payload: map[string]any{"from": current.Status, "to": to, "note": note},

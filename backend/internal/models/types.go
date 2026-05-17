@@ -230,6 +230,7 @@ type ScanProfile struct {
 
 type Finding struct {
 	ID               uuid.UUID  `json:"id"`
+	PlatformID       uuid.UUID  `json:"platform_id"`
 	TenantID         uuid.UUID  `json:"tenant_id"`
 	PartnerID        uuid.UUID  `json:"partner_id"`
 	EngagementID     uuid.UUID  `json:"engagement_id"`

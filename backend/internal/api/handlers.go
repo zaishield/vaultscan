@@ -962,9 +962,14 @@ func updateAgentPolicy(s *Services) http.HandlerFunc {
 
 func listFindings(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID, err := uuid.Parse(r.URL.Query().Get("tenant_id"))
+		id, ierr := auth.FromContext(r.Context())
+		if ierr != nil {
+			internalErr(w, ierr)
+			return
+		}
+		tenantID, err := auth.AuthorizeTargetTenant(id, r.URL.Query().Get("tenant_id"))
 		if err != nil {
-			badRequest(w, "tenant_id required")
+			forbidden(w, err.Error())
 			return
 		}
 		f := findings.ListFilter{TenantID: tenantID}
