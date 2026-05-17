@@ -193,19 +193,46 @@ func MaxBodySize(limitBytes int64) func(http.Handler) http.Handler {
 	}
 }
 
+// APIVersion stamps an X-API-Version header on every response so
+// clients can detect rolling-deploy version skew (their cached
+// schema may be stale). The header carries the build-time version
+// string from cmd/api — set via -ldflags at release time, defaults
+// to "dev".
+func APIVersion(version string) func(http.Handler) http.Handler {
+	if version == "" {
+		version = "dev"
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-API-Version", version)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // SecurityHeaders sets a conservative baseline of HTTP security headers
 // (HS-01).
 func SecurityHeaders() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := w.Header()
+			// HSTS — 2 years + subdomains. preload is left to the
+			// edge LB which is responsible for the apex domain.
 			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 			h.Set("X-Content-Type-Options", "nosniff")
 			h.Set("X-Frame-Options", "DENY")
 			h.Set("Referrer-Policy", "no-referrer")
-			h.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+			h.Set("Permissions-Policy",
+				"geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()")
 			h.Set("Content-Security-Policy",
-				"default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'")
+				"default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'")
+			// Cross-origin isolation. The portal mounts our API in
+			// a same-origin iframe-free context; setting these
+			// hardens against spectre-class side channels and
+			// cross-window leaks.
+			h.Set("Cross-Origin-Opener-Policy", "same-origin")
+			h.Set("Cross-Origin-Resource-Policy", "same-origin")
+			h.Set("Cross-Origin-Embedder-Policy", "require-corp")
 			next.ServeHTTP(w, r)
 		})
 	}

@@ -108,6 +108,11 @@ type Config struct {
 	DebugAddr  string
 	DebugToken string
 
+	// APIVersion is the build-time release version exposed via
+	// the X-API-Version response header so clients can detect
+	// rolling-deploy version skew.
+	APIVersion string
+
 	// PerTenantRateLimitMultiplier scales the per-identity RPS to
 	// build a per-tenant ceiling (e.g. 5x means a tenant collectively
 	// gets 5× the single-user limit). 0 disables the per-tenant cap.
@@ -178,6 +183,7 @@ func Load() (*Config, error) {
 		DebugAddr:                    getenv("VAULTSCAN_DEBUG_ADDR", ""),
 		DebugToken:                   os.Getenv("VAULTSCAN_DEBUG_TOKEN"),
 		PerTenantRateLimitMultiplier: parseInt("VAULTSCAN_RATE_LIMIT_TENANT_MULTIPLIER", 10),
+		APIVersion:                   getenv("VAULTSCAN_API_VERSION", "dev"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("VAULTSCAN_DATABASE_URL is required")

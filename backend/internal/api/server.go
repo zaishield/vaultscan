@@ -91,6 +91,7 @@ func Mount(s *Services) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chiware.Recoverer)
 	r.Use(middleware.RequestID())
+	r.Use(middleware.APIVersion(s.Cfg.APIVersion))
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.MaxBodySize(32 << 20)) // 32 MiB cap on any request body
 	// ETag / If-None-Match on GET responses — saves bandwidth and

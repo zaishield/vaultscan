@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -389,10 +390,17 @@ func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, n
 		// retry loop without waiting for the full backoff. Without
 		// this, a 16s exponential backoff at attempt 4 would hold up
 		// the pool's Stop() call for that whole duration.
+		//
+		// Jitter the backoff in [0.5×, 1.5×] of the nominal value so
+		// a flapping upstream doesn't synchronise every worker's
+		// retry into a thundering herd. Without jitter, N workers
+		// that all failed at T see their second attempts land at
+		// roughly T+delay all at once.
+		jittered := jitterDuration(delay)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(delay):
+		case <-time.After(jittered):
 		}
 		delay *= 2
 	}
@@ -540,6 +548,17 @@ func nullIfZero(n int) any {
 		return nil
 	}
 	return n
+}
+
+// jitterDuration returns d scaled by a uniform random factor in
+// [0.5, 1.5]. Used by the delivery retry loop to spread thundering
+// herds across the pool when an upstream flaps.
+func jitterDuration(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	factor := 0.5 + rand.Float64() // [0.5, 1.5)
+	return time.Duration(float64(d) * factor)
 }
 
 var _ = errors.New
