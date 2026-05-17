@@ -33,6 +33,22 @@ func TestParseSCIMFilter(t *testing.T) {
 	}
 }
 
+func TestSCIMLikeEscape(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"plain":   "plain",
+		"100%":    "100\\%",
+		"a_b":     "a\\_b",
+		"back\\":  "back\\\\",
+		"x%_\\y":  "x\\%\\_\\\\y",
+	}
+	for in, want := range cases {
+		if got := scimLikeEscape(in); got != want {
+			t.Errorf("escape(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestStatusActiveRoundTrip(t *testing.T) {
 	t.Parallel()
 	for _, b := range []bool{true, false} {

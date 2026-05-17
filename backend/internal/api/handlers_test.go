@@ -11,8 +11,40 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/zaishield/vaultscan/backend/internal/middleware"
 )
+
+func TestUUIDPtrString_NilReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	if got := uuidPtrString(nil); got != "" {
+		t.Errorf("got %q want empty", got)
+	}
+}
+
+func TestUUIDPtrString_NonNilReturnsString(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	if got := uuidPtrString(&id); got != id.String() {
+		t.Errorf("got %q want %q", got, id.String())
+	}
+}
+
+func TestStrPtrString_NilReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	if got := strPtrString(nil); got != "" {
+		t.Errorf("got %q want empty", got)
+	}
+}
+
+func TestStrPtrString_NonNilReturnsValue(t *testing.T) {
+	t.Parallel()
+	s := "hello"
+	if got := strPtrString(&s); got != "hello" {
+		t.Errorf("got %q want hello", got)
+	}
+}
 
 // The api package's pure helpers are tiny but they're on every
 // response path. A typo in the error envelope shape breaks every

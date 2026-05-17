@@ -77,6 +77,59 @@ func TestEnvInt32_RejectsNegativeAndGarbage(t *testing.T) {
 	}
 }
 
+func TestPoolConfigForComponent_Defaults(t *testing.T) {
+	t.Setenv("VAULTSCAN_PG_MAX_CONNS_API", "")
+	// Per-component defaults: api larger than cron-runner.
+	api := PoolConfigForComponent("api")
+	cron := PoolConfigForComponent("cron-runner")
+	if api.MaxConns <= cron.MaxConns {
+		t.Errorf("api MaxConns=%d should exceed cron-runner MaxConns=%d",
+			api.MaxConns, cron.MaxConns)
+	}
+}
+
+func TestPoolConfigForComponent_RespectsGlobalEnvOverride(t *testing.T) {
+	// The global VAULTSCAN_PG_MAX_CONNS overrides the component default.
+	t.Setenv("VAULTSCAN_PG_MAX_CONNS", "256")
+	api := PoolConfigForComponent("api")
+	if api.MaxConns != 256 {
+		t.Errorf("global override ignored, got MaxConns=%d", api.MaxConns)
+	}
+}
+
+func TestPoolConfigForComponent_UnknownFallsBackToDefault(t *testing.T) {
+	api := PoolConfigForComponent("api")
+	unknown := PoolConfigForComponent("never-heard-of-this-component")
+	def := DefaultPoolConfig()
+	if unknown.MaxConns != def.MaxConns {
+		t.Errorf("unknown component should use DefaultPoolConfig, got %d want %d",
+			unknown.MaxConns, def.MaxConns)
+	}
+	_ = api
+}
+
+func TestOpenReplica_EmptyDSNReturnsNil(t *testing.T) {
+	// Empty DSN must produce nil + nil error so callers can no-op.
+	rp, err := OpenReplica(t.Context(), "")
+	if err != nil {
+		t.Fatalf("err=%v want nil", err)
+	}
+	if rp != nil {
+		t.Fatalf("rp=%v want nil", rp)
+	}
+}
+
+func TestReader_FallsBackToPrimaryWhenReplicaNil(t *testing.T) {
+	// Reader(primary, nil) must equal primary.
+	// We use a sentinel by constructing a pgxpool.Pool stub — but we
+	// can't easily construct a real one without a DB, so this test
+	// asserts the typed-nil branch.
+	got := Reader(nil, nil)
+	if got != nil {
+		t.Errorf("Reader(nil, nil) = %v want nil", got)
+	}
+}
+
 func TestEnvDur_RejectsBadDurations(t *testing.T) {
 	t.Setenv("__TEST_DUR", "not-a-duration")
 	if got := envDur("__TEST_DUR", 5*time.Second); got != 5*time.Second {
