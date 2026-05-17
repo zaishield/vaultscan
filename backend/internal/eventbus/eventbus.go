@@ -8,6 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"reflect"
+	"runtime"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -145,10 +148,25 @@ func (b *Bus) Publish(ctx context.Context, ev Event) error {
 func safeHandle(h Handler, ctx context.Context, ev Event) {
 	defer func() {
 		if r := recover(); r != nil {
+			// Capture which handler function panicked. Without
+			// this, an event with many subscribers gives no signal
+			// pointing at the culprit — operator has to grep
+			// through the recovered panic value for clues. The
+			// FuncForPC walk is best-effort: it returns "" if
+			// the function was a closure or otherwise opaque, in
+			// which case we still log the event metadata.
+			handlerName := ""
+			if pc := reflect.ValueOf(h).Pointer(); pc != 0 {
+				if fn := runtime.FuncForPC(pc); fn != nil {
+					handlerName = fn.Name()
+				}
+			}
 			busLogger.Error().
 				Interface("panic", r).
 				Str("event_type", ev.Type).
 				Str("event_id", ev.ID.String()).
+				Str("handler", handlerName).
+				Bytes("stack", debug.Stack()).
 				Msg("eventbus: subscriber panicked; recovered")
 		}
 	}()

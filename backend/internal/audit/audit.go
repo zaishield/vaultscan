@@ -126,11 +126,19 @@ func (s *Service) recordInner(ctx context.Context, e Entry) error {
 	defer tx.Rollback(ctx)
 
 	// Serialise the read-prev + insert sequence with a transaction-scoped
-	// advisory lock keyed off the audit_logs OID. Without this, two
+	// advisory lock derived from a fixed lock-name. Without this, two
 	// concurrent Record calls each see the same `prev`, compute hashes
 	// that reference the same predecessor, and Verify sees a forked chain
 	// after the rows commit. The lock is released automatically at COMMIT
 	// / ROLLBACK so it cannot deadlock against itself.
+	//
+	// Lock-name derivation: hashtext('vaultscan.audit_logs'). This is
+	// Postgres-specific (the hashtext function does not exist on other
+	// engines). If the audit-log store is ever ported to MySQL / Spanner,
+	// replace this with a hardcoded numeric lock id — the actual VALUE
+	// doesn't matter as long as every Record call uses the same one.
+	// hashtext gives a stable 32-bit hash of the string, which fits
+	// cleanly in pg_advisory_xact_lock(int4).
 	if _, err := tx.Exec(ctx,
 		`SELECT pg_advisory_xact_lock(hashtext('vaultscan.audit_logs'))`); err != nil {
 		return fmt.Errorf("audit: lock chain: %w", err)

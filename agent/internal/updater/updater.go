@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	mrand "math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -78,20 +79,27 @@ func New(client *http.Client, gateway string, agentID uuid.UUID, dataDir string,
 }
 
 func (u *Updater) Run(ctx context.Context) {
-	t := time.NewTicker(u.CheckEvery)
-	defer t.Stop()
-	// First check after a small delay so boot doesn't trample on first-run setup.
+	// First check after a randomised boot delay so a fleet of
+	// agents that came up together doesn't all hit the gateway at
+	// T+30s in lockstep. Range: 30-90s.
+	initialDelay := 30*time.Second + time.Duration(mrand.Int63n(int64(60*time.Second)))
 	select {
-	case <-time.After(30 * time.Second):
+	case <-time.After(initialDelay):
 	case <-ctx.Done():
 		return
 	}
 	for {
 		_ = u.checkAndInstall(ctx)
+		// Compute the next sleep with ±15% jitter. Without jitter
+		// every agent in the fleet checks for an offer at the same
+		// 6-hour cadence — a release that touches the offer
+		// endpoint then sees a thundering herd at T+6h, T+12h, ...
+		jitter := time.Duration(float64(u.CheckEvery) * (mrand.Float64()*0.3 - 0.15))
+		sleep := u.CheckEvery + jitter
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-time.After(sleep):
 		}
 	}
 }
