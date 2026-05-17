@@ -30,6 +30,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/models"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 // reportingLogger surfaces post-commit audit/bus failures. We log
@@ -199,7 +200,13 @@ type Export struct {
 // write anything to `reports`. The render+export+UPDATE final-status
 // runs inside a single transaction so partial failures don't leak
 // half-built reports either.
-func (s *Service) Generate(ctx context.Context, in GenerateInput) (*Report, error) {
+func (s *Service) Generate(ctx context.Context, in GenerateInput) (rep *Report, err error) {
+	ctx, end := observability.Span(ctx, "reporting.Generate",
+		"tenant_id", in.TenantID.String(),
+		"engagement_id", in.EngagementID.String(),
+		"report_type", in.ReportType,
+	)
+	defer func() { end(err) }()
 	if !validReportType(in.ReportType) {
 		return nil, fmt.Errorf("reporting: unsupported report_type %q", in.ReportType)
 	}

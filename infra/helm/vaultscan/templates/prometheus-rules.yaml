@@ -1,0 +1,143 @@
+{{- if .Values.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-rules
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vaultscan.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    # ----- DB connection pool saturation -----------------------------------
+    # The pool metrics are exported by every backend binary (api,
+    # scanner-worker, agent-gateway, analytics-worker, cron-runner) via
+    # observability.StartPoolStatsExporter. A binary holding its pool at
+    # ≥80% utilisation for 5 minutes is the early-warning signal; ≥95%
+    # with non-zero waiters is the hard alert.
+    - name: vaultscan.db-pool
+      rules:
+        - alert: VaultScanDBPoolNearSaturation
+          expr: |
+            (vaultscan_db_pool_acquired / on(instance) vaultscan_db_pool_max) > 0.80
+          for: 5m
+          labels:
+            severity: warning
+            component: db-pool
+          annotations:
+            summary: "Postgres pool {{`{{ $labels.instance }}`}} >80% saturated"
+            description: |
+              {{`{{ $labels.instance }}`}} is using >80% of its configured Postgres pool
+              connections. Sustained saturation will cause request queueing once
+              traffic spikes. Increase the per-component pool size
+              (VAULTSCAN_PG_MAX_CONNS_<COMPONENT>) or scale replicas.
+
+        - alert: VaultScanDBPoolSaturated
+          expr: |
+            (vaultscan_db_pool_acquired / on(instance) vaultscan_db_pool_max) > 0.95
+              and vaultscan_db_pool_waiting > 0
+          for: 2m
+          labels:
+            severity: critical
+            component: db-pool
+          annotations:
+            summary: "Postgres pool {{`{{ $labels.instance }}`}} saturated; requests queueing"
+            description: |
+              Pool is >95% checked-out AND goroutines are blocked waiting. End-user
+              request latency is degraded. Scale immediately or shed load.
+
+        - alert: VaultScanDBPoolCanceledAcquires
+          expr: rate(vaultscan_db_pool_acquire_canceled_total[5m]) > 1
+          for: 10m
+          labels:
+            severity: warning
+            component: db-pool
+          annotations:
+            summary: "Postgres pool acquisitions are being canceled"
+            description: |
+              >1 canceled acquire/sec sustained on {{`{{ $labels.instance }}`}} —
+              callers are timing out before getting a connection. Pool too small
+              or upstream Postgres slow.
+
+    # ----- Audit chain integrity -------------------------------------------
+    - name: vaultscan.audit
+      rules:
+        - alert: VaultScanAuditChainBroken
+          expr: increase(vaultscan_audit_chain_breaks_total[15m]) > 0
+          labels:
+            severity: critical
+            component: audit
+          annotations:
+            summary: "Audit chain integrity break detected"
+            description: |
+              The hourly VerifyDeep cron found a row whose hash doesn't match the
+              chain. SOC2/ISO27001 incident — page the on-call IMMEDIATELY and
+              freeze writes to audit_logs while forensics runs.
+
+    # ----- Integration delivery / DLQ depth --------------------------------
+    - name: vaultscan.integrations
+      rules:
+        - alert: VaultScanIntegrationDLQGrowing
+          expr: vaultscan_integration_dead_letter_depth > 100
+          for: 15m
+          labels:
+            severity: warning
+            component: integrations
+          annotations:
+            summary: "Integration dead-letter depth >100"
+            description: |
+              {{`{{ $value }}`}} undelivered integration messages are sitting in the
+              dead-letter queue. Inspect /api/v1/integration-health and replay or
+              suppress per-channel as needed.
+
+        - alert: VaultScanIntegrationFailureRate
+          expr: |
+            sum(rate(vaultscan_integration_delivery_failures_total[5m]))
+              / sum(rate(vaultscan_integration_delivery_failures_total[5m])
+                    + rate(vaultscan_integration_delivery_failures_total{outcome="ok"}[5m])) > 0.20
+          for: 10m
+          labels:
+            severity: warning
+            component: integrations
+          annotations:
+            summary: "Integration failure rate >20%"
+            description: |
+              More than 20% of outbound integration deliveries are failing.
+              Check the circuit-breaker state and upstream provider health.
+
+    # ----- Scanner-worker queue depth --------------------------------------
+    - name: vaultscan.scanner
+      rules:
+        - alert: VaultScanScannerJobsBacklog
+          expr: |
+            (sum by (region) (rate(vaultscan_scan_jobs_created_total[10m]))
+              - sum by (region) (rate(vaultscan_scan_jobs_completed_total[10m]))) > 0.5
+          for: 20m
+          labels:
+            severity: warning
+            component: scanner
+          annotations:
+            summary: "Scanner backlog growing in {{`{{ $labels.region }}`}}"
+            description: |
+              Scan submission rate exceeds completion rate by >0.5/sec for 20 min
+              in region {{`{{ $labels.region }}`}}. Scale up scanner-worker
+              replicas in this region.
+
+    # ----- Auth attack signal ----------------------------------------------
+    - name: vaultscan.auth
+      rules:
+        - alert: VaultScanAuthLoginFailureSpike
+          expr: rate(vaultscan_auth_login_failures_total[5m]) > 10
+          for: 5m
+          labels:
+            severity: warning
+            component: auth
+          annotations:
+            summary: "Auth login-failure rate >10/sec sustained"
+            description: |
+              Possible credential-stuffing or brute-force campaign. Inspect
+              auth_ip_lockouts metrics + IP-level audit and consider tightening
+              VAULTSCAN_BRUTEFORCE thresholds.
+{{- end }}

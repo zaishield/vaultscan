@@ -182,6 +182,18 @@ serviceMonitor:
   enabled: false
   interval: 30s
 
+# ----- Prometheus alerting rules (optional) ---------------------------------
+# Requires the kube-prometheus-stack PrometheusRule CRD installed in the
+# cluster. Toggle off (default) when you bring your own alerting stack;
+# the rules cover DB pool saturation, audit-chain integrity, integration
+# DLQ growth, scanner backlog, and auth attack signals.
+metrics:
+  prometheusRule:
+    enabled: false
+    # Extra labels — e.g. release: kube-prometheus-stack — so your
+    # Prometheus operator's selector picks the rule up.
+    labels: {}
+
 # ----- Default scheduler hints ----------------------------------------------
 nodeSelector: {}
 tolerations: []

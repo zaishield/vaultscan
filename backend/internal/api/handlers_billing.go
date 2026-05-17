@@ -171,3 +171,76 @@ func actorIDOrNil(id *auth.Identity) *uuid.UUID {
 	a := id.UserID
 	return &a
 }
+
+// getMyUsage is the self-service customer-facing usage endpoint at
+// GET /api/v1/usage. It returns the calling identity's plan + live
+// usage + the configured API rate-limit caps so a client can answer
+// "how much room do I have left?" without operator help.
+//
+// Resolution order for the partner whose plan we read:
+//
+//  1. identity.PartnerID — partner-staff tokens carry this directly
+//  2. partner_customer_mapping[tenant_id=identity.TenantID] — tenant
+//     users see the plan of the partner that owns them
+//  3. fall back to the platform-direct DefaultPartnerID when neither
+//     is set (rare; mostly platform-admin sessions)
+//
+// Rate-limit caps reflect what the API enforces *today*; the limiter
+// backend doesn't expose remaining-count cheaply (Redis sliding
+// window would need a peek script), so we report the static cap +
+// window and let the client subtract their observed 429s.
+func getMyUsage(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := auth.FromContext(r.Context())
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		partnerID := resolveCallerPartner(r, s, id)
+
+		var plan *billing.Plan
+		var usage *billing.Usage
+		if partnerID != uuid.Nil {
+			plan, _ = s.Billing.CurrentPlan(r.Context(), partnerID)
+			usage, _ = s.Billing.UsageFor(r.Context(), partnerID, plan)
+		}
+
+		rl := map[string]any{
+			"per_identity_rps":   s.Cfg.RateLimitRPS,
+			"window_seconds":     s.Cfg.RateLimitWindowSec,
+			"per_tenant_multiplier": s.Cfg.PerTenantRateLimitMultiplier,
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"identity": map[string]any{
+				"user_id":    id.UserID,
+				"tenant_id":  id.TenantID,
+				"partner_id": partnerID,
+			},
+			"plan":       plan,
+			"usage":      usage,
+			"rate_limit": rl,
+		})
+	}
+}
+
+// resolveCallerPartner picks the partner whose billing plan applies
+// to this caller. Order matches getMyUsage docs.
+func resolveCallerPartner(r *http.Request, s *Services, id *auth.Identity) uuid.UUID {
+	if id == nil {
+		return uuid.Nil
+	}
+	if id.PartnerID != nil && *id.PartnerID != uuid.Nil {
+		return *id.PartnerID
+	}
+	if id.TenantID != nil {
+		var p uuid.UUID
+		err := s.Pool.QueryRow(r.Context(),
+			`SELECT partner_id FROM partner_customer_mapping WHERE tenant_id=$1 LIMIT 1`,
+			*id.TenantID).Scan(&p)
+		if err == nil {
+			return p
+		}
+	}
+	return s.DefaultPartnerID
+}

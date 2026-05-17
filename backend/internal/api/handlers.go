@@ -3,6 +3,7 @@
 package api
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1652,6 +1653,170 @@ func verifyAudit(s *Services) http.HandlerFunc {
 			"chain_valid": brokenAt == 0, "broken_at_id": brokenAt,
 		})
 	}
+}
+
+// exportAudit streams the tenant's audit history as NDJSON (default)
+// or CSV (?format=csv). Designed for compliance pulls: a single
+// HTTP request returns every row matching the filter, written
+// row-by-row so memory stays bounded even for million-row tenants.
+//
+// Filter params mirror listAudit (tenant_id pin, event=, from=, to=)
+// but the result is unbounded (no LIMIT). The request is bounded
+// instead by the (rare) row count + the ?from=..?to= window callers
+// MUST supply for tenant-level pulls — otherwise the export would
+// pull the entire chain. Platform admins may omit it for full pulls.
+//
+// Same tenant-pin RLS rules as listAudit. Body is the raw payload
+// JSON exactly as stored (no re-marshal) so SIEMs get bytes that
+// hash-match what audit.Record signed into the chain.
+func exportAudit(s *Services) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		identity, _ := auth.FromContext(r.Context())
+		requested := r.URL.Query().Get("tenant_id")
+		var pinnedTenant *uuid.UUID
+		tenantPinned := false
+		for _, role := range identity.Roles {
+			if auth.TenantLevelRoles[role] {
+				tid, terr := auth.AuthorizeTargetTenant(identity, requested)
+				if terr != nil {
+					forbidden(w, terr.Error())
+					return
+				}
+				pinnedTenant = &tid
+				tenantPinned = true
+				break
+			}
+		}
+
+		from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
+		var fromT, toT time.Time
+		var haveFrom, haveTo bool
+		if from != "" {
+			if t, err := time.Parse(time.RFC3339, from); err == nil {
+				fromT = t
+				haveFrom = true
+			}
+		}
+		if to != "" {
+			if t, err := time.Parse(time.RFC3339, to); err == nil {
+				toT = t
+				haveTo = true
+			}
+		}
+		// Tenant-level callers MUST scope by time so a single 1M-row
+		// chain pull can't run unbounded. Platform admins may omit
+		// (their pull is the operator-grade backup path).
+		if tenantPinned && !haveFrom {
+			badRequest(w, "tenant-level exports require ?from=<rfc3339>")
+			return
+		}
+
+		args := []any{identity.PlatformID}
+		q := `SELECT id, event, actor_type, actor_id, target_type, target_id,
+		             tenant_id, partner_id, occurred_at, payload
+		        FROM audit_logs WHERE platform_id=$1`
+		if pinnedTenant != nil {
+			q += fmt.Sprintf(" AND tenant_id=$%d", len(args)+1)
+			args = append(args, *pinnedTenant)
+		} else if requested != "" {
+			if id, err := uuid.Parse(requested); err == nil {
+				q += fmt.Sprintf(" AND tenant_id=$%d", len(args)+1)
+				args = append(args, id)
+			}
+		}
+		if v := r.URL.Query().Get("event"); v != "" {
+			q += fmt.Sprintf(" AND event=$%d", len(args)+1)
+			args = append(args, v)
+		}
+		if haveFrom {
+			q += fmt.Sprintf(" AND occurred_at >= $%d", len(args)+1)
+			args = append(args, fromT)
+		}
+		if haveTo {
+			q += fmt.Sprintf(" AND occurred_at < $%d", len(args)+1)
+			args = append(args, toT)
+		}
+		q += " ORDER BY id ASC"
+
+		rows, err := s.Pool.Query(r.Context(), q, args...)
+		if err != nil {
+			internalErr(w, err)
+			return
+		}
+		defer rows.Close()
+
+		format := r.URL.Query().Get("format")
+		if format == "csv" {
+			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+			w.Header().Set("Content-Disposition", `attachment; filename="audit_export.csv"`)
+			cw := csv.NewWriter(w)
+			defer cw.Flush()
+			_ = cw.Write([]string{"id", "event", "actor_type", "actor_id", "target_type", "target_id", "tenant_id", "partner_id", "occurred_at", "payload"})
+			for rows.Next() {
+				var (
+					id              int64
+					event, actor    string
+					actorID         *uuid.UUID
+					tType, tID      *string
+					tenantID, partID *uuid.UUID
+					occ             time.Time
+					payload         string
+				)
+				if err := rows.Scan(&id, &event, &actor, &actorID, &tType, &tID, &tenantID, &partID, &occ, &payload); err != nil {
+					return
+				}
+				_ = cw.Write([]string{
+					strconv.FormatInt(id, 10), event, actor,
+					uuidPtrString(actorID), strPtrString(tType), strPtrString(tID),
+					uuidPtrString(tenantID), uuidPtrString(partID),
+					occ.UTC().Format(time.RFC3339Nano), payload,
+				})
+			}
+			return
+		}
+
+		// NDJSON default — one JSON object per line so a streaming
+		// SIEM consumer parses incrementally.
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", `attachment; filename="audit_export.ndjson"`)
+		enc := json.NewEncoder(w)
+		for rows.Next() {
+			var (
+				id              int64
+				event, actor    string
+				actorID         *uuid.UUID
+				tType, tID      *string
+				tenantID, partID *uuid.UUID
+				occ             time.Time
+				payload         string
+			)
+			if err := rows.Scan(&id, &event, &actor, &actorID, &tType, &tID, &tenantID, &partID, &occ, &payload); err != nil {
+				return
+			}
+			var pl any
+			_ = json.Unmarshal([]byte(payload), &pl)
+			_ = enc.Encode(map[string]any{
+				"id": id, "event": event, "actor_type": actor, "actor_id": actorID,
+				"target_type": tType, "target_id": tID,
+				"tenant_id": tenantID, "partner_id": partID,
+				"occurred_at": occ, "payload": pl,
+			})
+		}
+	}
+}
+
+func uuidPtrString(u *uuid.UUID) string {
+	if u == nil {
+		return ""
+	}
+	return u.String()
+}
+
+func strPtrString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // ----- helpers ------------------------------------------------------------

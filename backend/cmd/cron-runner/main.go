@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -214,6 +215,25 @@ func main() {
 		}},
 		{name: "compliance_evaluate", interval: 6 * time.Hour, fn: func(ctx context.Context) error {
 			return compliance.NewEvaluator(pool.Pool).EvaluateAll(ctx)
+		}},
+		// Per-tenant DEK rotation. Default 90-day max age matches SOC2 /
+		// ISO27001 expectations for key-material lifetime; override via
+		// VAULTSCAN_DEK_ROTATION_DAYS for stricter environments. Old DEK
+		// versions remain decryptable (we never retire them in this
+		// path; sweep only writes the new version).
+		{name: "dek_rotation_sweep", interval: 24 * time.Hour, fn: func(ctx context.Context) error {
+			days := 90
+			if v := os.Getenv("VAULTSCAN_DEK_ROTATION_DAYS"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					days = n
+				}
+			}
+			rotated, err := vault.RotateStaleTenantKeys(ctx, time.Duration(days)*24*time.Hour)
+			if err == nil && rotated > 0 {
+				log.Info().Int("tenants", rotated).Int("max_age_days", days).
+					Msg("DEK rotation sweep")
+			}
+			return err
 		}},
 	}
 

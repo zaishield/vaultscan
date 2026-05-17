@@ -20,6 +20,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/models"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 type Service struct {
@@ -119,7 +120,12 @@ func (s *Service) Provision(ctx context.Context, in CreateInput) (*models.Agent,
 }
 
 // Enroll consumes a one-time token and binds an agent's certificate.
-func (s *Service) Enroll(ctx context.Context, agentID uuid.UUID, token, certPEM, fingerprint string) error {
+func (s *Service) Enroll(ctx context.Context, agentID uuid.UUID, token, certPEM, fingerprint string) (err error) {
+	ctx, end := observability.Span(ctx, "agents.Enroll",
+		"agent_id", agentID.String(),
+		"fingerprint", fingerprint)
+	defer func() { end(err) }()
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err

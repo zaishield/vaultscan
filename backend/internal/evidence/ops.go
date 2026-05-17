@@ -17,6 +17,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 // ---------------- Envelope encryption ---------------------------------------
@@ -49,6 +51,48 @@ func (v *Vault) EnsureTenantKey(ctx context.Context, tenantID uuid.UUID) (int, [
 		return 0, nil, err
 	}
 	return version, dek, nil
+}
+
+// RotateStaleTenantKeys finds every tenant whose latest DEK is older
+// than `maxAge` and rotates them. Returns the count of tenants
+// rotated. Designed to be called from a cron job — cheap when nothing
+// is due, idempotent if interrupted (the per-tenant rotation is its
+// own transaction; partial progress survives).
+//
+// Rotation cadence guidance: 90 days is a common SOC2 / ISO27001
+// target for key material. Daily cron + max_age=90 days means at
+// most one tenant rotates per day in steady state.
+func (v *Vault) RotateStaleTenantKeys(ctx context.Context, maxAge time.Duration) (int, error) {
+	rows, err := v.pool.Query(ctx, `
+		SELECT tenant_id FROM (
+		    SELECT tenant_id, MAX(created_at) AS latest
+		      FROM tenant_data_keys
+		     WHERE retired_at IS NULL
+		     GROUP BY tenant_id
+		) t
+		WHERE latest < now() - $1::interval`, fmt.Sprintf("%d seconds", int(maxAge.Seconds())))
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var tenantIDs []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return 0, err
+		}
+		tenantIDs = append(tenantIDs, id)
+	}
+	rotated := 0
+	for _, id := range tenantIDs {
+		if _, err := v.RotateTenantKey(ctx, id); err != nil {
+			// Log-and-continue: one tenant's failure shouldn't
+			// block the sweep — next tick retries.
+			continue
+		}
+		rotated++
+	}
+	return rotated, nil
 }
 
 // RotateTenantKey writes a new DEK version. Old objects keep their
@@ -183,23 +227,29 @@ func (v *Vault) PutWithDEK(ctx context.Context, tenantID uuid.UUID, body []byte)
 }
 
 // RecordWithDEK is like Record but uses the tenant DEK envelope.
-func (v *Vault) RecordWithDEK(ctx context.Context, in PutInput) (uuid.UUID, error) {
+func (v *Vault) RecordWithDEK(ctx context.Context, in PutInput) (id uuid.UUID, err error) {
+	ctx, end := observability.Span(ctx, "evidence.RecordWithDEK",
+		"tenant_id", in.TenantID.String(),
+		"kind", in.Kind,
+		"content_type", in.ContentType,
+	)
+	defer func() { end(err) }()
 	storageURL, version, err := v.PutWithDEK(ctx, in.TenantID, in.Body)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	digest := sha256.Sum256(in.Body)
 	hashHex := hex.EncodeToString(digest[:])
-	id := uuid.New()
-	if _, err := v.pool.Exec(ctx, `
+	id = uuid.New()
+	if _, execErr := v.pool.Exec(ctx, `
 		INSERT INTO finding_evidence(id, tenant_id, partner_id, finding_id, engagement_id,
 		    scan_job_id, evidence_type, storage_url, sha256, size_bytes, content_type,
 		    encrypted, encryption_key_version, uploaded_by, uploaded_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12,$13, now())`,
 		id, in.TenantID, in.PartnerID, in.FindingID, in.EngagementID, in.ScanJobID,
 		in.Kind, storageURL, hashHex, int64(len(in.Body)), in.ContentType,
-		version, in.UploadedBy); err != nil {
-		return uuid.Nil, fmt.Errorf("evidence: insert: %w", err)
+		version, in.UploadedBy); execErr != nil {
+		return uuid.Nil, fmt.Errorf("evidence: insert: %w", execErr)
 	}
 	_ = v.recordCustody(ctx, id, "uploaded", in.UploadedBy, "user", nil, "", map[string]any{
 		"sha256": hashHex, "size": len(in.Body), "key_version": version, "kind": in.Kind,

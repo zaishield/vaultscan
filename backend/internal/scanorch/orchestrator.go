@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"strconv"
 	"hash/fnv"
 	"strings"
 	"time"
@@ -133,7 +134,15 @@ type SubmitInput struct {
 
 // Submit performs Scope Guard evaluation, persists the job, signs it, and
 // (if approved) dispatches to scanner farm or agent queue.
-func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (*models.ScanJob, *scopeguard.Decision, error) {
+func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (out *models.ScanJob, dec *scopeguard.Decision, err error) {
+	ctx, end := observability.Span(ctx, "scanorch.Submit",
+		"tenant_id", in.TenantID.String(),
+		"engagement_id", in.EngagementID.String(),
+		"profile_code", in.ProfileCode,
+		"plane", in.Plane,
+		"target_count", strconv.Itoa(len(in.Targets)),
+	)
+	defer func() { end(err) }()
 	if len(in.Targets) == 0 {
 		return nil, nil, errors.New("scanorch: at least one target required")
 	}

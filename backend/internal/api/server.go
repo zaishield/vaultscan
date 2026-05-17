@@ -181,6 +181,35 @@ func Mount(s *Services) http.Handler {
 		writeJSON(w, res.HTTPStatusFor(), safe)
 	})
 
+	// Public customer-facing status page. Like /readyz but returns
+	// version + uptime so a status-page integration can show "VaultScan
+	// API v1.4.2 — up 3d 14h". Same safe (no-detail) shape as /readyz.
+	apiStartedAt := time.Now().UTC()
+	r.Get("/api/v1/status", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		res := healthReg.Snapshot(ctx, 2*time.Second)
+		comps := make([]map[string]any, 0, len(res.Components))
+		for _, c := range res.Components {
+			comps = append(comps, map[string]any{
+				"name":     c.Name,
+				"status":   string(c.Status),
+				"optional": c.Optional,
+			})
+		}
+		// 30s cache lets status-page poll-every-5s collapse into a
+		// single backend hit per pod; status pages display a slightly
+		// stale "up" indicator just fine.
+		w.Header().Set("Cache-Control", "public, max-age=30")
+		writeJSON(w, res.HTTPStatusFor(), map[string]any{
+			"status":     string(res.Status),
+			"version":    s.Cfg.APIVersion,
+			"components": comps,
+			"uptime_seconds": int64(time.Since(apiStartedAt).Seconds()),
+			"timestamp":  time.Now().UTC(),
+		})
+	})
+
 	// Public branding endpoint (Blueprint §8.5)
 	r.Get("/api/v1/branding", brandingByDomain(s))
 	r.Post("/api/v1/auth/dev-token", devToken(s))
@@ -288,6 +317,11 @@ func Mount(s *Services) http.Handler {
 
 		// Effective identity + session management (VS-01 hardening).
 		r.Get("/api/v1/auth/me", whoAmI(s))
+		// Self-service usage + plan + rate-limit visibility. Any
+		// authenticated caller can hit /usage to see their own
+		// consumption — answers "how much room do I have left?" without
+		// needing the partner_id-scoped /partners/.../billing routes.
+		r.Get("/api/v1/usage", getMyUsage(s))
 		// Operator-only detailed health snapshot — includes per-
 		// component detail strings (DB error text, pool saturation,
 		// upstream HTTP status) that we strip from /readyz to avoid
@@ -563,6 +597,11 @@ func Mount(s *Services) http.Handler {
 			r.With(middleware.RequirePermission("view_audit_logs")).Get("/verify-deep", verifyAuditDeep(s))
 			r.With(middleware.RequirePermission("view_audit_logs")).Get("/timeline", auditTimeline(s))
 			r.With(middleware.RequirePermission("view_audit_logs")).Get("/retention-policies", retentionPolicies(s))
+			// Bulk export endpoint for SIEM/compliance pulls. Streams
+			// NDJSON (default) or CSV (?format=csv). Tenant-level
+			// callers must scope by ?from=<rfc3339>; platform admins
+			// may omit for full pulls.
+			r.With(middleware.RequirePermission("view_audit_logs")).Get("/export", exportAudit(s))
 			r.With(middleware.RequirePermission("view_audit_logs")).
 				Post("/ship/{integration_id}", shipAuditBatch(s))
 		})

@@ -42,6 +42,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
+
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 // cosignLogger surfaces key-load anomalies (unparseable PEM, missing
@@ -286,7 +288,13 @@ type Result struct {
 // expected image digest, signed by one of the trust-policy keys. Returns
 // a Result describing the decision; the caller is responsible for the
 // audit row + the accept/reject action.
-func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest string, bundle Bundle, plane string) (*Result, error) {
+func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest string, bundle Bundle, plane string) (res *Result, err error) {
+	ctx, end := observability.Span(ctx, "cosign.VerifyImage",
+		"image_ref", imageRef,
+		"digest", expectedDigest,
+		"plane", plane)
+	defer func() { end(err) }()
+
 	r := &Result{Digest: expectedDigest}
 
 	// Bound the inputs before decoding. A cosign payload is normally

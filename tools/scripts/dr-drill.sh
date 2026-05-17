@@ -93,6 +93,45 @@ if [[ -z "${DRY_RUN}" ]]; then
   [[ "${FIRST_BAD}" == "0" ]] || die "audit chain broken at row ${FIRST_BAD}"
 fi
 
+# ----- 5b. Validate restored row counts vs production baseline -----------
+# A clean pg_restore that produces empty tables is technically "successful"
+# but useless — the audit-chain check would pass on an empty chain too.
+# Verify core tables have at least the baseline floor we expect for a
+# real production restore. Floor values are intentionally conservative
+# so non-prod restores (staging, demo) don't false-fail. Override the
+# floor via VAULTSCAN_DR_MIN_ROWS_<TABLE> when needed.
+log "validating row counts..."
+if [[ -z "${DRY_RUN}" ]]; then
+  check_rows() {
+    local table=$1 floor=$2
+    local override_var="VAULTSCAN_DR_MIN_ROWS_${table^^}"
+    local effective=${!override_var:-$floor}
+    local n
+    n=$(docker exec "${SANDBOX}" psql -U drill -d drill -At -c \
+        "SELECT COUNT(*) FROM ${table}") || die "could not count ${table}"
+    log "  ${table}: ${n} rows (floor ${effective})"
+    if [[ "${n}" -lt "${effective}" ]]; then
+      die "${table} row count ${n} below floor ${effective} — restore likely incomplete"
+    fi
+  }
+  # Floors picked to detect "table empty" / "partial restore" — not to
+  # validate freshness. A real prod backup has at minimum 1 tenant,
+  # 1 partner, 1 user, the seed audit row, and the seed roles.
+  check_rows tenants            1
+  check_rows partners           1
+  check_rows users              1
+  check_rows audit_logs         1
+  check_rows roles              1
+  # Optional but-good-to-have: assets / findings / scan_jobs only checked
+  # when override is set; new platforms can boot with these empty.
+  if [[ -n "${VAULTSCAN_DR_MIN_ROWS_ASSETS:-}" ]]; then
+    check_rows assets "${VAULTSCAN_DR_MIN_ROWS_ASSETS}"
+  fi
+  if [[ -n "${VAULTSCAN_DR_MIN_ROWS_FINDINGS:-}" ]]; then
+    check_rows findings "${VAULTSCAN_DR_MIN_ROWS_FINDINGS}"
+  fi
+fi
+
 # ----- 6. Stamp the drill result -----------------------------------------
 DURATION=$(($(date -u +%s) - START))
 log "drill completed in ${DURATION}s"

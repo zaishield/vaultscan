@@ -90,7 +90,13 @@ type IngestInput struct {
 
 // Upsert applies the deduplication rules and either inserts a new finding or
 // bumps last_seen on an existing one. Returns (finding, isNew).
-func (s *Service) Upsert(ctx context.Context, in IngestInput) (*models.Finding, bool, error) {
+func (s *Service) Upsert(ctx context.Context, in IngestInput) (out *models.Finding, created bool, err error) {
+	ctx, end := observability.Span(ctx, "findings.Upsert",
+		"tenant_id", in.TenantID.String(),
+		"scanner", in.Scanner,
+		"severity", in.Severity,
+	)
+	defer func() { end(err) }()
 	if in.Title == "" || in.Severity == "" || in.Scanner == "" {
 		return nil, false, errors.New("findings: title, severity, scanner required")
 	}
