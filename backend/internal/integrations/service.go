@@ -337,7 +337,7 @@ func (s *Service) fanout(ctx context.Context, ev eventbus.Event) {
 
 func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, name string,
 	config map[string]any, ev eventbus.Event) {
-	body, err := s.buildPayload(itype, name, ev)
+	body, err := s.buildPayload(ctx, itype, name, ev)
 	if err != nil {
 		return
 	}
@@ -419,17 +419,17 @@ func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, n
 // buildPayload formats the event for the destination type. We keep payload
 // shape pragmatic: Slack/Teams use text; SIEM uses CEF/LEEF; Jira/ServiceNow
 // produce typed tickets; others receive a structured envelope.
-func (s *Service) buildPayload(itype, name string, ev eventbus.Event) ([]byte, error) {
+func (s *Service) buildPayload(ctx context.Context, itype, name string, ev eventbus.Event) ([]byte, error) {
 	switch itype {
 	case "jira":
-		issueType, _ := s.integrationField(context.Background(), name, "issue_type")
-		config, _ := s.integrationConfig(context.Background(), name)
+		issueType, _ := s.integrationField(ctx, name, "issue_type")
+		config, _ := s.integrationConfig(ctx, name)
 		return BuildJiraIssue(ev, config, issueType)
 	case "servicenow":
-		config, _ := s.integrationConfig(context.Background(), name)
+		config, _ := s.integrationConfig(ctx, name)
 		return BuildServiceNowIncident(ev, config)
 	case "siem":
-		format, _ := s.integrationField(context.Background(), name, "format")
+		format, _ := s.integrationField(ctx, name, "format")
 		switch strings.ToLower(format) {
 		case "cef":
 			return []byte(BuildCEF(ev)), nil
