@@ -169,6 +169,239 @@ def parameters_for(path: str):
     return out
 
 
+# --------------------------------------------------------------------------
+# SCHEMA_OVERRIDES — hand-authored, verified-against-handler request and
+# response shapes. Every (method, path) entry here has been cross-checked
+# against the real handler code: response shapes derive from `writeJSON(...)`
+# calls and the models package; request shapes derive from the `decode(r,
+# &req)` struct definitions in handlers.go.
+#
+# Everything NOT in this map keeps the placeholder
+# `additionalProperties=true` shape that the contract test accepts.
+# Adding an entry here is GA-readiness work — operators tightening the
+# spec on a route they've audited end-to-end.
+#
+# Honest current state:
+#   * Entries below: 13 endpoints with tight schemas
+#   * Total routes:  ~223 (see paths summary at end of openapi.yaml)
+#   * Coverage:      ~6%. The remaining endpoints are accurate enough
+#                    for client codegen at the field-list level but
+#                    surface NO type constraints (string vs int vs uuid,
+#                    nullable, enum membership). Tightening more
+#                    endpoints is a future iteration.
+# --------------------------------------------------------------------------
+
+# Reusable component shapes — defined once, referenced from
+# response_200 / request entries below.
+_USER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id":            {"type": "string", "format": "uuid"},
+        "platform_id":   {"type": "string", "format": "uuid"},
+        "partner_id":    {"type": "string", "format": "uuid", "nullable": True},
+        "tenant_id":     {"type": "string", "format": "uuid", "nullable": True},
+        "email":         {"type": "string", "format": "email"},
+        "full_name":     {"type": "string"},
+        "mfa_enabled":   {"type": "boolean"},
+        "status":        {"type": "string", "enum": ["active", "suspended", "erased"]},
+        "last_login_at": {"type": "string", "format": "date-time", "nullable": True},
+        "created_at":    {"type": "string", "format": "date-time"},
+    },
+    "required": ["id", "platform_id", "email", "full_name", "mfa_enabled", "status", "created_at"],
+}
+
+_TENANT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id":             {"type": "string", "format": "uuid"},
+        "platform_id":    {"type": "string", "format": "uuid"},
+        "partner_id":     {"type": "string", "format": "uuid"},
+        "name":           {"type": "string"},
+        "slug":           {"type": "string"},
+        "status":         {"type": "string", "enum": ["active", "suspended", "quarantined", "deleted"]},
+        "isolation_mode": {"type": "string", "enum": ["shared", "dedicated"]},
+        "created_at":     {"type": "string", "format": "date-time"},
+    },
+    "required": ["id", "platform_id", "partner_id", "name", "slug", "status", "created_at"],
+}
+
+_FINDING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id":               {"type": "string", "format": "uuid"},
+        "platform_id":      {"type": "string", "format": "uuid"},
+        "tenant_id":        {"type": "string", "format": "uuid"},
+        "partner_id":       {"type": "string", "format": "uuid"},
+        "engagement_id":    {"type": "string", "format": "uuid"},
+        "asset_id":         {"type": "string", "format": "uuid", "nullable": True},
+        "scan_job_id":      {"type": "string", "format": "uuid", "nullable": True},
+        "title":            {"type": "string"},
+        "description":      {"type": "string"},
+        "severity":         {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
+        "confidence":       {"type": "string", "enum": ["low", "medium", "high"]},
+        "cvss_score":       {"type": "number", "minimum": 0, "maximum": 10},
+        "cvss_vector":      {"type": "string"},
+        "cwe":              {"type": "string"},
+        "cve":              {"type": "string"},
+        "scanner":          {"type": "string"},
+        "scan_type":        {"type": "string"},
+        "affected_endpoint": {"type": "string"},
+        "port":             {"type": "integer"},
+        "protocol":         {"type": "string"},
+        "status":           {"type": "string", "enum": [
+            "open", "triaged", "assigned", "in_progress",
+            "risk_accepted", "false_positive", "remediated",
+            "retest_requested", "retest_passed", "retest_failed", "closed"
+        ]},
+    },
+    "required": ["id", "platform_id", "tenant_id", "partner_id", "engagement_id", "title", "severity", "status"],
+}
+
+_ERROR_REF = {"$ref": "#/components/schemas/Error"}
+
+SCHEMA_OVERRIDES = {
+    # ----- Identity / Auth -------------------------------------------------
+    "GET /api/v1/auth/me": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "user_id":      {"type": "string", "format": "uuid"},
+                "email":        {"type": "string", "format": "email"},
+                "full_name":    {"type": "string"},
+                "platform_id":  {"type": "string", "format": "uuid"},
+                "partner_id":   {"type": "string", "format": "uuid", "nullable": True},
+                "tenant_id":    {"type": "string", "format": "uuid", "nullable": True},
+                "roles":        {"type": "array", "items": {"type": "string"}},
+                "permissions":  {"type": "array", "items": {"type": "string"}},
+                "mfa_verified": {"type": "boolean"},
+            },
+            "required": ["user_id", "email", "platform_id", "roles", "permissions", "mfa_verified"],
+        },
+    },
+    "POST /api/v1/auth/logout": {
+        "response_200": {
+            "type": "object",
+            "properties": {"status": {"type": "string", "enum": ["revoked"]}},
+            "required": ["status"],
+        },
+    },
+
+    # ----- Liveness/readiness probes ---------------------------------------
+    "GET /healthz": {
+        "response_200": {
+            "type": "object",
+            "properties": {"status": {"type": "string", "enum": ["ok"]}},
+            "required": ["status"],
+        },
+    },
+    "GET /livez": {
+        "response_200": {
+            "type": "object",
+            "properties": {"status": {"type": "string", "enum": ["ok"]}},
+            "required": ["status"],
+        },
+    },
+
+    # ----- Tenants ---------------------------------------------------------
+    "POST /api/v1/tenants": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "platform_id":    {"type": "string", "format": "uuid"},
+                "partner_id":     {"type": "string", "format": "uuid"},
+                "name":           {"type": "string", "minLength": 1, "maxLength": 200},
+                "slug":           {"type": "string", "pattern": "^[a-z0-9-]+$"},
+                "isolation_mode": {"type": "string", "enum": ["shared", "dedicated"]},
+            },
+            "required": ["name", "slug"],
+        },
+        "response_200": _TENANT_SCHEMA,
+    },
+    "GET /api/v1/tenants/{tenant_id}": {"response_200": _TENANT_SCHEMA},
+    "POST /api/v1/tenants/{tenant_id}/suspend": {
+        "response_200": {
+            "type": "object",
+            "properties": {"status": {"type": "string", "enum": ["suspended"]}},
+            "required": ["status"],
+        },
+    },
+    "PUT /api/v1/tenants/{tenant_id}/residency": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "region": {"type": "string", "enum": ["us", "eu", "ae", "ap"]},
+                "reason": {"type": "string"},
+            },
+            "required": ["region"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "tenant_id": {"type": "string", "format": "uuid"},
+                "region":    {"type": "string"},
+            },
+        },
+    },
+
+    # ----- Users -----------------------------------------------------------
+    "GET /api/v1/users/{user_id}": {"response_200": _USER_SCHEMA},
+    "POST /api/v1/users/{user_id}/erase": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {"reason": {"type": "string", "minLength": 1}},
+            "required": ["reason"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "user_id":                 {"type": "string", "format": "uuid"},
+                "login_events_swept":      {"type": "integer", "minimum": 0},
+                "token_revocations_swept": {"type": "integer", "minimum": 0},
+                "regulation":              {"type": "string", "enum": ["gdpr_art17"]},
+            },
+            "required": ["user_id", "regulation"],
+        },
+    },
+
+    # ----- Findings --------------------------------------------------------
+    "GET /api/v1/findings/{finding_id}": {"response_200": _FINDING_SCHEMA},
+    "GET /api/v1/findings": {
+        "response_200": {
+            "type": "array",
+            "items": _FINDING_SCHEMA,
+        },
+    },
+
+    # ----- Usage / Status --------------------------------------------------
+    "GET /api/v1/status": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "version": {"type": "string"},
+                "uptime":  {"type": "string"},
+                "now":     {"type": "string", "format": "date-time"},
+            },
+            "required": ["version", "uptime"],
+        },
+    },
+
+    # ----- Audit -----------------------------------------------------------
+    "GET /api/v1/audit/verify": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "chain_valid":  {"type": "boolean"},
+                "broken_at_id": {"type": "integer", "minimum": 0},
+            },
+            "required": ["chain_valid", "broken_at_id"],
+        },
+    },
+}
+
+
 SUMMARY_HINTS = {
     # ----- Marketplace --------------------------------------------------
     "GET /api/v1/marketplace/listings": "List partner integration marketplace catalog.",
@@ -298,12 +531,14 @@ def emit_yaml(routes, out_path: Path):
         params = parameters_for(path)
         if params:
             op["parameters"] = params
+        override = SCHEMA_OVERRIDES.get(f"{method} {path}")
         if method in ("POST", "PUT", "PATCH"):
+            req_schema = (override or {}).get("request") if override else None
             op["requestBody"] = {
-                "required": False,
+                "required": override is not None and override.get("request_required", False),
                 "content": {
                     "application/json": {
-                        "schema": {"type": "object", "additionalProperties": True},
+                        "schema": req_schema or {"type": "object", "additionalProperties": True},
                     },
                 },
             }
@@ -342,6 +577,13 @@ def emit_yaml(routes, out_path: Path):
         elif "/dashboards/stream" in path:
             ct = "text/event-stream"
             schema_200 = {"type": "string"}
+        # Per-(method,path) hand-authored response schema overrides
+        # the placeholder additionalProperties=true shape. Anything
+        # not in SCHEMA_OVERRIDES still emits the placeholder so the
+        # contract test stays green; the override only TIGHTENS the
+        # spec on endpoints we've actually verified by hand.
+        if override and override.get("response_200"):
+            schema_200 = override["response_200"]
         op["responses"] = {
             "200": {
                 "description": "Success",
