@@ -59,6 +59,29 @@ type Orchestrator struct {
 	// enforcement (the legacy / dev path); production wires this
 	// via WithBilling.
 	billing QuotaChecker
+
+	// residency enforces the tenant's data_region pin against the
+	// pod's VAULTSCAN_REGION. nil = no enforcement; production wires
+	// this via WithResidency.
+	residency ResidencyChecker
+	// podRegion is the deployment-zone code the pod runs in. Used
+	// together with residency. Empty = no check possible.
+	podRegion string
+}
+
+// ResidencyChecker is the slice of tenants.Service needed for the
+// scanorch.Submit residency gate. Defined as an interface so scanorch
+// doesn't pull in the full tenants package at link time.
+type ResidencyChecker interface {
+	CheckResidency(ctx context.Context, tenantID uuid.UUID, podRegion string) error
+}
+
+// WithResidency attaches the residency checker + the pod's region.
+// Empty region disables the check.
+func (o *Orchestrator) WithResidency(r ResidencyChecker, podRegion string) *Orchestrator {
+	o.residency = r
+	o.podRegion = podRegion
+	return o
 }
 
 // WithDigests attaches an ImageDigestRegistry. main.go calls this
@@ -145,6 +168,16 @@ func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (out *models.
 	defer func() { end(err) }()
 	if len(in.Targets) == 0 {
 		return nil, nil, errors.New("scanorch: at least one target required")
+	}
+	// Data-residency gate. Runs FIRST because a residency violation
+	// means we shouldn't have routed this request to this pod at all
+	// — burning quota + scope-guard cycles on a request we're about
+	// to refuse is wasted work. Returns ErrResidencyViolation; the
+	// API maps that to 451 Unavailable For Legal Reasons.
+	if o.residency != nil && o.podRegion != "" {
+		if err := o.residency.CheckResidency(ctx, in.TenantID, o.podRegion); err != nil {
+			return nil, nil, err
+		}
 	}
 	// Partner billing-quota gate. Runs BEFORE scope-guard because a
 	// quota-blocked partner shouldn't even see the engagement /

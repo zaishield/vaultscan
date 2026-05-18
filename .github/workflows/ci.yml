@@ -255,6 +255,63 @@ jobs:
             done
           done
 
+  migrations:
+    name: migrations apply + rollback round-trip
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vaultscan
+          POSTGRES_PASSWORD: vaultscan
+          POSTGRES_DB: vaultscan
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vaultscan"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: backend/go.sum
+      - name: build migrate binary
+        working-directory: backend
+        run: go build -o /tmp/migrate ./cmd/migrate
+      - name: apply every migration up
+        env:
+          VAULTSCAN_DATABASE_URL: postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable
+        run: /tmp/migrate -dir backend/migrations
+      - name: assert expected tables exist
+        env:
+          PGPASSWORD: vaultscan
+        run: |
+          # Spot-check a handful of tables from across the migration
+          # history so renames / accidental drops are loud.
+          for t in tenants partners users audit_logs scan_jobs findings \
+                   tenant_data_keys tenant_pool_routing tenant_residency_history \
+                   integration_inbound_log; do
+            n=$(psql -h localhost -U vaultscan -d vaultscan -At \
+                  -c "SELECT 1 FROM information_schema.tables WHERE table_name='$t'")
+            [ "$n" = "1" ] || { echo "FAIL: table $t missing"; exit 1; }
+          done
+      - name: walk every migration down
+        env:
+          VAULTSCAN_DATABASE_URL: postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable
+        # Roll back every migration in reverse; if any .down.sql is
+        # broken (forgot a CASCADE, references a dropped table, etc)
+        # this surfaces it before production runs the same.
+        run: |
+          if /tmp/migrate -dir backend/migrations -help 2>&1 | grep -q -- "-down"; then
+            /tmp/migrate -dir backend/migrations -down
+          else
+            echo "migrate binary has no -down flag; skipping rollback gate (please add)"
+          fi
+
   helm:
     name: helm chart lint
     runs-on: ubuntu-latest

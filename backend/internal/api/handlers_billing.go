@@ -22,6 +22,7 @@ import (
 
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/billing"
+	"github.com/zaishield/vaultscan/backend/internal/tenants"
 )
 
 // quotaErrorJSON maps a billing.ErrQuotaExceeded to a 429 envelope
@@ -41,6 +42,24 @@ func quotaErrorJSON(w http.ResponseWriter, err error) bool {
 			"limit":   qe.Limit,
 			"plan":    qe.Plan,
 			"message": qe.Error(),
+		},
+	})
+	return true
+}
+
+// residencyErrorJSON maps tenants.ErrResidencyViolation to a 451
+// Unavailable For Legal Reasons. The 451 status is the closest fit
+// for "we can't serve this here because of a residency commitment" —
+// the response carries the body shape the portal renders ("your
+// data is pinned to region X; route your request via api-X.").
+func residencyErrorJSON(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, tenants.ErrResidencyViolation) {
+		return false
+	}
+	writeJSON(w, http.StatusUnavailableForLegalReasons, map[string]any{
+		"error": map[string]any{
+			"code":    "data_residency_violation",
+			"message": err.Error(),
 		},
 	})
 	return true

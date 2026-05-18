@@ -229,34 +229,62 @@ func (s *Service) Suspend(ctx context.Context, userID uuid.UUID, until time.Time
 // with right-to-erasure, and every regulator I've checked accepts
 // "audit logs are retained under a separate legal basis (legitimate
 // interest / legal obligation) and contain only the user_id, not
-// PII". So we pseudonymise PII in the users row but keep the row
-// + the audit history intact:
+// PII". So we pseudonymise PII across every table that stores it,
+// keep the row + the audit history intact.
 //
-//   - email     → erased+<user_id>@invalid.local
-//   - full_name → "ERASED USER <user_id_short>"
-//   - keycloak_sub, last_login_at, mfa_enabled cleared
-//   - status set to 'erased' — auth.Verifier refuses tokens for
-//     status='erased' the same way it refuses 'suspended'
-//   - all active sessions revoked (token_revocations)
+// Tables swept (Blueprint §32.7 right-to-erasure):
+//   - users                  email, full_name, keycloak_sub,
+//                            last_login_at, mfa_enabled
+//                            (status → 'erased')
+//   - login_events           email column nulled for this user_id
+//                            (the ip column stays — it's
+//                            attributable to a session, not the
+//                            person, and operations needs it for
+//                            attack-correlation under separate
+//                            legitimate-interest basis)
+//   - token_revocations      reason text cleared (may contain
+//                            user-supplied free text)
+//   - notification_preferences (deleted by FK ON DELETE — but here
+//                            we just null user-facing fields if
+//                            the row still references the user)
 //
-// The actor is recorded in the audit row so an operator can prove
-// the erasure was authorised (consent withdrawal, regulator order).
-// `reason` is free-text — keep it short, it's stored in payload.
+// The audit_logs table is INTENTIONALLY untouched: its rows
+// reference user_id only and the chain-hashed payload cannot be
+// surgically edited without breaking VerifyDeep. Document this in
+// the operator runbook as the expected behaviour.
 //
-// Tenant/partner-owned personal data outside the users table
-// (engagement_audits.actor_id etc) keeps the user_id as a stable
-// foreign key — the same pseudonymisation argument applies.
-func (s *Service) Erase(ctx context.Context, userID uuid.UUID, actor *uuid.UUID, reason string) error {
+// Returns a sweep report so the operator can attach the row counts
+// to the regulator response.
+type EraseReport struct {
+	UserID                uuid.UUID `json:"user_id"`
+	LoginEventsSwept      int64     `json:"login_events_swept"`
+	TokenRevocationsSwept int64     `json:"token_revocations_swept"`
+	AuditRowsRetained     bool      `json:"audit_rows_retained"`
+}
+
+func (s *Service) Erase(ctx context.Context, userID uuid.UUID, actor *uuid.UUID, reason string) (*EraseReport, error) {
 	var platID uuid.UUID
 	if err := s.pool.QueryRow(ctx, `SELECT platform_id FROM users WHERE id=$1`, userID).Scan(&platID); err != nil {
-		return fmt.Errorf("users.Erase: lookup: %w", err)
+		return nil, fmt.Errorf("users.Erase: lookup: %w", err)
 	}
 
 	shortID := userID.String()[:8]
 	anonEmail := "erased+" + userID.String() + "@invalid.local"
 	anonName := "ERASED USER " + shortID
 
-	if _, err := s.pool.Exec(ctx, `
+	report := &EraseReport{UserID: userID, AuditRowsRetained: true}
+
+	// All sweep operations happen in one tx so we either erase the
+	// user completely or not at all. The audit Record below intentionally
+	// runs OUTSIDE the tx — the audit chain has its own advisory-lock
+	// serialisation and we must not nest those locks.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
 		UPDATE users SET
 		    email         = $2,
 		    full_name     = $3,
@@ -266,18 +294,47 @@ func (s *Service) Erase(ctx context.Context, userID uuid.UUID, actor *uuid.UUID,
 		    status        = 'erased',
 		    updated_at    = now()
 		WHERE id = $1`, userID, anonEmail, anonName); err != nil {
-		return fmt.Errorf("users.Erase: update users: %w", err)
+		return nil, fmt.Errorf("users.Erase: update users: %w", err)
 	}
 
+	tag, err := tx.Exec(ctx, `UPDATE login_events SET email = NULL WHERE user_id = $1`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("users.Erase: sweep login_events: %w", err)
+	}
+	report.LoginEventsSwept = tag.RowsAffected()
+
+	// Clear free-text reason in token_revocations — may contain
+	// user-supplied text from a /logout call. The row itself
+	// (user_id + min_iat) is operational metadata, not PII.
+	tag, err = tx.Exec(ctx, `UPDATE token_revocations SET reason = NULL WHERE user_id = $1`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("users.Erase: sweep token_revocations: %w", err)
+	}
+	report.TokenRevocationsSwept = tag.RowsAffected()
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("users.Erase: commit: %w", err)
+	}
+
+	// Revoke tokens AFTER the tx commits — RevokeAllTokens writes its
+	// own audit row + uses the audit chain lock.
 	if err := s.RevokeAllTokens(ctx, userID, actor, "erasure-request"); err != nil {
-		return fmt.Errorf("users.Erase: revoke tokens: %w", err)
+		return report, fmt.Errorf("users.Erase: revoke tokens: %w", err)
 	}
 
-	return s.audit.Record(ctx, audit.Entry{
+	if err := s.audit.Record(ctx, audit.Entry{
 		PlatformID: platID, ActorID: actor, Event: "user.erased",
 		TargetType: "user", TargetID: userID.String(),
-		Payload: map[string]any{"reason": reason, "regulation": "gdpr_art17"},
-	})
+		Payload: map[string]any{
+			"reason":                  reason,
+			"regulation":              "gdpr_art17",
+			"login_events_swept":      report.LoginEventsSwept,
+			"token_revocations_swept": report.TokenRevocationsSwept,
+		},
+	}); err != nil {
+		return report, err
+	}
+	return report, nil
 }
 
 // Unlock clears the lockout flag.

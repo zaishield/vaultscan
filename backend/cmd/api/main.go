@@ -153,25 +153,32 @@ func main() {
 		log.Fatal().Err(err).Msg("init evidence storage backend")
 	}
 	log.Info().Str("backend", storage.Name()).Msg("evidence storage")
+	// Construct tenants service first so we can pass it as the
+	// residency checker into the orchestrator, asset service, and
+	// evidence vault below.
+	tenSvcEarly := tenants.New(pool.Pool, auditSvc, bus)
 	vault, err := evidence.NewVault(pool.Pool, auditSvc, bus, cfg.EvidenceMasterKey,
 		evidence.WithStorage(storage),
-		evidence.WithURLTTL(cfg.EvidenceURLTTL))
+		evidence.WithURLTTL(cfg.EvidenceURLTTL),
+		evidence.WithResidency(tenSvcEarly, cfg.Region))
 	if err != nil {
 		log.Fatal().Err(err).Msg("init evidence vault")
 	}
 
 	brand := branding.New(pool.Pool, auditSvc, cfg.BrandingDefault)
-	tenSvc := tenants.New(pool.Pool, auditSvc, bus)
+	tenSvc := tenSvcEarly
 	partSvc := partners.New(pool.Pool, auditSvc, bus)
 	engSvc := engagements.New(pool.Pool, auditSvc, bus)
 	docSvc := authdocs.New(pool.Pool, vault, auditSvc, bus)
 	// Billing first so the orchestrator + asset service can pull
 	// in the quota gate during their construction.
 	billingSvc := billing.New(pool.Pool, bus)
-	assetSvc := assets.New(pool.Pool, auditSvc).WithBilling(billingSvc)
+	assetSvc := assets.New(pool.Pool, auditSvc).WithBilling(billingSvc).
+		WithResidency(tenSvc, cfg.Region)
 	scope := scopeguard.New(pool.Pool)
 	orch := scanorch.New(pool.Pool, scope, auditSvc, bus, signer).
-		WithBilling(billingSvc)
+		WithBilling(billingSvc).
+		WithResidency(tenSvc, cfg.Region)
 	if reg, err := scanorch.NewImageDigestRegistry(
 		getenvOr("VAULTSCAN_SCANNER_DIGESTS_PATH", "tools/scanner-images/digests.json"),
 	); err == nil {

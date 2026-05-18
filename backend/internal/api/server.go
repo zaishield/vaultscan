@@ -212,6 +212,12 @@ func Mount(s *Services) http.Handler {
 
 	// Public branding endpoint (Blueprint §8.5)
 	r.Get("/api/v1/branding", brandingByDomain(s))
+
+	// Public-by-design inbound webhook receiver. Auth is the HMAC
+	// signature itself (verified inside the handler); no bearer
+	// token is required because the calling system is the partner,
+	// not the user. Global rate-limit middleware still applies.
+	r.Post("/api/v1/integrations/{integration_id}/inbound", inboundWebhook(s))
 	r.Post("/api/v1/auth/dev-token", devToken(s))
 
 	// JWKS — public so external token consumers can fetch the active
@@ -595,6 +601,9 @@ func Mount(s *Services) http.Handler {
 		// Integration test + health (VS-11)
 		r.Route("/api/v1/integrations/{integration_id}", func(r chi.Router) {
 			r.Post("/test", testIntegration(s))
+			// Operator-rotates the per-integration inbound HMAC secret.
+			r.With(middleware.RequirePermission("manage_integrations")).
+				Put("/signing-secret", putIntegrationSigningSecret(s))
 		})
 		r.Get("/api/v1/integration-health", integrationHealth(s))
 

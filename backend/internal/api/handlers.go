@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -727,6 +728,9 @@ func createAsset(s *Services) http.HandlerFunc {
 			Tags: req.Tags, Metadata: req.Metadata, CreatedBy: &id.UserID,
 		})
 		if err != nil {
+			if residencyErrorJSON(w, err) {
+				return
+			}
 			if quotaErrorJSON(w, err) {
 				return
 			}
@@ -875,6 +879,9 @@ func submitScan(s *Services, plane string, w http.ResponseWriter, r *http.Reques
 		ScheduleAt: schedule, RequestedBy: &id.UserID, Intensity: req.Intensity,
 	})
 	if err != nil {
+		if residencyErrorJSON(w, err) {
+			return
+		}
 		if quotaErrorJSON(w, err) {
 			return
 		}
@@ -1023,6 +1030,9 @@ func provisionAgent(s *Services) http.HandlerFunc {
 			Name: req.Name, Location: req.Location, FormFactor: req.FormFactor, CreatedBy: &identity.UserID,
 		})
 		if err != nil {
+			if residencyErrorJSON(w, err) {
+				return
+			}
 			if quotaErrorJSON(w, err) {
 				return
 			}
@@ -1738,13 +1748,39 @@ func exportAudit(s *Services) http.HandlerFunc {
 		}
 		q += " ORDER BY id ASC"
 
-		rows, err := s.Pool.Query(r.Context(), q, args...)
+		// Bound the export. A platform admin pulling 10M rows could
+		// OOM the API process; even tenant-level pulls (with a
+		// required ?from=) can be huge over a long window. The cap
+		// is the smaller of:
+		//   * ?max= query param (operator's choice, capped at 10M)
+		//   * VAULTSCAN_AUDIT_EXPORT_HARD_CAP env (operator policy)
+		//   * 5 minutes wall time (export ctx)
+		// At hit-cap we close the stream cleanly + emit a trailing
+		// row with "truncated":true so the consumer knows to
+		// re-request with a smaller window or higher cap.
+		hardCap := 10_000_000
+		if v := os.Getenv("VAULTSCAN_AUDIT_EXPORT_HARD_CAP"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				hardCap = n
+			}
+		}
+		requestedMax := hardCap
+		if v := r.URL.Query().Get("max"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n < requestedMax {
+				requestedMax = n
+			}
+		}
+		exportCtx, cancelExport := context.WithTimeout(r.Context(), 5*time.Minute)
+		defer cancelExport()
+
+		rows, err := s.Pool.Query(exportCtx, q, args...)
 		if err != nil {
 			internalErr(w, err)
 			return
 		}
 		defer rows.Close()
 
+		written := 0
 		format := r.URL.Query().Get("format")
 		if format == "csv" {
 			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
@@ -1753,6 +1789,10 @@ func exportAudit(s *Services) http.HandlerFunc {
 			defer cw.Flush()
 			_ = cw.Write([]string{"id", "event", "actor_type", "actor_id", "target_type", "target_id", "tenant_id", "partner_id", "occurred_at", "payload"})
 			for rows.Next() {
+				if written >= requestedMax || exportCtx.Err() != nil {
+					_ = cw.Write([]string{"__truncated__", "true", "", "", "", "", "", "", "", "row cap or 5min wall budget hit; re-request with narrower window"})
+					return
+				}
 				var (
 					id              int64
 					event, actor    string
@@ -1771,6 +1811,7 @@ func exportAudit(s *Services) http.HandlerFunc {
 					uuidPtrString(tenantID), uuidPtrString(partID),
 					occ.UTC().Format(time.RFC3339Nano), payload,
 				})
+				written++
 			}
 			return
 		}
@@ -1781,6 +1822,15 @@ func exportAudit(s *Services) http.HandlerFunc {
 		w.Header().Set("Content-Disposition", `attachment; filename="audit_export.ndjson"`)
 		enc := json.NewEncoder(w)
 		for rows.Next() {
+			if written >= requestedMax || exportCtx.Err() != nil {
+				_ = enc.Encode(map[string]any{
+					"truncated":      true,
+					"rows_emitted":   written,
+					"reason":         "row cap or 5min wall budget hit; re-request with narrower window",
+					"requested_max":  requestedMax,
+				})
+				return
+			}
 			var (
 				id              int64
 				event, actor    string
@@ -1801,6 +1851,7 @@ func exportAudit(s *Services) http.HandlerFunc {
 				"tenant_id": tenantID, "partner_id": partID,
 				"occurred_at": occ, "payload": pl,
 			})
+			written++
 		}
 	}
 }
@@ -2888,13 +2939,15 @@ func eraseUser(s *Services) http.HandlerFunc {
 			badRequest(w, "erase cannot be self-served via this endpoint")
 			return
 		}
-		if err := s.Users.Erase(r.Context(), id, &identity.UserID, req.Reason); err != nil {
+		report, err := s.Users.Erase(r.Context(), id, &identity.UserID, req.Reason)
+		if err != nil {
 			internalErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{
+		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "erased",
-			"note":   "PII pseudonymised; audit history retained under accountability obligation",
+			"note":   "PII pseudonymised across users, login_events, token_revocations; audit history retained under accountability obligation",
+			"report": report,
 		})
 	}
 }

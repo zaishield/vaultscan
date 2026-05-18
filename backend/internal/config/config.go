@@ -15,6 +15,12 @@ type Config struct {
 	AgentGatewayAddr   string
 	OrchestratorAddr   string
 
+	// Region is the deployment-zone code (ae|eu|uk|in|us|sg|au|jp) the
+	// pod is running in. Read by data-residency enforcement to refuse
+	// cross-region writes when a tenant is pinned. Empty = single-
+	// region deployment; residency enforcement is a no-op.
+	Region             string
+
 	DatabaseURL        string
 	// DatabaseReplicaURL is the read-only Postgres replica. Empty =
 	// no replica configured; all reads go to the primary.
@@ -163,6 +169,7 @@ func Load() (*Config, error) {
 	c := &Config{
 		Env:               getenv("VAULTSCAN_ENV", "development"),
 		APIAddr:           getenv("VAULTSCAN_API_ADDR", ":8080"),
+		Region:            getenv("VAULTSCAN_REGION", ""),
 		AgentGatewayAddr:  getenv("VAULTSCAN_AGENT_GATEWAY_ADDR", ":8443"),
 		OrchestratorAddr:  getenv("VAULTSCAN_ORCH_ADDR", ":8090"),
 		DatabaseURL:       getenv("VAULTSCAN_DATABASE_URL",

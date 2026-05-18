@@ -22,9 +22,11 @@ import (
 )
 
 type Service struct {
-	pool    *pgxpool.Pool
-	audit   *audit.Service
-	billing AssetQuotaChecker
+	pool      *pgxpool.Pool
+	audit     *audit.Service
+	billing   AssetQuotaChecker
+	residency ResidencyChecker
+	podRegion string
 }
 
 // AssetQuotaChecker is the slice of billing.Service the assets
@@ -33,6 +35,12 @@ type Service struct {
 // graph stays flat).
 type AssetQuotaChecker interface {
 	CheckAsset(ctx context.Context, partnerID uuid.UUID, actor *uuid.UUID) error
+}
+
+// ResidencyChecker mirrors scanorch.ResidencyChecker — the slice of
+// tenants.Service required for the residency gate.
+type ResidencyChecker interface {
+	CheckResidency(ctx context.Context, tenantID uuid.UUID, podRegion string) error
 }
 
 func New(pool *pgxpool.Pool, a *audit.Service) *Service {
@@ -44,6 +52,15 @@ func New(pool *pgxpool.Pool, a *audit.Service) *Service {
 // API can return a 429.
 func (s *Service) WithBilling(b AssetQuotaChecker) *Service {
 	s.billing = b
+	return s
+}
+
+// WithResidency attaches the data-residency gate. Create() refuses
+// inserts when the tenant is pinned to a region different from the
+// pod's VAULTSCAN_REGION. Empty podRegion disables the check.
+func (s *Service) WithResidency(r ResidencyChecker, podRegion string) *Service {
+	s.residency = r
+	s.podRegion = podRegion
 	return s
 }
 
@@ -84,6 +101,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*models.Asset, er
 	}
 	if in.Name == "" {
 		in.Name = in.Value
+	}
+	// Data-residency gate. Runs first — a residency violation is
+	// terminal; everything downstream is wasted work.
+	if s.residency != nil && s.podRegion != "" {
+		if err := s.residency.CheckResidency(ctx, in.TenantID, s.podRegion); err != nil {
+			return nil, err
+		}
 	}
 	// Partner asset-quota gate. Returns ErrQuotaExceeded if the
 	// partner's billing plan caps assets and they're at the limit.

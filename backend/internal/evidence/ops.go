@@ -145,6 +145,26 @@ func (v *Vault) tenantKeyByVersion(ctx context.Context, tenantID uuid.UUID, vers
 	return v.unwrap(wrapped)
 }
 
+// WrapBytes is the exported helper that other packages (integrations,
+// notify) use to seal small secrets under the master KEK. Returns
+// the sealed blob + a synthetic version (always 1 — these secrets are
+// KEK-only, not per-tenant DEK). Callers store the blob in a BYTEA
+// column and call UnwrapBlob to read.
+func (v *Vault) WrapBytes(ctx context.Context, plain []byte) ([]byte, int, error) {
+	_ = ctx // reserved for future async KMS path
+	b, err := v.wrap(plain)
+	if err != nil {
+		return nil, 0, err
+	}
+	return b, 1, nil
+}
+
+// UnwrapBlob is the inverse of WrapBytes.
+func (v *Vault) UnwrapBlob(ctx context.Context, blob []byte) ([]byte, error) {
+	_ = ctx
+	return v.unwrap(blob)
+}
+
 func (v *Vault) wrap(plain []byte) ([]byte, error) {
 	block, err := aes.NewCipher(v.masterKey)
 	if err != nil {
@@ -234,6 +254,15 @@ func (v *Vault) RecordWithDEK(ctx context.Context, in PutInput) (id uuid.UUID, e
 		"content_type", in.ContentType,
 	)
 	defer func() { end(err) }()
+	// Data-residency gate. Evidence is the long-lived state with the
+	// strongest residency exposure (contains scan output, screenshots,
+	// PII). A residency violation here aborts before any bytes touch
+	// object storage or the DB.
+	if v.residency != nil && v.podRegion != "" {
+		if err := v.residency.CheckResidency(ctx, in.TenantID, v.podRegion); err != nil {
+			return uuid.Nil, err
+		}
+	}
 	storageURL, version, err := v.PutWithDEK(ctx, in.TenantID, in.Body)
 	if err != nil {
 		return uuid.Nil, err

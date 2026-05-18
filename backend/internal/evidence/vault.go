@@ -36,6 +36,24 @@ type Vault struct {
 	rootDir    string  // legacy: used only when no explicit Storage is set
 	masterKey  []byte
 	urlTTL     time.Duration
+	residency  ResidencyChecker
+	podRegion  string
+}
+
+// ResidencyChecker is the slice of tenants.Service the vault needs
+// for residency enforcement on Record/RecordWithDEK.
+type ResidencyChecker interface {
+	CheckResidency(ctx context.Context, tenantID uuid.UUID, podRegion string) error
+}
+
+// WithResidency wires the data-residency gate. Record paths refuse
+// to seal evidence for a tenant pinned to a region different from
+// the pod's VAULTSCAN_REGION. Empty podRegion disables.
+func WithResidency(r ResidencyChecker, podRegion string) Option {
+	return func(v *Vault) {
+		v.residency = r
+		v.podRegion = podRegion
+	}
 }
 
 type Option func(*Vault)
