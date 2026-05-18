@@ -3,6 +3,101 @@
 High-level mental model for engineers + operators. For per-feature
 detail see the slice docs under `docs/slices/`.
 
+## C4 — Context
+
+```mermaid
+graph LR
+  subgraph external[External actors]
+    customer[Customer admin / user]
+    integ[Integration partner systems<br/>Jira / Slack / GitHub / SIEM]
+    auditor[Auditor / compliance team]
+    agent_op[On-prem agent operator]
+  end
+
+  vs[(VaultScan platform)]
+
+  customer -->|HTTPS browser| vs
+  customer -->|HTTPS API| vs
+  integ -.->|inbound webhook HMAC| vs
+  vs -->|outbound webhook / OAuth| integ
+  auditor -->|read-only / SCIM| vs
+  agent_op -->|mTLS tunnel| vs
+```
+
+## C4 — Container
+
+```mermaid
+graph TB
+  subgraph cluster[Kubernetes cluster — one per env/region]
+    portal[portal<br/>Vite SPA]
+    api[api<br/>chi + pgx]
+    agentgw[agent-gateway<br/>mTLS reverse-tunnel]
+    sw[scanner-worker<br/>Job orchestrator]
+    aw[analytics-worker<br/>OpenSearch indexer]
+    cr[cron-runner<br/>§22.4 tasks, leader-elected]
+    pgbt[pgbouncer-tx]
+    pgbs[pgbouncer-session]
+  end
+  subgraph data[Data plane]
+    pg_primary[(Postgres primary)]
+    pg_replica[(Postgres replica)]
+    os[(OpenSearch)]
+    obj[(Object store<br/>S3 / GCS / Azure Blob)]
+    redis[(Redis<br/>rate limiter + locks)]
+    nats[(NATS<br/>cross-pod event bus)]
+  end
+  subgraph identity[Identity plane]
+    kc[Keycloak / external IdP]
+    bao[OpenBao / KMS]
+  end
+
+  portal --> api
+  api --> pgbt --> pg_primary
+  api --> pgbs --> pg_primary
+  api --> redis
+  api --> nats
+  api --> bao
+  api --> kc
+  agentgw --> pgbt
+  sw --> pgbt
+  sw --> obj
+  aw --> os
+  aw --> nats
+  cr --> pgbs
+  cr --> nats
+  pg_primary -.->|streaming| pg_replica
+  api --> pg_replica
+  aw --> pg_replica
+```
+
+## C4 — Component (API process)
+
+```mermaid
+graph LR
+  req[Request] --> reqid[RequestID]
+  reqid --> sec[SecurityHeaders]
+  sec --> cors[CORS]
+  cors --> body[BodyLimit 32MB]
+  body --> auth{Authed route?}
+  auth -- no --> publichandler
+  auth -- yes --> bearer[middleware.Auth]
+  bearer --> tenant[TenantScope]
+  tenant --> bind[TenantBinding<br/>sets vaultscan.tenant_id GUC]
+  bind --> rate[RateLimit<br/>per-IP + per-tenant]
+  rate --> perm[RequirePermission]
+  perm --> mfa{MFA required?}
+  mfa -- yes --> mfaverify[RequireMFA]
+  mfaverify --> handler
+  mfa -- no --> handler
+  handler --> service[Service layer]
+  service --> repo[Pool query<br/>via pgbouncer-tx]
+  service --> bus[EventBus.Publish]
+  service --> audit[Audit.Record]
+  audit --> chain[chain_hash = sha256<br/>prev || canonical || payload]
+  bus -.-> integrations[Outbound integration delivery]
+  bus -.-> analytics[OpenSearch indexer]
+```
+
 ## Process topology
 
 ```
