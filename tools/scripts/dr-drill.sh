@@ -122,6 +122,50 @@ if [[ -z "${DRY_RUN}" ]]; then
   check_rows users              1
   check_rows audit_logs         1
   check_rows roles              1
+
+  # GA-era tables (added by migrations 0024 / 0054 / 0055 / 0056).
+  # These are operator-populated so floor=0 — but their EXISTENCE
+  # matters: a half-applied migration leaves them missing entirely,
+  # which would silently break residency / DEK rotation / inbound
+  # webhook verification post-restore.
+  log "validating GA tables exist..."
+  expect_table() {
+    local t=$1
+    local n
+    n=$(docker exec "${SANDBOX}" psql -U drill -d drill -At -c \
+        "SELECT 1 FROM information_schema.tables WHERE table_name='$t'") || true
+    if [[ "${n}" != "1" ]]; then
+      die "expected table ${t} missing — migration 0024/0054/0055/0056 not applied"
+    fi
+    log "  ${t}: present"
+  }
+  for t in tenant_data_keys tenant_pool_routing tenant_isolation_history \
+           tenant_residency_history integration_inbound_log; do
+    expect_table "$t"
+  done
+
+  # Also verify the integrations table has the GA columns. A schema
+  # version drift here is hard to spot otherwise (the table exists,
+  # but the inbound HMAC verifier silently can't find its secret column).
+  for col in signing_secret_encrypted signing_key_version signing_algorithm; do
+    n=$(docker exec "${SANDBOX}" psql -U drill -d drill -At -c \
+        "SELECT 1 FROM information_schema.columns
+          WHERE table_name='integrations' AND column_name='${col}'") || true
+    if [[ "${n}" != "1" ]]; then
+      die "integrations.${col} missing — migration 0056 not applied"
+    fi
+  done
+  log "  integrations: signing_* columns present"
+
+  # tenants.data_region column from migration 0055.
+  n=$(docker exec "${SANDBOX}" psql -U drill -d drill -At -c \
+      "SELECT 1 FROM information_schema.columns
+        WHERE table_name='tenants' AND column_name='data_region'") || true
+  if [[ "${n}" != "1" ]]; then
+    die "tenants.data_region missing — migration 0055 not applied"
+  fi
+  log "  tenants.data_region: present"
+
   # Optional but-good-to-have: assets / findings / scan_jobs only checked
   # when override is set; new platforms can boot with these empty.
   if [[ -n "${VAULTSCAN_DR_MIN_ROWS_ASSETS:-}" ]]; then

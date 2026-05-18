@@ -36,7 +36,18 @@ from pathlib import Path
 #       Patch("/path", handler)
 # The non-greedy `\b` boundary catches both `r.Get` and `).Post` in
 # chained mounts; we just need to find any `.Method("/api/...")`.
-ROUTE_RX = re.compile(r'\.(Get|Post|Put|Delete|Patch)\s*\(\s*"([^"]+)"')
+#
+# `\.\s*Method` allows the chained `.With(mid).\n\t\tPost("/", ...)`
+# multi-line form — the `.` lives on the preceding line and the
+# method name on the next, separated only by whitespace.
+ROUTE_RX = re.compile(r'\.\s*(Get|Post|Put|Delete|Patch)\s*\(\s*"([^"]+)"')
+
+# r.Route("/prefix", func(r chi.Router) { ... }) blocks. The inner
+# methods only carry the SUBPATH; we need to recover the parent.
+# Track brace depth from the Route opening until we hit its matching
+# close brace; every method call inside that block is rebased on
+# the parent prefix.
+ROUTE_BLOCK_RX = re.compile(r'\.Route\s*\(\s*"([^"]+)"')
 
 
 def collect_routes(repo_root: Path):
@@ -44,14 +55,53 @@ def collect_routes(repo_root: Path):
     api_dir = repo_root / "backend" / "internal" / "api"
     routes = set()
     for f in api_dir.glob("*.go"):
-        for m in ROUTE_RX.finditer(f.read_text()):
+        text = f.read_text()
+        # 1. Direct .Method("/abs/path", …) calls — original path.
+        for m in ROUTE_RX.finditer(text):
             method, path = m.group(1).upper(), m.group(2)
-            # Filter out static / non-API routes for the spec.
-            if not path.startswith("/api/v1") and path != "/healthz" \
-                    and path != "/.well-known/jwks.json":
-                continue
-            routes.add((method, path))
+            if _kept_path(path):
+                routes.add((method, path))
+
+        # 2. r.Route("/prefix", func(r chi.Router) {...}) blocks.
+        # Scan for each Route opener; balance braces from the next
+        # `{` after it; every .Method("/sub", …) inside that block
+        # contributes "/prefix/sub".
+        i = 0
+        while True:
+            m = ROUTE_BLOCK_RX.search(text, i)
+            if not m:
+                break
+            prefix = m.group(1)
+            # Find the opening `{` of the closure body that follows.
+            brace_open = text.find("{", m.end())
+            if brace_open == -1:
+                break
+            depth = 1
+            j = brace_open + 1
+            while j < len(text) and depth > 0:
+                if text[j] == "{":
+                    depth += 1
+                elif text[j] == "}":
+                    depth -= 1
+                j += 1
+            block = text[brace_open:j]
+            for sub in ROUTE_RX.finditer(block):
+                method, subpath = sub.group(1).upper(), sub.group(2)
+                # "/" inside Route maps to the bare prefix.
+                full = prefix.rstrip("/") + ("" if subpath == "/" else subpath)
+                if _kept_path(full):
+                    routes.add((method, full))
+            i = j
     return sorted(routes)
+
+
+def _kept_path(path: str) -> bool:
+    """Filter out non-API routes the spec doesn't document."""
+    if path.startswith("/api/v1"):
+        return True
+    if path in ("/healthz", "/readyz", "/livez", "/.well-known/jwks.json"):
+        return True
+    return False
 
 
 def tag_for(path: str) -> str:
@@ -102,22 +152,100 @@ def parameters_for(path: str):
 
 
 SUMMARY_HINTS = {
+    # ----- Marketplace --------------------------------------------------
     "GET /api/v1/marketplace/listings": "List partner integration marketplace catalog.",
     "POST /api/v1/marketplace/installs": "Install a marketplace listing for the calling tenant.",
     "PATCH /api/v1/marketplace/installs/{install_id}": "Configure a pending marketplace install.",
     "DELETE /api/v1/marketplace/installs/{install_id}": "Uninstall (soft-suspend) a marketplace install.",
     "GET /api/v1/marketplace/installs": "List the calling tenant's marketplace installs.",
+
+    # ----- Feedback / NPS ----------------------------------------------
     "POST /api/v1/feedback": "Submit user feedback (bug/feature/NPS).",
     "POST /api/v1/feedback/dismiss-nps": "Hide the NPS prompt for the current session.",
     "GET /api/v1/feedback": "List feedback items (admin/triage view).",
     "PATCH /api/v1/feedback/{feedback_id}": "Triage a feedback item.",
+
+    # ----- Mobile-portal sidecar surface -------------------------------
     "POST /api/v1/mobile/devices": "Enroll a mobile device with a push token.",
     "DELETE /api/v1/mobile/devices/{device_id}": "Revoke a mobile device.",
     "GET /api/v1/mobile/dashboard": "Read the mobile-portal dashboard summary.",
     "POST /api/v1/mobile/alerts/ack": "Acknowledge a push-notification alert.",
     "POST /api/v1/mobile/emergency-stop": "Mobile-initiated emergency stop.",
+
+    # ----- Public surfaces --------------------------------------------
     "GET /api/v1/.well-known/jwks.json": "JSON Web Key Set for JWT verification.",
     "GET /api/v1/orchestrator/public-key": "Cloud orchestrator's public key (PEM).",
+    "GET /healthz":   "Liveness probe — does NOT touch downstream stores.",
+    "GET /readyz":    "Readiness probe — DB + audit-chain checks. Strips internal hostnames.",
+    "GET /api/v1/status": "Public status (version + uptime + component health).",
+    "GET /api/v1/branding": "Resolve white-label branding by Host header.",
+
+    # ----- Auth + identity -------------------------------------------
+    "GET /api/v1/auth/me": "Return the calling identity, roles, and effective permissions.",
+    "POST /api/v1/auth/logout": "Revoke every active JWT for the caller's user.",
+    "POST /api/v1/auth/mfa/verify": "Complete a partial login with a TOTP code.",
+    "POST /api/v1/auth/mfa/enroll/start": "Begin TOTP enrolment; returns the secret + QR.",
+    "POST /api/v1/auth/mfa/enroll/confirm": "Finish TOTP enrolment after the user types the first code.",
+    "POST /api/v1/auth/dev-token": "Mint a dev-only HS256 JWT. Disabled in production.",
+    "POST /api/v1/auth/jwt-keys/rotate": "Rotate the active JWT signing key. ZAISHIELD super-admin only.",
+
+    # ----- Dashboards -------------------------------------------------
+    "GET /api/v1/dashboards/compliance": "Compliance posture grid (frameworks × coverage).",
+    "GET /api/v1/dashboards/geo": "Geographic-distribution map for assets and findings.",
+    "GET /api/v1/dashboards/layouts": "List saved per-user dashboard layouts.",
+    "POST /api/v1/dashboards/layouts": "Save a dashboard layout.",
+    "GET /api/v1/dashboards/stream": "Server-Sent Events stream of live dashboard updates.",
+
+    # ----- Findings ---------------------------------------------------
+    "GET /api/v1/findings/clusters": "Group similar findings into clusters (vuln-class deduplication).",
+    "GET /api/v1/findings/export.sarif": "Export findings as SARIF v2.1.0 (consumed by GitHub / GitLab code-scanning UIs).",
+
+    # ----- Integrations ----------------------------------------------
+    "GET /api/v1/integration-health": "Per-integration delivery health rollup.",
+    "GET /api/v1/integrations/{integration_id}/dead-letters": "List undelivered events for an integration.",
+
+    # ----- Retests + reporting ---------------------------------------
+    "GET /api/v1/retest-batches/{batch_id}": "Read a retest batch's progress.",
+    "GET /api/v1/retests/{retest_id}/diff": "Compare pre vs post-fix scan output for a retest.",
+
+    # ----- Compliance + reporting ------------------------------------
+    "GET /api/v1/compliance/{framework}/engagements/{engagement_id}": "Compliance report for an engagement in a given framework (ISO27001 / SOC2 / PCI / HIPAA).",
+    "GET /api/v1/compliance/{framework}/engagements/{engagement_id}.md": "Same report as Markdown.",
+
+    # ----- Agents -----------------------------------------------------
+    "GET /api/v1/agents/{agent_id}/emergency-stop-sla": "Time-to-emergency-stop SLA for an agent.",
+    "GET /api/v1/agents/{agent_id}/telemetry": "Heartbeat + resource telemetry timeline.",
+    "GET /api/v1/agents/{agent_id}/update-offer": "Available agent-binary update (signed offer).",
+
+    # ----- Partner-admin surface -------------------------------------
+    "GET /api/v1/partners/{partner_id}/preview": "Render a branded portal preview for the partner.",
+
+    # ----- Platform-admin / break-glass ------------------------------
+    "GET /api/v1/platform/maintenance": "Read platform-wide maintenance window state.",
+    "GET /api/v1/platform/policy-rules": "List platform-wide policy rules in effect.",
+    "POST /api/v1/platform/break-glass/redeem": "Redeem a break-glass admin token (audited).",
+
+    # ----- Emergency stop --------------------------------------------
+    "POST /api/v1/emergency-stops/{stop_id}/ack": "Acknowledge an emergency-stop notification.",
+
+    # ----- Audit ------------------------------------------------------
+    "GET /api/v1/audit/verify": "Verify the most recent audit-chain tail.",
+    "GET /api/v1/audit/verify-deep": "Walk the full audit chain — run as a cron, not interactively.",
+
+    # ----- Scanner farm ----------------------------------------------
+    "GET /api/v1/scanner/regions/{region}/quota": "Per-region scanner quota + utilisation.",
+
+    # ----- Tenants admin ---------------------------------------------
+    "GET /api/v1/tenants": "List tenants visible to the caller.",
+
+    # ----- GA additions (see top-of-file docstring for full schemas) -
+    "GET /api/v1/usage":   "Self-service usage, plan, and rate-limit visibility for the caller.",
+    "GET /api/v1/status":  "Public health + version + uptime snapshot (status-page friendly).",
+    "GET /api/v1/audit/export": "Bulk audit-log export (NDJSON default; ?format=csv). Tenant callers must scope by ?from=<rfc3339>.",
+    "POST /api/v1/users/{user_id}/erase": "GDPR Article 17 erasure — pseudonymises PII across users, login_events, token_revocations.",
+    "PUT /api/v1/tenants/{tenant_id}/residency": "Pin or clear the tenant's data-residency commitment.",
+    "POST /api/v1/integrations/{integration_id}/inbound": "Partner-side inbound webhook callback (authenticated by HMAC, not bearer).",
+    "PUT /api/v1/integrations/{integration_id}/signing-secret": "Rotate the inbound webhook signing secret.",
 }
 
 
@@ -231,7 +359,11 @@ def emit_yaml(routes, out_path: Path):
                         first = False
                         if isinstance(v, (dict, list)) and v:
                             out.append(f"{pad}{prefix}{k}:")
-                            emit(v, indent + 1)
+                            # Children must align UNDER the key text, which
+                            # itself is indented past the "- " / "  " prefix.
+                            # That's +2 columns vs the current pad, hence
+                            # indent+2 not indent+1.
+                            emit(v, indent + 2)
                         else:
                             out.append(f"{pad}{prefix}{k}: {yaml_scalar(v)}")
                 else:

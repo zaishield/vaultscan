@@ -1,9 +1,17 @@
 # Capacity Planning
 
 This document captures the per-component resource model that operators
-use to size a VaultScan deployment. The numbers below come from
-production-scale load tests + observed steady-state metrics from
-multi-tenant deployments.
+use to size a VaultScan deployment.
+
+> **Disclosure:** the per-component coefficients below are derived
+> from architectural analysis + the k6 baseline harness scenario
+> shape (`tools/scripts/load-test/baseline.js`), not from a full
+> production-scale execution. The harness IS the methodology — every
+> operator should re-run it against their target hardware before
+> sizing a real deployment. See the
+> [Measurement protocol](#measurement-protocol) section at the
+> bottom for the exact steps to validate the numbers in your
+> environment.
 
 The platform is sized by **two primary inputs**:
 
@@ -144,3 +152,77 @@ following baseline:
 A 500-tenant deployment under that load fits in a 4-replica `api` +
 2-replica `agent-gateway` + 2-replica per-region `scanner-worker` +
 the 8 vCPU primary above, with sustained pool utilisation around 40%.
+
+## Measurement protocol
+
+Run this on the actual target environment before committing capacity
+numbers to a customer contract.
+
+### Prereqs
+
+- k6 ≥ 0.50 installed on the load-generator host (separate from the
+  cluster — running it inline distorts the measurement).
+- A representative env (`staging` or a sized-down `prod`) provisioned
+  and migrated.
+- `VAULTSCAN_API_URL` + an operator JWT in `VAULTSCAN_TEST_TOKEN`.
+- Prometheus scraping the cluster (`metrics.prometheusRule.enabled: true`).
+
+### Steps
+
+```bash
+# 1. Seed the target tenant count.
+cd tools/scripts/load-test
+./seed.sh 500                 # or 100 for a quick smoke
+
+# 2. Snapshot baseline metrics so deltas are computable.
+curl -s "$PROMETHEUS_URL/api/v1/query?query=vaultscan_db_pool_acquired" > /tmp/baseline.json
+
+# 3. Run the baseline scenario (15-min steady-state, 100 concurrent VUs).
+k6 run baseline.js --out json=out/run-$(date +%FT%T).json
+
+# 4. Capture the steady-state SLO metrics from Prometheus DURING the run.
+for q in \
+  'vaultscan:api_request_latency_p95:5m' \
+  'vaultscan:api_request_latency_p99:5m' \
+  'vaultscan:api_request_success_ratio:5m' \
+  'sum by (instance) (vaultscan_db_pool_acquired) / on(instance) vaultscan_db_pool_max' \
+  'vaultscan_db_replica_lag_seconds'; do
+  echo "=== $q ==="
+  curl -s "$PROMETHEUS_URL/api/v1/query?query=$q" | jq -r '.data.result[]'
+done
+```
+
+### Acceptance criteria
+
+For the numbers in this doc to be defensible at your target tenant
+count, the run MUST satisfy:
+
+| Metric | Target |
+| --- | --- |
+| `http_req_duration p95` (k6) | < 500 ms |
+| `http_req_duration p99` (k6) | < 1500 ms |
+| `vaultscan_request_errors` rate | < 0.001 (0.1%) |
+| Pool utilisation steady-state | < 50% |
+| `vaultscan_db_replica_lag_seconds` | < 5 s |
+| Zero `vaultscan_audit_chain_breaks_total` increments |  |
+| Zero `vaultscan_db_pool_acquire_canceled_total` increments |  |
+
+If any line fails, the capacity claim in this doc is invalid for
+your environment — open an issue + adjust replica counts / pool
+sizes / DB tier before signing customer commitments.
+
+### What "production-scale" actually means
+
+The Blueprint §29 SLO targets (99.9% / P95 ≤ 500 ms / 28-day error
+budget) hold under the scenario above WITH the resource shapes
+above. They do NOT hold if:
+
+- the DB tier is below `db.m6i.large` / `db-custom-2-7680` /
+  `Standard_D4s_v3`,
+- the replica is on a smaller instance than the primary,
+- the cluster has fewer than 3 worker nodes,
+- the storage backend isn't gp3/PD-SSD/Premium-SSD,
+- network policies are disabled (egress fan-out chokes).
+
+The `infra/terraform/environments/<cloud>/prod.tfvars` defaults are
+the smallest configuration that meets these.

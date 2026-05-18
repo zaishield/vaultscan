@@ -2,32 +2,131 @@ openapi: 3.1.0
 info:
   title: ZAISHIELD VAULTSCAN API
   version: 1.0.0
-  description: |
-    Multi-tenant security platform API. Every endpoint requires bearer
-    authentication unless explicitly marked `security: []` (public health
-    + branding lookup endpoints).
-
-    Rate limits: per-identity defaults to 100 RPS / 60s window;
-    per-tenant cap is 10× the identity limit. Limits are exposed via
-    `X-RateLimit-Limit` and `X-RateLimit-Reset` on every response.
-
-    Deprecation policy: endpoints scheduled for removal emit
-    `Deprecation: true` + `Sunset: <RFC1123 date>` + `Link: <successor>`
-    headers at least 90 days before retirement.
-
-    Pagination: list endpoints use `before_id`/`limit` keyset cursors;
-    `next_before_id` in the response body advances the page.
-  contact:
-    name: ZAISHIELD Support
-    url: https://docs.vaultscan.zaishield.com/support
-  license:
-    name: Proprietary
+  description: Auto-generated baseline. Operation summaries + response schemas SHOULD be deepened by hand.
 servers:
   - url: "https://api.vaultscan.zaishield.com"
-    description: Production
   - url: "http://localhost:8080"
-    description: Local dev
 paths:
+  /api/v1/auth/mfa:
+    delete:
+      summary: DELETE /api/v1/auth/mfa
+      operationId: deleteAuthMfa
+      tags:
+        - auth
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/cosign/keys/{key_id}:
+    delete:
+      summary: "DELETE /api/v1/cosign/keys/{key_id}"
+      operationId: deleteCosignKeysKeyId
+      tags:
+        - cosign
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/marketplace/installs/{install_id}:
+    delete:
+      summary: Uninstall (soft-suspend) a marketplace install.
+      operationId: deleteMarketplaceInstallsInstallId
+      tags:
+        - marketplace
+      parameters:
+        - name: install_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    patch:
+      summary: Configure a pending marketplace install.
+      operationId: patchMarketplaceInstallsInstallId
+      tags:
+        - marketplace
+      parameters:
+        - name: install_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/mobile/devices/{device_id}:
     delete:
       summary: Revoke a mobile device.
@@ -58,12 +157,23 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
-  /.well-known/jwks.json:
-    get:
-      summary: GET /.well-known/jwks.json
-      operationId: getWellknownJwksJson
+  /api/v1/partners/{partner_id}/report-templates/{report_type}:
+    delete:
+      summary: "DELETE /api/v1/partners/{partner_id}/report-templates/{report_type}"
+      operationId: deletePartnersPartnerIdReporttemplatesReportType
       tags:
-        - auth
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: report_type
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         200:
           description: Success
@@ -72,7 +182,198 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-            application/jwk-set+json:
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    put:
+      summary: "PUT /api/v1/partners/{partner_id}/report-templates/{report_type}"
+      operationId: putPartnersPartnerIdReporttemplatesReportType
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: report_type
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/tenants/{tenant_id}/branding:
+    delete:
+      summary: "DELETE /api/v1/tenants/{tenant_id}/branding"
+      operationId: deleteTenantsTenantIdBranding
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    get:
+      summary: "GET /api/v1/tenants/{tenant_id}/branding"
+      operationId: getTenantsTenantIdBranding
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    put:
+      summary: "PUT /api/v1/tenants/{tenant_id}/branding"
+      operationId: putTenantsTenantIdBranding
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/users/{user_id}/roles/{role_code}:
+    delete:
+      summary: "DELETE /api/v1/users/{user_id}/roles/{role_code}"
+      operationId: deleteUsersUserIdRolesRoleCode
+      tags:
+        - users
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: role_code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /.well-known/jwks.json:
+    get:
+      summary: GET /.well-known/jwks.json
+      operationId: getWellknownJwksJson
+      tags:
+        - 
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
               schema:
                 type: object
                 additionalProperties: true
@@ -89,7 +390,7 @@ paths:
   /api/v1/.well-known/jwks.json:
     get:
       summary: JSON Web Key Set for JWT verification.
-      operationId: getApiV1WellknownJwksJson
+      operationId: getWellknownJwksJson
       tags:
         - internal
       responses:
@@ -100,7 +401,87 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-            application/jwk-set+json:
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/agents:
+    get:
+      summary: GET /api/v1/agents
+      operationId: getAgents
+      tags:
+        - agents
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: POST /api/v1/agents
+      operationId: postAgents
+      tags:
+        - agents
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/agents/{agent_id}:
+    get:
+      summary: "GET /api/v1/agents/{agent_id}"
+      operationId: getAgentsAgentId
+      tags:
+        - agents
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
               schema:
                 type: object
                 additionalProperties: true
@@ -116,7 +497,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/agents/{agent_id}/emergency-stop-sla:
     get:
-      summary: "GET /api/v1/agents/{agent_id}/emergency-stop-sla"
+      summary: Time-to-emergency-stop SLA for an agent.
       operationId: getAgentsAgentIdEmergencystopsla
       tags:
         - agents
@@ -144,9 +525,75 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/agents/{agent_id}/policy:
+    get:
+      summary: "GET /api/v1/agents/{agent_id}/policy"
+      operationId: getAgentsAgentIdPolicy
+      tags:
+        - agents
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    put:
+      summary: "PUT /api/v1/agents/{agent_id}/policy"
+      operationId: putAgentsAgentIdPolicy
+      tags:
+        - agents
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/agents/{agent_id}/telemetry:
     get:
-      summary: "GET /api/v1/agents/{agent_id}/telemetry"
+      summary: Heartbeat + resource telemetry timeline.
       operationId: getAgentsAgentIdTelemetry
       tags:
         - agents
@@ -176,7 +623,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/agents/{agent_id}/update-offer:
     get:
-      summary: "GET /api/v1/agents/{agent_id}/update-offer"
+      summary: Available agent-binary update (signed offer).
       operationId: getAgentsAgentIdUpdateoffer
       tags:
         - agents
@@ -204,9 +651,261 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/assets:
+    get:
+      summary: GET /api/v1/assets
+      operationId: getAssets
+      tags:
+        - assets
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: POST /api/v1/assets
+      operationId: postAssets
+      tags:
+        - assets
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/assets/{asset_id}/risk-score:
+    get:
+      summary: "GET /api/v1/assets/{asset_id}/risk-score"
+      operationId: getAssetsAssetIdRiskscore
+      tags:
+        - assets
+      parameters:
+        - name: asset_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/audit:
+    get:
+      summary: GET /api/v1/audit
+      operationId: getAudit
+      tags:
+        - audit
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/audit/export:
+    get:
+      summary: "Bulk audit-log export (NDJSON default; ?format=csv). Tenant callers must scope by ?from=<rfc3339>."
+      operationId: getAuditExport
+      tags:
+        - audit
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/audit/retention-policies:
+    get:
+      summary: GET /api/v1/audit/retention-policies
+      operationId: getAuditRetentionpolicies
+      tags:
+        - audit
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/audit/timeline:
+    get:
+      summary: GET /api/v1/audit/timeline
+      operationId: getAuditTimeline
+      tags:
+        - audit
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/audit/verify:
+    get:
+      summary: Verify the most recent audit-chain tail.
+      operationId: getAuditVerify
+      tags:
+        - audit
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/audit/verify-deep:
+    get:
+      summary: "Walk the full audit chain — run as a cron, not interactively."
+      operationId: getAuditVerifydeep
+      tags:
+        - audit
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/auth/ip-lockouts:
+    get:
+      summary: GET /api/v1/auth/ip-lockouts
+      operationId: getAuthIplockouts
+      tags:
+        - auth
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/auth/me:
     get:
-      summary: GET /api/v1/auth/me
+      summary: "Return the calling identity, roles, and effective permissions."
       operationId: getAuthMe
       tags:
         - auth
@@ -230,7 +929,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/branding:
     get:
-      summary: GET /api/v1/branding
+      summary: Resolve white-label branding by Host header.
       operationId: getBranding
       tags:
         - branding
@@ -254,7 +953,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/compliance/{framework}/engagements/{engagement_id}:
     get:
-      summary: "GET /api/v1/compliance/{framework}/engagements/{engagement_id}"
+      summary: Compliance report for an engagement in a given framework (ISO27001 / SOC2 / PCI / HIPAA).
       operationId: getComplianceFrameworkEngagementsEngagementId
       tags:
         - compliance
@@ -289,7 +988,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/compliance/{framework}/engagements/{engagement_id}.md:
     get:
-      summary: "GET /api/v1/compliance/{framework}/engagements/{engagement_id}.md"
+      summary: Same report as Markdown.
       operationId: getComplianceFrameworkEngagementsEngagementIdMd
       tags:
         - compliance
@@ -322,10 +1021,166 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/cosign/keys:
+    get:
+      summary: GET /api/v1/cosign/keys
+      operationId: getCosignKeys
+      tags:
+        - cosign
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: POST /api/v1/cosign/keys
+      operationId: postCosignKeys
+      tags:
+        - cosign
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/cosign/verify/{tool}:
+    get:
+      summary: "GET /api/v1/cosign/verify/{tool}"
+      operationId: getCosignVerifyTool
+      tags:
+        - cosign
+      parameters:
+        - name: tool
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/dashboards/compliance:
     get:
-      summary: GET /api/v1/dashboards/compliance
+      summary: Compliance posture grid (frameworks × coverage).
       operationId: getDashboardsCompliance
+      tags:
+        - dashboards
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/dashboards/executive:
+    get:
+      summary: GET /api/v1/dashboards/executive
+      operationId: getDashboardsExecutive
+      tags:
+        - dashboards
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/dashboards/findings/critical:
+    get:
+      summary: GET /api/v1/dashboards/findings/critical
+      operationId: getDashboardsFindingsCritical
+      tags:
+        - dashboards
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/dashboards/findings/sla-breaches:
+    get:
+      summary: GET /api/v1/dashboards/findings/sla-breaches
+      operationId: getDashboardsFindingsSlabreaches
       tags:
         - dashboards
       responses:
@@ -348,7 +1203,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/dashboards/geo:
     get:
-      summary: GET /api/v1/dashboards/geo
+      summary: Geographic-distribution map for assets and findings.
       operationId: getDashboardsGeo
       tags:
         - dashboards
@@ -372,7 +1227,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/dashboards/layouts:
     get:
-      summary: GET /api/v1/dashboards/layouts
+      summary: List saved per-user dashboard layouts.
       operationId: getDashboardsLayouts
       tags:
         - dashboards
@@ -395,7 +1250,7 @@ paths:
         500:
           $ref: "#/components/responses/Internal"
     post:
-      summary: POST /api/v1/dashboards/layouts
+      summary: Save a dashboard layout.
       operationId: postDashboardsLayouts
       tags:
         - dashboards
@@ -424,9 +1279,57 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/dashboards/partner:
+    get:
+      summary: GET /api/v1/dashboards/partner
+      operationId: getDashboardsPartner
+      tags:
+        - dashboards
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/dashboards/scans/recent:
+    get:
+      summary: GET /api/v1/dashboards/scans/recent
+      operationId: getDashboardsScansRecent
+      tags:
+        - dashboards
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/dashboards/stream:
     get:
-      summary: GET /api/v1/dashboards/stream
+      summary: Server-Sent Events stream of live dashboard updates.
       operationId: getDashboardsStream
       tags:
         - dashboards
@@ -448,9 +1351,446 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/dashboards/technical:
+    get:
+      summary: GET /api/v1/dashboards/technical
+      operationId: getDashboardsTechnical
+      tags:
+        - dashboards
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/engagements:
+    get:
+      summary: GET /api/v1/engagements
+      operationId: getEngagements
+      tags:
+        - engagements
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: POST /api/v1/engagements
+      operationId: postEngagements
+      tags:
+        - engagements
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/engagements/{engagement_id}:
+    get:
+      summary: "GET /api/v1/engagements/{engagement_id}"
+      operationId: getEngagementsEngagementId
+      tags:
+        - engagements
+      parameters:
+        - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/engagements/{engagement_id}/authorization/{document_id}/view:
+    get:
+      summary: "GET /api/v1/engagements/{engagement_id}/authorization/{document_id}/view"
+      operationId: getEngagementsEngagementIdAuthorizationDocumentIdView
+      tags:
+        - engagements
+      parameters:
+        - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/engagements/{engagement_id}/roe:
+    get:
+      summary: "GET /api/v1/engagements/{engagement_id}/roe"
+      operationId: getEngagementsEngagementIdRoe
+      tags:
+        - engagements
+      parameters:
+        - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    put:
+      summary: "PUT /api/v1/engagements/{engagement_id}/roe"
+      operationId: putEngagementsEngagementIdRoe
+      tags:
+        - engagements
+      parameters:
+        - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/evidence/{evidence_id}:
+    get:
+      summary: "GET /api/v1/evidence/{evidence_id}"
+      operationId: getEvidenceEvidenceId
+      tags:
+        - evidence
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/evidence/{evidence_id}/chain-of-custody:
+    get:
+      summary: "GET /api/v1/evidence/{evidence_id}/chain-of-custody"
+      operationId: getEvidenceEvidenceIdChainofcustody
+      tags:
+        - evidence
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/evidence/{evidence_id}/chain-of-custody.md:
+    get:
+      summary: "GET /api/v1/evidence/{evidence_id}/chain-of-custody.md"
+      operationId: getEvidenceEvidenceIdChainofcustodyMd
+      tags:
+        - evidence
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/evidence/{evidence_id}/download:
+    get:
+      summary: "GET /api/v1/evidence/{evidence_id}/download"
+      operationId: getEvidenceEvidenceIdDownload
+      tags:
+        - evidence
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/evidence/{evidence_id}/url:
+    get:
+      summary: "GET /api/v1/evidence/{evidence_id}/url"
+      operationId: getEvidenceEvidenceIdUrl
+      tags:
+        - evidence
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/feedback:
+    get:
+      summary: List feedback items (admin/triage view).
+      operationId: getFeedback
+      tags:
+        - feedback
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: Submit user feedback (bug/feature/NPS).
+      operationId: postFeedback
+      tags:
+        - feedback
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/findings:
+    get:
+      summary: GET /api/v1/findings
+      operationId: getFindings
+      tags:
+        - findings
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/findings/clusters:
     get:
-      summary: GET /api/v1/findings/clusters
+      summary: Group similar findings into clusters (vuln-class deduplication).
       operationId: getFindingsClusters
       tags:
         - findings
@@ -474,7 +1814,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/findings/export.sarif:
     get:
-      summary: GET /api/v1/findings/export.sarif
+      summary: Export findings as SARIF v2.1.0 (consumed by GitHub / GitLab code-scanning UIs).
       operationId: getFindingsExportSarif
       tags:
         - findings
@@ -496,10 +1836,214 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/findings/sla-breaches:
+    get:
+      summary: GET /api/v1/findings/sla-breaches
+      operationId: getFindingsSlabreaches
+      tags:
+        - findings
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/findings/{finding_id}:
+    get:
+      summary: "GET /api/v1/findings/{finding_id}"
+      operationId: getFindingsFindingId
+      tags:
+        - findings
+      parameters:
+        - name: finding_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    patch:
+      summary: "PATCH /api/v1/findings/{finding_id}"
+      operationId: patchFindingsFindingId
+      tags:
+        - findings
+      parameters:
+        - name: finding_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/findings/{finding_id}/comments:
+    get:
+      summary: "GET /api/v1/findings/{finding_id}/comments"
+      operationId: getFindingsFindingIdComments
+      tags:
+        - findings
+      parameters:
+        - name: finding_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: "POST /api/v1/findings/{finding_id}/comments"
+      operationId: postFindingsFindingIdComments
+      tags:
+        - findings
+      parameters:
+        - name: finding_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/health:
+    get:
+      summary: GET /api/v1/health
+      operationId: getHealth
+      tags:
+        - health
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/integration-health:
     get:
-      summary: GET /api/v1/integration-health
+      summary: Per-integration delivery health rollup.
       operationId: getIntegrationhealth
+      tags:
+        - integrations
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/integrations:
+    get:
+      summary: GET /api/v1/integrations
+      operationId: getIntegrations
       tags:
         - integrations
       responses:
@@ -522,7 +2066,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/integrations/{integration_id}/dead-letters:
     get:
-      summary: "GET /api/v1/integrations/{integration_id}/dead-letters"
+      summary: List undelivered events for an integration.
       operationId: getIntegrationsIntegrationIdDeadletters
       tags:
         - integrations
@@ -556,6 +2100,36 @@ paths:
       operationId: getMarketplaceInstalls
       tags:
         - marketplace
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: Install a marketplace listing for the calling tenant.
+      operationId: postMarketplaceInstalls
+      tags:
+        - marketplace
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
       responses:
         200:
           description: Success
@@ -632,12 +2206,345 @@ paths:
         200:
           description: Success
           content:
-            application/x-pem-file:
+            application/json:
               schema:
-                type: string
-            text/plain:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners:
+    get:
+      summary: GET /api/v1/partners
+      operationId: getPartners
+      tags:
+        - partners
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
               schema:
-                type: string
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: POST /api/v1/partners
+      operationId: postPartners
+      tags:
+        - partners
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}:
+    get:
+      summary: "GET /api/v1/partners/{partner_id}"
+      operationId: getPartnersPartnerId
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/billing/blocks:
+    get:
+      summary: "GET /api/v1/partners/{partner_id}/billing/blocks"
+      operationId: getPartnersPartnerIdBillingBlocks
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/billing/plan:
+    get:
+      summary: "GET /api/v1/partners/{partner_id}/billing/plan"
+      operationId: getPartnersPartnerIdBillingPlan
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    put:
+      summary: "PUT /api/v1/partners/{partner_id}/billing/plan"
+      operationId: putPartnersPartnerIdBillingPlan
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/billing/usage:
+    get:
+      summary: "GET /api/v1/partners/{partner_id}/billing/usage"
+      operationId: getPartnersPartnerIdBillingUsage
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/brand-assets:
+    get:
+      summary: "GET /api/v1/partners/{partner_id}/brand-assets"
+      operationId: getPartnersPartnerIdBrandassets
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/email-templates:
+    get:
+      summary: "GET /api/v1/partners/{partner_id}/email-templates"
+      operationId: getPartnersPartnerIdEmailtemplates
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/hierarchy/tenant/{tenant_id}:
+    get:
+      summary: "GET /api/v1/partners/{partner_id}/hierarchy/tenant/{tenant_id}"
+      operationId: getPartnersPartnerIdHierarchyTenantTenantId
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/onboarding:
+    get:
+      summary: "GET /api/v1/partners/{partner_id}/onboarding"
+      operationId: getPartnersPartnerIdOnboarding
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -650,8 +2557,38 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/partners/{partner_id}/preview:
     get:
-      summary: "GET /api/v1/partners/{partner_id}/preview"
+      summary: Render a branded portal preview for the partner.
       operationId: getPartnersPartnerIdPreview
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/report-templates:
+    get:
+      summary: "GET /api/v1/partners/{partner_id}/report-templates"
+      operationId: getPartnersPartnerIdReporttemplates
       tags:
         - partners
       parameters:
@@ -680,7 +2617,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/platform/maintenance:
     get:
-      summary: GET /api/v1/platform/maintenance
+      summary: Read platform-wide maintenance window state.
       operationId: getPlatformMaintenance
       tags:
         - platform-ops
@@ -702,9 +2639,39 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+    put:
+      summary: PUT /api/v1/platform/maintenance
+      operationId: putPlatformMaintenance
+      tags:
+        - platform-ops
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/platform/policy-rules:
     get:
-      summary: GET /api/v1/platform/policy-rules
+      summary: List platform-wide policy rules in effect.
       operationId: getPlatformPolicyrules
       tags:
         - platform-ops
@@ -726,9 +2693,39 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/reports/{report_id}:
+    get:
+      summary: "GET /api/v1/reports/{report_id}"
+      operationId: getReportsReportId
+      tags:
+        - reports
+      parameters:
+        - name: report_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/retest-batches/{batch_id}:
     get:
-      summary: "GET /api/v1/retest-batches/{batch_id}"
+      summary: "Read a retest batch's progress."
       operationId: getRetestbatchesBatchId
       tags:
         - retesting
@@ -756,9 +2753,63 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/retests/findings/{finding_id}:
+    get:
+      summary: "GET /api/v1/retests/findings/{finding_id}"
+      operationId: getRetestsFindingsFindingId
+      tags:
+        - retesting
+      parameters:
+        - name: finding_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/retests/queue:
+    get:
+      summary: GET /api/v1/retests/queue
+      operationId: getRetestsQueue
+      tags:
+        - retesting
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/retests/{retest_id}/diff:
     get:
-      summary: "GET /api/v1/retests/{retest_id}/diff"
+      summary: Compare pre vs post-fix scan output for a retest.
       operationId: getRetestsRetestIdDiff
       tags:
         - retesting
@@ -786,12 +2837,18 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
-  /healthz:
+  /api/v1/scanner/regions/{region}/network-policy.yaml:
     get:
-      summary: GET /healthz
-      operationId: getHealthz
+      summary: "GET /api/v1/scanner/regions/{region}/network-policy.yaml"
+      operationId: getScannerRegionsRegionNetworkpolicyYaml
       tags:
-        - health
+        - scanner-ops
+      parameters:
+        - name: region
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         200:
           description: Success
@@ -800,15 +2857,923 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-  /readyz:
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scanner/regions/{region}/quota:
     get:
-      summary: GET /readyz
-      operationId: getReadyz
+      summary: Per-region scanner quota + utilisation.
+      operationId: getScannerRegionsRegionQuota
       tags:
-        - health
+        - scanner-ops
+      parameters:
+        - name: region
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         200:
-          description: Service ready
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    put:
+      summary: "PUT /api/v1/scanner/regions/{region}/quota"
+      operationId: putScannerRegionsRegionQuota
+      tags:
+        - scanner-ops
+      parameters:
+        - name: region
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scans:
+    get:
+      summary: GET /api/v1/scans
+      operationId: getScans
+      tags:
+        - scans
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scans/profiles:
+    get:
+      summary: GET /api/v1/scans/profiles
+      operationId: getScansProfiles
+      tags:
+        - scans
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scans/{scan_id}:
+    get:
+      summary: "GET /api/v1/scans/{scan_id}"
+      operationId: getScansScanId
+      tags:
+        - scans
+      parameters:
+        - name: scan_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scope/{engagement_id}:
+    get:
+      summary: "GET /api/v1/scope/{engagement_id}"
+      operationId: getScopeEngagementId
+      tags:
+        - scope
+      parameters:
+        - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/status:
+    get:
+      summary: Public health + version + uptime snapshot (status-page friendly).
+      operationId: getStatus
+      tags:
+        - status
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/tenants:
+    get:
+      summary: List tenants visible to the caller.
+      operationId: getTenants
+      tags:
+        - tenants
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: POST /api/v1/tenants
+      operationId: postTenants
+      tags:
+        - tenants
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/tenants/{tenant_id}:
+    get:
+      summary: "GET /api/v1/tenants/{tenant_id}"
+      operationId: getTenantsTenantId
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/usage:
+    get:
+      summary: "Self-service usage, plan, and rate-limit visibility for the caller."
+      operationId: getUsage
+      tags:
+        - usage
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/users:
+    get:
+      summary: GET /api/v1/users
+      operationId: getUsers
+      tags:
+        - users
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: POST /api/v1/users
+      operationId: postUsers
+      tags:
+        - users
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/users/{user_id}:
+    get:
+      summary: "GET /api/v1/users/{user_id}"
+      operationId: getUsersUserId
+      tags:
+        - users
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/users/{user_id}/roles:
+    get:
+      summary: "GET /api/v1/users/{user_id}/roles"
+      operationId: getUsersUserIdRoles
+      tags:
+        - users
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: "POST /api/v1/users/{user_id}/roles"
+      operationId: postUsersUserIdRoles
+      tags:
+        - users
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /healthz:
+    get:
+      summary: Liveness probe — does NOT touch downstream stores.
+      operationId: getHealthz
+      tags:
+        - 
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /livez:
+    get:
+      summary: GET /livez
+      operationId: getLivez
+      tags:
+        - 
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /readyz:
+    get:
+      summary: Readiness probe — DB + audit-chain checks. Strips internal hostnames.
+      operationId: getReadyz
+      tags:
+        - 
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/feedback/{feedback_id}:
+    patch:
+      summary: Triage a feedback item.
+      operationId: patchFeedbackFeedbackId
+      tags:
+        - feedback
+      parameters:
+        - name: feedback_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/retest-batches/{batch_id}/items/{retest_id}:
+    patch:
+      summary: "PATCH /api/v1/retest-batches/{batch_id}/items/{retest_id}"
+      operationId: patchRetestbatchesBatchIdItemsRetestId
+      tags:
+        - retesting
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: retest_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/agent-updates:
+    post:
+      summary: POST /api/v1/agent-updates
+      operationId: postAgentupdates
+      tags:
+        - agents
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/agents/{agent_id}/csr:
+    post:
+      summary: "POST /api/v1/agents/{agent_id}/csr"
+      operationId: postAgentsAgentIdCsr
+      tags:
+        - agents
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/agents/{agent_id}/emergency-stop:
+    post:
+      summary: "POST /api/v1/agents/{agent_id}/emergency-stop"
+      operationId: postAgentsAgentIdEmergencystop
+      tags:
+        - agents
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/agents/{agent_id}/rotate-cert:
+    post:
+      summary: "POST /api/v1/agents/{agent_id}/rotate-cert"
+      operationId: postAgentsAgentIdRotatecert
+      tags:
+        - agents
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/agents/{agent_id}/telemetry/rollup:
+    post:
+      summary: "POST /api/v1/agents/{agent_id}/telemetry/rollup"
+      operationId: postAgentsAgentIdTelemetryRollup
+      tags:
+        - agents
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/assets/bulk:
+    post:
+      summary: POST /api/v1/assets/bulk
+      operationId: postAssetsBulk
+      tags:
+        - assets
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/assets/import-csv:
+    post:
+      summary: POST /api/v1/assets/import-csv
+      operationId: postAssetsImportcsv
+      tags:
+        - assets
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/audit/ship/{integration_id}:
+    post:
+      summary: "POST /api/v1/audit/ship/{integration_id}"
+      operationId: postAuditShipIntegrationId
+      tags:
+        - audit
+      parameters:
+        - name: integration_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/auth/compromised-passwords/{prefix}:
+    post:
+      summary: "POST /api/v1/auth/compromised-passwords/{prefix}"
+      operationId: postAuthCompromisedpasswordsPrefix
+      tags:
+        - auth
+      parameters:
+        - name: prefix
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
           content:
             application/json:
               schema:
@@ -826,8 +3791,76 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/auth/dev-token:
     post:
-      summary: POST /api/v1/auth/dev-token
+      summary: Mint a dev-only HS256 JWT. Disabled in production.
       operationId: postAuthDevtoken
+      tags:
+        - auth
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/auth/ip-lockouts/{ip}/unlock:
+    post:
+      summary: "POST /api/v1/auth/ip-lockouts/{ip}/unlock"
+      operationId: postAuthIplockoutsIpUnlock
+      tags:
+        - auth
+      parameters:
+        - name: ip
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/auth/jwt-keys/rotate:
+    post:
+      summary: Rotate the active JWT signing key. ZAISHIELD super-admin only.
+      operationId: postAuthJwtkeysRotate
       tags:
         - auth
       requestBody:
@@ -857,7 +3890,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/auth/logout:
     post:
-      summary: POST /api/v1/auth/logout
+      summary: "Revoke every active JWT for the caller's user."
       operationId: postAuthLogout
       tags:
         - auth
@@ -888,7 +3921,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/auth/mfa/enroll/confirm:
     post:
-      summary: POST /api/v1/auth/mfa/enroll/confirm
+      summary: Finish TOTP enrolment after the user types the first code.
       operationId: postAuthMfaEnrollConfirm
       tags:
         - auth
@@ -919,7 +3952,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/auth/mfa/enroll/start:
     post:
-      summary: POST /api/v1/auth/mfa/enroll/start
+      summary: Begin TOTP enrolment; returns the secret + QR.
       operationId: postAuthMfaEnrollStart
       tags:
         - auth
@@ -950,7 +3983,7 @@ paths:
           $ref: "#/components/responses/Internal"
   /api/v1/auth/mfa/verify:
     post:
-      summary: POST /api/v1/auth/mfa/verify
+      summary: Complete a partial login with a TOTP code.
       operationId: postAuthMfaVerify
       tags:
         - auth
@@ -979,9 +4012,46 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/authorization/{engagement_id}:
+    post:
+      summary: "POST /api/v1/authorization/{engagement_id}"
+      operationId: postAuthorizationEngagementId
+      tags:
+        - authorization
+      parameters:
+        - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/emergency-stops/{stop_id}/ack:
     post:
-      summary: "POST /api/v1/emergency-stops/{stop_id}/ack"
+      summary: Acknowledge an emergency-stop notification.
       operationId: postEmergencystopsStopIdAck
       tags:
         - emergency-stops
@@ -1016,12 +4086,265 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
-  /api/v1/feedback:
+  /api/v1/engagements/{engagement_id}/activate:
     post:
-      summary: Submit user feedback (bug/feature/NPS).
-      operationId: postFeedback
+      summary: "POST /api/v1/engagements/{engagement_id}/activate"
+      operationId: postEngagementsEngagementIdActivate
       tags:
-        - feedback
+        - engagements
+      parameters:
+        - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/engagements/{engagement_id}/pause:
+    post:
+      summary: "POST /api/v1/engagements/{engagement_id}/pause"
+      operationId: postEngagementsEngagementIdPause
+      tags:
+        - engagements
+      parameters:
+        - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/engagements/{engagement_id}/rate-limit:
+    post:
+      summary: "POST /api/v1/engagements/{engagement_id}/rate-limit"
+      operationId: postEngagementsEngagementIdRatelimit
+      tags:
+        - engagements
+      parameters:
+        - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/engagements/{engagement_id}/resume:
+    post:
+      summary: "POST /api/v1/engagements/{engagement_id}/resume"
+      operationId: postEngagementsEngagementIdResume
+      tags:
+        - engagements
+      parameters:
+        - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/evidence/manual:
+    post:
+      summary: POST /api/v1/evidence/manual
+      operationId: postEvidenceManual
+      tags:
+        - evidence
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/evidence/upload-dek:
+    post:
+      summary: POST /api/v1/evidence/upload-dek
+      operationId: postEvidenceUploaddek
+      tags:
+        - evidence
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/evidence/{evidence_id}/integrity:
+    post:
+      summary: "POST /api/v1/evidence/{evidence_id}/integrity"
+      operationId: postEvidenceEvidenceIdIntegrity
+      tags:
+        - evidence
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/evidence/{evidence_id}/worm:
+    post:
+      summary: "POST /api/v1/evidence/{evidence_id}/worm"
+      operationId: postEvidenceEvidenceIdWorm
+      tags:
+        - evidence
+      parameters:
+        - name: evidence_id
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: false
         content:
@@ -1053,6 +4376,321 @@ paths:
       operationId: postFeedbackDismissnps
       tags:
         - feedback
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/findings/bulk:
+    post:
+      summary: POST /api/v1/findings/bulk
+      operationId: postFindingsBulk
+      tags:
+        - findings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/findings/severity-overrides:
+    post:
+      summary: POST /api/v1/findings/severity-overrides
+      operationId: postFindingsSeverityoverrides
+      tags:
+        - findings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/findings/suppression-rules:
+    post:
+      summary: POST /api/v1/findings/suppression-rules
+      operationId: postFindingsSuppressionrules
+      tags:
+        - findings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/findings/{finding_id}/auto-retest:
+    post:
+      summary: "POST /api/v1/findings/{finding_id}/auto-retest"
+      operationId: postFindingsFindingIdAutoretest
+      tags:
+        - findings
+      parameters:
+        - name: finding_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/integrations/dead-letters/{dlq_id}/replay:
+    post:
+      summary: "POST /api/v1/integrations/dead-letters/{dlq_id}/replay"
+      operationId: postIntegrationsDeadlettersDlqIdReplay
+      tags:
+        - integrations
+      parameters:
+        - name: dlq_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/integrations/dead-letters/{dlq_id}/resolve:
+    post:
+      summary: "POST /api/v1/integrations/dead-letters/{dlq_id}/resolve"
+      operationId: postIntegrationsDeadlettersDlqIdResolve
+      tags:
+        - integrations
+      parameters:
+        - name: dlq_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/integrations/{integration_id}/inbound:
+    post:
+      summary: "Partner-side inbound webhook callback (authenticated by HMAC, not bearer)."
+      operationId: postIntegrationsIntegrationIdInbound
+      tags:
+        - integrations
+      parameters:
+        - name: integration_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/integrations/{integration_id}/test:
+    post:
+      summary: "POST /api/v1/integrations/{integration_id}/test"
+      operationId: postIntegrationsIntegrationIdTest
+      tags:
+        - integrations
+      parameters:
+        - name: integration_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/integrations/{type}:
+    post:
+      summary: "POST /api/v1/integrations/{type}"
+      operationId: postIntegrationsType
+      tags:
+        - integrations
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: false
         content:
@@ -1140,9 +4778,229 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/mobile/emergency-stop:
+    post:
+      summary: Mobile-initiated emergency stop.
+      operationId: postMobileEmergencystop
+      tags:
+        - mobile
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/brand-assets/{asset_type}:
+    post:
+      summary: "POST /api/v1/partners/{partner_id}/brand-assets/{asset_type}"
+      operationId: postPartnersPartnerIdBrandassetsAssetType
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: asset_type
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/domains:
+    post:
+      summary: "POST /api/v1/partners/{partner_id}/domains"
+      operationId: postPartnersPartnerIdDomains
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/email-templates/{code}/send-test:
+    post:
+      summary: "POST /api/v1/partners/{partner_id}/email-templates/{code}/send-test"
+      operationId: postPartnersPartnerIdEmailtemplatesCodeSendtest
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/sender-dns/check:
+    post:
+      summary: "POST /api/v1/partners/{partner_id}/sender-dns/check"
+      operationId: postPartnersPartnerIdSenderdnsCheck
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/platform/break-glass:
+    post:
+      summary: POST /api/v1/platform/break-glass
+      operationId: postPlatformBreakglass
+      tags:
+        - platform-ops
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/platform/break-glass/redeem:
     post:
-      summary: POST /api/v1/platform/break-glass/redeem
+      summary: Redeem a break-glass admin token (audited).
       operationId: postPlatformBreakglassRedeem
       tags:
         - platform-ops
@@ -1171,282 +5029,1086 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
-  /metrics:
-    get:
-      summary: Prometheus metrics scrape endpoint
-      operationId: getMetrics
-      tags:
-        - observability
-      responses:
-        200:
-          description: OpenMetrics-formatted snapshot
-          content:
-            application/openmetrics-text:
-              schema: {type: string}
-            text/plain:
-              schema: {type: string}
-  /api/v1/audit/verify:
-    get:
-      summary: Quick audit chain verification (most recent N rows)
-      operationId: getAuditVerify
-      tags:
-        - audit
-      responses:
-        200: {description: Result, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
-  /api/v1/audit/verify-deep:
-    get:
-      summary: Deep audit chain verification (every row from genesis)
-      operationId: getAuditVerifyDeep
-      tags:
-        - audit
-      responses:
-        200: {description: Result, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
-  /api/v1/scanner/regions/{region}/quota:
-    get:
-      summary: Per-region scanner quota and inflight counts
-      operationId: getScannerRegionQuota
-      tags:
-        - scanner
-      parameters:
-        - {name: region, in: path, required: true, schema: {type: string}}
-      responses:
-        200: {description: Quota stats, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
-  /api/v1/tenants:
+  /api/v1/report-schedules:
     post:
-      summary: Create a tenant
-      operationId: postApiV1Tenants
+      summary: POST /api/v1/report-schedules
+      operationId: postReportschedules
       tags:
-        - tenants
+        - reports
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
-            schema: {type: object, additionalProperties: true}
-      responses:
-        201: {description: Created, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
-  /api/v1/usage:
-    get:
-      summary: Self-service usage, plan, and rate-limit visibility
-      description: |
-        Returns the calling identity's current billing plan + live
-        usage counts (assets/scans/agents) plus the API rate-limit
-        caps configured for this deployment.
-
-        Partner resolution: identity.partner_id wins; otherwise the
-        tenant's partner via partner_customer_mapping; otherwise the
-        platform-default partner. Returns empty plan + zero usage if
-        no partner mapping exists.
-      operationId: getMyUsage
-      tags:
-        - billing
+            schema:
+              type: object
+              additionalProperties: true
       responses:
         200:
-          description: Usage snapshot
+          description: Success
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  identity:
-                    type: object
-                    properties:
-                      user_id: {type: string, format: uuid}
-                      tenant_id: {type: string, format: uuid, nullable: true}
-                      partner_id: {type: string, format: uuid}
-                  plan:
-                    type: object
-                    nullable: true
-                    properties:
-                      plan_code: {type: string}
-                      name: {type: string}
-                      asset_quota: {type: integer}
-                      scan_quota: {type: integer}
-                      agent_quota: {type: integer}
-                      overage_policy: {type: string, enum: [block, warn, allow]}
-                  usage:
-                    type: object
-                    nullable: true
-                    properties:
-                      assets: {type: integer}
-                      scans_current_cycle: {type: integer}
-                      agents: {type: integer}
-                      as_of: {type: string, format: date-time}
-                  rate_limit:
-                    type: object
-                    properties:
-                      per_identity_rps: {type: integer}
-                      window_seconds: {type: integer}
-                      per_tenant_multiplier: {type: integer}
-        401: {$ref: "#/components/responses/Unauthorized"}
-  /api/v1/status:
-    get:
-      summary: Public status (version, uptime, component health)
-      description: |
-        Unauthenticated status snapshot for status-page integrations.
-        Component detail strings (DB error text, upstream HTTP codes)
-        are stripped to avoid leaking internal hostnames; the
-        authenticated /api/v1/health endpoint returns the full detail.
-
-        Response is cacheable for 30 seconds.
-      operationId: getStatus
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/report-schedules/run-due:
+    post:
+      summary: POST /api/v1/report-schedules/run-due
+      operationId: postReportschedulesRundue
       tags:
-        - health
-      security: []
+        - reports
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
       responses:
         200:
-          description: Status snapshot
+          description: Success
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  status: {type: string, enum: [ok, degraded, fail]}
-                  version: {type: string}
-                  uptime_seconds: {type: integer}
-                  timestamp: {type: string, format: date-time}
-                  components:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        name: {type: string}
-                        status: {type: string}
-                        optional: {type: boolean}
-  /api/v1/audit/export:
-    get:
-      summary: Bulk audit-log export (NDJSON or CSV)
-      description: |
-        Streams audit rows matching the filter as NDJSON (default) or
-        CSV (?format=csv). Designed for SIEM / compliance pulls — the
-        response is unbounded so memory stays flat for million-row
-        tenants.
-
-        Tenant-level callers MUST scope by ?from=<rfc3339> to bound
-        the pull; platform admins may omit for full-archive exports.
-      operationId: exportAudit
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/reports:
+    post:
+      summary: POST /api/v1/reports
+      operationId: postReports
       tags:
-        - audit
+        - reports
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/reports/{report_id}/approve:
+    post:
+      summary: "POST /api/v1/reports/{report_id}/approve"
+      operationId: postReportsReportIdApprove
+      tags:
+        - reports
+      parameters:
+        - name: report_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/retest-batches:
+    post:
+      summary: POST /api/v1/retest-batches
+      operationId: postRetestbatches
+      tags:
+        - retesting
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/retests:
+    post:
+      summary: POST /api/v1/retests
+      operationId: postRetests
+      tags:
+        - retesting
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/retests/{retest_id}/launch:
+    post:
+      summary: "POST /api/v1/retests/{retest_id}/launch"
+      operationId: postRetestsRetestIdLaunch
+      tags:
+        - retesting
+      parameters:
+        - name: retest_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/retests/{retest_id}/result:
+    post:
+      summary: "POST /api/v1/retests/{retest_id}/result"
+      operationId: postRetestsRetestIdResult
+      tags:
+        - retesting
+      parameters:
+        - name: retest_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scanner/nodes/failover-sweep:
+    post:
+      summary: POST /api/v1/scanner/nodes/failover-sweep
+      operationId: postScannerNodesFailoversweep
+      tags:
+        - scanner-ops
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scanner/nodes/{node_id}/heartbeat:
+    post:
+      summary: "POST /api/v1/scanner/nodes/{node_id}/heartbeat"
+      operationId: postScannerNodesNodeIdHeartbeat
+      tags:
+        - scanner-ops
+      parameters:
+        - name: node_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scanner/regions/{region}/pull-credentials:
+    post:
+      summary: "POST /api/v1/scanner/regions/{region}/pull-credentials"
+      operationId: postScannerRegionsRegionPullcredentials
+      tags:
+        - scanner-ops
+      parameters:
+        - name: region
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scans/emergency-stop:
+    post:
+      summary: POST /api/v1/scans/emergency-stop
+      operationId: postScansEmergencystop
+      tags:
+        - scans
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scans/external:
+    post:
+      summary: POST /api/v1/scans/external
+      operationId: postScansExternal
+      tags:
+        - scans
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scans/internal:
+    post:
+      summary: POST /api/v1/scans/internal
+      operationId: postScansInternal
+      tags:
+        - scans
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scans/{scan_id}/approve:
+    post:
+      summary: "POST /api/v1/scans/{scan_id}/approve"
+      operationId: postScansScanIdApprove
+      tags:
+        - scans
+      parameters:
+        - name: scan_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scope:
+    post:
+      summary: POST /api/v1/scope
+      operationId: postScope
+      tags:
+        - scope
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scope/import-csv:
+    post:
+      summary: POST /api/v1/scope/import-csv
+      operationId: postScopeImportcsv
+      tags:
+        - scope
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/scope/{scope_id}/approve:
+    post:
+      summary: "POST /api/v1/scope/{scope_id}/approve"
+      operationId: postScopeScopeIdApprove
+      tags:
+        - scope
+      parameters:
+        - name: scope_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/tenants/{tenant_id}/data-key/rotate:
+    post:
+      summary: "POST /api/v1/tenants/{tenant_id}/data-key/rotate"
+      operationId: postTenantsTenantIdDatakeyRotate
+      tags:
+        - tenants
       parameters:
         - name: tenant_id
-          in: query
-          schema: {type: string, format: uuid}
-        - name: event
-          in: query
-          schema: {type: string}
-        - name: from
-          in: query
-          schema: {type: string, format: date-time}
-        - name: to
-          in: query
-          schema: {type: string, format: date-time}
-        - name: format
-          in: query
-          schema: {type: string, enum: [ndjson, csv], default: ndjson}
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
       responses:
         200:
-          description: Streamed export
+          description: Success
           content:
-            application/x-ndjson:
-              schema: {type: string}
-            text/csv:
-              schema: {type: string}
-        400: {$ref: "#/components/responses/BadRequest"}
-        401: {$ref: "#/components/responses/Unauthorized"}
-        403: {$ref: "#/components/responses/Forbidden"}
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/tenants/{tenant_id}/promote-isolation:
+    post:
+      summary: "POST /api/v1/tenants/{tenant_id}/promote-isolation"
+      operationId: postTenantsTenantIdPromoteisolation
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/tenants/{tenant_id}/reactivate:
+    post:
+      summary: "POST /api/v1/tenants/{tenant_id}/reactivate"
+      operationId: postTenantsTenantIdReactivate
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/tenants/{tenant_id}/suspend:
+    post:
+      summary: "POST /api/v1/tenants/{tenant_id}/suspend"
+      operationId: postTenantsTenantIdSuspend
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/users/{user_id}/erase:
     post:
-      summary: GDPR Article 17 right-to-erasure
-      description: |
-        Pseudonymises the user's PII (email, full_name, keycloak_sub),
-        revokes all active sessions, and emits a user.erased audit row.
-        The audit history is retained under a separate legal basis
-        (accountability), per regulator guidance.
-
-        Cannot be self-served — the actor must be a different
-        operator. MFA-required.
-      operationId: eraseUser
+      summary: "GDPR Article 17 erasure — pseudonymises PII across users, login_events, token_revocations."
+      operationId: postUsersUserIdErase
       tags:
         - users
       parameters:
         - name: user_id
           in: path
           required: true
-          schema: {type: string, format: uuid}
+          schema:
+            type: string
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               type: object
-              required: [reason]
-              properties:
-                reason:
-                  type: string
-                  description: Regulator request, consent withdrawal, etc.
+              additionalProperties: true
       responses:
         200:
-          description: Erased
+          description: Success
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  status: {type: string, enum: [erased]}
-                  note: {type: string}
-        400: {$ref: "#/components/responses/BadRequest"}
-        401: {$ref: "#/components/responses/Unauthorized"}
-        403: {$ref: "#/components/responses/Forbidden"}
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/users/{user_id}/revoke-tokens:
+    post:
+      summary: "POST /api/v1/users/{user_id}/revoke-tokens"
+      operationId: postUsersUserIdRevoketokens
+      tags:
+        - users
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/users/{user_id}/unlock:
+    post:
+      summary: "POST /api/v1/users/{user_id}/unlock"
+      operationId: postUsersUserIdUnlock
+      tags:
+        - users
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/integrations/{integration_id}/signing-secret:
+    put:
+      summary: Rotate the inbound webhook signing secret.
+      operationId: putIntegrationsIntegrationIdSigningsecret
+      tags:
+        - integrations
+      parameters:
+        - name: integration_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/branding:
+    put:
+      summary: "PUT /api/v1/partners/{partner_id}/branding"
+      operationId: putPartnersPartnerIdBranding
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/email-templates/{code}:
+    put:
+      summary: "PUT /api/v1/partners/{partner_id}/email-templates/{code}"
+      operationId: putPartnersPartnerIdEmailtemplatesCode
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/support:
+    put:
+      summary: "PUT /api/v1/partners/{partner_id}/support"
+      operationId: putPartnersPartnerIdSupport
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/settings/auto-retest:
+    put:
+      summary: PUT /api/v1/settings/auto-retest
+      operationId: putSettingsAutoretest
+      tags:
+        - settings
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/tenants/{tenant_id}/residency:
     put:
-      summary: Pin or clear the tenant's data-residency commitment
-      description: |
-        Updates the tenant's data_region pin. Empty region clears the
-        pin. Only operators with create_tenant may invoke this — the
-        residency commitment is contractual.
-
-        Allowed regions: ae | eu | uk | in | us | sg | au | jp.
-      operationId: setTenantResidency
+      summary: "Pin or clear the tenant's data-residency commitment."
+      operationId: putTenantsTenantIdResidency
       tags:
         - tenants
       parameters:
         - name: tenant_id
           in: path
           required: true
-          schema: {type: string, format: uuid}
+          schema:
+            type: string
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               type: object
-              properties:
-                region:
-                  type: string
-                  enum: [ae, eu, uk, in, us, sg, au, jp, ""]
-                reason:
-                  type: string
+              additionalProperties: true
       responses:
         200:
-          description: Pinned
+          description: Success
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  status: {type: string, enum: [ok]}
-                  region: {type: string}
-        400: {$ref: "#/components/responses/BadRequest"}
-        401: {$ref: "#/components/responses/Unauthorized"}
-        403: {$ref: "#/components/responses/Forbidden"}
-  /api/v1/auth/jwt-keys/rotate:
-    post:
-      summary: Rotate the JWT signing key
-      operationId: postAuthJwtKeysRotate
-      tags:
-        - auth
-      responses:
-        200: {description: Rotated, content: {application/json: {schema: {type: object, additionalProperties: true}}}}
-
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
 components:
   securitySchemes:
     bearerAuth:
@@ -1501,4 +6163,4 @@ components:
       required:
         - error
 security:
-  - bearerAuth: []
+  - bearerAuth: "[]"
