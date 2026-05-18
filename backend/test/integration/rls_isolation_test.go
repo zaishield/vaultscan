@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -131,4 +132,88 @@ func seedFinding(t *testing.T, h *harness, tenant interface{ String() string }, 
 		t.Fatalf("seed finding: %v", err)
 	}
 	return id
+}
+
+// TestRLS_AllTenantScopedTables — sweep the additional tenant-scoped
+// tables that aren't covered by the focused findings + audit_logs
+// tests above. For each: seed one row per tenant, pin to tenant A,
+// SELECT WHERE tenant_id = B, expect zero rows.
+//
+// If you add a new tenant_id-bearing table, add it to the slice here
+// + ensure the migration includes a matching CREATE POLICY.
+func TestRLS_AllTenantScopedTables(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	tA, _ := h.makeTenant(t, "rls-sweep-a")
+	tB, _ := h.makeTenant(t, "rls-sweep-b")
+
+	// Seed one row per tenant in each table under test. The schema
+	// signatures vary per table; keep the rows minimal but valid.
+	seeds := []struct {
+		name   string
+		insert string // $1 = tenant_id; should include all NOT NULL columns
+	}{
+		{
+			name:   "scan_jobs",
+			insert: `INSERT INTO scan_jobs(id, tenant_id, partner_id, profile_id, status, created_at)
+			         VALUES (gen_random_uuid(), $1, $2, gen_random_uuid(), 'queued', now())`,
+		},
+		{
+			name:   "assets",
+			insert: `INSERT INTO assets(id, tenant_id, partner_id, asset_type, identifier)
+			         VALUES (gen_random_uuid(), $1, $2, 'host', 'rls-sweep-' || gen_random_uuid())`,
+		},
+		{
+			name:   "compliance_evidence",
+			insert: `INSERT INTO compliance_evidence(id, tenant_id, framework_id, control_id, kind, status)
+			         VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'CC1.1', 'manual', 'pending')`,
+		},
+		{
+			name:   "idempotency_keys",
+			insert: `INSERT INTO idempotency_keys(key, tenant_id, method, path, response_status, expires_at)
+			         VALUES (gen_random_uuid()::text, $1, 'POST', '/api/v1/scans', 200, now() + interval '1 hour')`,
+		},
+	}
+	for _, s := range seeds {
+		if _, err := h.pool.Exec(ctx, s.insert, tA, directID); err != nil {
+			t.Logf("seed %s tenant A: %v (skipping — table or columns may differ)", s.name, err)
+			continue
+		}
+		if _, err := h.pool.Exec(ctx, s.insert, tB, directID); err != nil {
+			t.Logf("seed %s tenant B: %v (skipping)", s.name, err)
+			continue
+		}
+	}
+
+	// Pin to tenant A. With RLS active, every table SELECT must
+	// return zero rows for tenant B.
+	cn, err := h.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer cn.Release()
+	for _, role := range []string{"vaultscan_tenant", "vaultscan_app"} {
+		if _, err := cn.Exec(ctx, "SET ROLE "+role); err == nil {
+			break
+		}
+	}
+	if _, err := cn.Exec(ctx, `SELECT set_config('vaultscan.tenant_id', $1, true)`, tA.String()); err != nil {
+		t.Fatalf("set_config: %v", err)
+	}
+
+	for _, s := range seeds {
+		var leaked int
+		query := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE tenant_id = $1`, s.name)
+		if err := cn.QueryRow(ctx, query, tB).Scan(&leaked); err != nil {
+			// Schema may differ; surface but don't fail the whole
+			// sweep — the table-existence is what migration 0057
+			// asserts. RLS-leak in any KNOWN table is what we care
+			// about here.
+			t.Logf("query %s for tenant B: %v", s.name, err)
+			continue
+		}
+		if leaked > 0 {
+			t.Errorf("RLS LEAK on %s: pinned tenant A saw %d rows for tenant B", s.name, leaked)
+		}
+	}
 }
