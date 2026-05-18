@@ -21,6 +21,8 @@ name: vaultscan
 x-api-env: &api-env
   VAULTSCAN_ENV: development
   VAULTSCAN_DATABASE_URL: postgres://vaultscan:vaultscan@postgres:5432/vaultscan?sslmode=disable
+  # Replica routing — empty in dev; dashboards use the primary.
+  VAULTSCAN_DATABASE_REPLICA_URL: ${VAULTSCAN_DATABASE_REPLICA_URL:-}
   VAULTSCAN_OPENSEARCH_URL: http://opensearch:9200
   VAULTSCAN_OBJECT_STORE_URL: http://minio:9000
   VAULTSCAN_OBJECT_STORE_KEY: vaultscan
@@ -29,15 +31,41 @@ x-api-env: &api-env
   VAULTSCAN_EVENTBUS_URL: nats://nats:4222
   VAULTSCAN_API_ADDR: ":8080"
   VAULTSCAN_AGENT_GATEWAY_ADDR: ":8443"
+  VAULTSCAN_API_PUBLIC_URL: ${VAULTSCAN_API_PUBLIC_URL:-http://api:8080}
   VAULTSCAN_CORS_ALLOWED_ORIGINS: "http://localhost:${VAULTSCAN_PORTAL_PORT:-5173},http://localhost:3000"
+
+  # ----- Multi-region / residency -----------------------------------------
+  # Empty in dev — single region, no residency enforcement.
+  VAULTSCAN_REGION: ${VAULTSCAN_REGION:-}
+
+  # ----- Rate-limit -------------------------------------------------------
+  VAULTSCAN_RATE_LIMIT_RPS: ${VAULTSCAN_RATE_LIMIT_RPS:-100}
+  VAULTSCAN_RATE_LIMIT_WINDOW_SEC: ${VAULTSCAN_RATE_LIMIT_WINDOW_SEC:-60}
+  VAULTSCAN_RATE_LIMIT_TENANT_MULTIPLIER: ${VAULTSCAN_RATE_LIMIT_TENANT_MULTIPLIER:-10}
+  VAULTSCAN_RATE_LIMIT_BACKEND: ${VAULTSCAN_RATE_LIMIT_BACKEND:-memory}
+  VAULTSCAN_RATE_LIMIT_REDIS_ADDR: ${VAULTSCAN_RATE_LIMIT_REDIS_ADDR:-}
+
+  # ----- Production gates (default OFF in dev) ----------------------------
+  VAULTSCAN_REQUIRE_INBOUND_SIG: ${VAULTSCAN_REQUIRE_INBOUND_SIG:-false}
+  VAULTSCAN_REQUIRE_SIGNED_IMAGES: ${VAULTSCAN_REQUIRE_SIGNED_IMAGES:-false}
+
+  # ----- Audit export + DEK rotation --------------------------------------
+  VAULTSCAN_AUDIT_EXPORT_HARD_CAP: ${VAULTSCAN_AUDIT_EXPORT_HARD_CAP:-10000000}
+  VAULTSCAN_DEK_ROTATION_DAYS: ${VAULTSCAN_DEK_ROTATION_DAYS:-90}
+  VAULTSCAN_DEK_REWRAP_BATCH: ${VAULTSCAN_DEK_REWRAP_BATCH:-500}
+
+  # ----- Tracing (opt-in) -------------------------------------------------
+  VAULTSCAN_OTEL_EXPORTER: ${VAULTSCAN_OTEL_EXPORTER:-}
+  VAULTSCAN_OTEL_ENDPOINT: ${VAULTSCAN_OTEL_ENDPOINT:-}
+
   # IMPORTANT: secrets are NOT committed here. Both values must be
   # provided via .env at the repository root (copy .env.example and
   # generate fresh values). compose will refuse to start if either
   # is unset rather than silently fall back to a known-shared dev
   # secret. The previous inline defaults were a Trojan horse — copy-
   # paste of compose.yml into a production setup leaked dev credentials.
-  VAULTSCAN_JWT_SECRET: ${VAULTSCAN_JWT_SECRET:?set in .env — generate with: openssl rand -base64 48}
-  VAULTSCAN_EVIDENCE_MASTER_KEY: ${VAULTSCAN_EVIDENCE_MASTER_KEY:?set in .env — generate with: openssl rand -base64 32}
+  VAULTSCAN_JWT_SECRET: ${VAULTSCAN_JWT_SECRET:?set VAULTSCAN_JWT_SECRET in .env (openssl rand -base64 48)}
+  VAULTSCAN_EVIDENCE_MASTER_KEY: ${VAULTSCAN_EVIDENCE_MASTER_KEY:?set VAULTSCAN_EVIDENCE_MASTER_KEY in .env (openssl rand -base64 32)}
 
 services:
   postgres:

@@ -357,3 +357,31 @@ jobs:
           F=/tmp/render-${{ matrix.env }}.yaml
           grep -q "kind: Deployment$" "$F"
           grep -q "vaultscan-cron-runner" "$F" || { echo "FAIL: cron-runner missing in env=${{ matrix.env }}"; exit 1; }
+
+  compose:
+    name: docker-compose config drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: seed required secrets so compose validates
+        # These are throwaway values JUST for the config-parse step.
+        # The actual stack would refuse to start with them in prod
+        # (env=production triggers the secrets validator).
+        run: |
+          cp .env.example .env
+          {
+            echo "VAULTSCAN_JWT_SECRET=$(openssl rand -base64 48)"
+            echo "VAULTSCAN_EVIDENCE_MASTER_KEY=$(openssl rand -base64 32)"
+          } >> .env
+      - name: docker compose config
+        run: docker compose --env-file .env -f infra/compose/docker-compose.yml config -q
+      - name: verify every service the README claims exists
+        run: |
+          cfg=$(docker compose --env-file .env -f infra/compose/docker-compose.yml config --services | sort)
+          for svc in api agent-gateway portal analytics-worker cron-runner \
+                     scanner-worker postgres opensearch minio keycloak nats; do
+            if ! echo "$cfg" | grep -qx "$svc"; then
+              echo "FAIL: compose missing service $svc"; exit 1
+            fi
+          done
