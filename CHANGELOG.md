@@ -41,14 +41,48 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **DR drill** asserts every new 0061 table + the tenants.quarantine_*
   columns post-restore.
 
-### Pending (not external-only)
+### Added (SSO federation flow — closes the last non-external pending item)
 
-The SP-initiated SSO federation **handler** is not yet shipped: the
-config table is consumed by `ssoconfig.LoadConfigForTenant`, but
-the `/auth/sso/{slug}/saml/{start,acs}` and `/auth/sso/{slug}/oidc/
-{start,callback}` routes that drive cookie-based session + claim-
-mapping → JWT mint are a follow-up. Customers wire their IdP
-config today; the federated sign-in flow lands in the next minor.
+- **SAML 2.0 SP-initiated federation** (`internal/ssoflow/saml.go`)
+  - `GET /api/v1/auth/sso/{tenant_slug}/saml/start` resolves the
+    tenant, parses the stored `metadata_xml` (helper finds the
+    HTTP-Redirect SSO URL + the IdP signing X.509), builds an
+    AuthnRequest via `auth.SAMLConfig.AuthnRequestURL`, signs a
+    state cookie, and 302s to the IdP.
+  - `POST /api/v1/auth/sso/{tenant_slug}/saml/acs` accepts the
+    SAMLResponse POST, verifies the cookie state, validates the
+    assertion via `auth.SAMLConfig.ParseAndValidateResponse`, maps
+    attributes into VaultscanClaims, mints a JWT, drops a
+    `vaultscan_session` cookie, and 302s to `return_to`.
+
+- **OIDC Authorization-Code + PKCE federation**
+  (`internal/ssoflow/oidc.go`)
+  - `GET /api/v1/auth/sso/{tenant_slug}/oidc/start` fetches +
+    caches the IdP's discovery doc, generates state + nonce +
+    PKCE S256, signs the state cookie, redirects to the IdP's
+    `authorization_endpoint`.
+  - `GET /api/v1/auth/sso/{tenant_slug}/oidc/callback` validates
+    state CSRF, POSTs to `token_endpoint` for the code+PKCE
+    exchange, validates the id_token's audience + nonce + expiry,
+    maps claims, mints a JWT, finishes the flow.
+
+- **Claim mapping** (`internal/ssoflow/service.go`): first SSO
+  sign-in auto-provisions the user under the tenant's partner.
+  `groups` → roles via best-effort `roles.code` match; unmatched
+  groups ignored. `user.provisioned_via_sso` audit row recorded.
+
+- **State cookie**: short-lived HS256-signed JWT carrying
+  `{tid, prov, rt, cv, non}`. SameSite=Lax + Secure + HttpOnly.
+
+- **Discovery cache** memoises OIDC discovery for 12h.
+
+- **Self-issued JWT** uses `Verifier.IssueRSAToken` when a
+  `KeyManager` is configured (production path), falls back to
+  `IssueDevToken` otherwise.
+
+- 5 unit tests cover SAML metadata parsing (real self-signed cert),
+  error paths, attribute → claim mapping, PKCE S256 against the
+  RFC 7636 example, and random-string entropy.
 
 ### Added
 

@@ -44,6 +44,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/scimtokens"
 	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
 	"github.com/zaishield/vaultscan/backend/internal/ssoconfig"
+	"github.com/zaishield/vaultscan/backend/internal/ssoflow"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
 	"github.com/zaishield/vaultscan/backend/internal/users"
 )
@@ -111,6 +112,7 @@ type Services struct {
 	PlanRequests   *planrequests.Service
 	Impersonation  *impersonation.Service
 	ComplianceEval *compliance.Evaluator
+	SSOFlow        *ssoflow.Service
 }
 
 // Mount returns a fully wired HTTP router.
@@ -229,6 +231,24 @@ func Mount(s *Services) http.Handler {
 
 	// Public branding endpoint (Blueprint §8.5)
 	r.Get("/api/v1/branding", brandingByDomain(s))
+
+	// SP-initiated SSO federation flow. Public (no JWT) — these are
+	// the browser-redirect endpoints that receive the IdP's response
+	// + mint a Vaultscan JWT into a session cookie.
+	if s.SSOFlow != nil {
+		r.Get("/api/v1/auth/sso/{tenant_slug}/saml/start", func(w http.ResponseWriter, r *http.Request) {
+			s.SSOFlow.SAMLStart(w, r, chi.URLParam(r, "tenant_slug"))
+		})
+		r.Post("/api/v1/auth/sso/{tenant_slug}/saml/acs", func(w http.ResponseWriter, r *http.Request) {
+			s.SSOFlow.SAMLACS(w, r, chi.URLParam(r, "tenant_slug"))
+		})
+		r.Get("/api/v1/auth/sso/{tenant_slug}/oidc/start", func(w http.ResponseWriter, r *http.Request) {
+			s.SSOFlow.OIDCStart(w, r, chi.URLParam(r, "tenant_slug"))
+		})
+		r.Get("/api/v1/auth/sso/{tenant_slug}/oidc/callback", func(w http.ResponseWriter, r *http.Request) {
+			s.SSOFlow.OIDCCallback(w, r, chi.URLParam(r, "tenant_slug"))
+		})
+	}
 
 	// SCIM 2.0 server. Bearer-token auth via scimtokens; the IdP
 	// gets a 401 if the (tenant, token) pair doesn't match an

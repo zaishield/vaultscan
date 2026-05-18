@@ -50,6 +50,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
 	"github.com/zaishield/vaultscan/backend/internal/searchindex"
 	"github.com/zaishield/vaultscan/backend/internal/ssoconfig"
+	"github.com/zaishield/vaultscan/backend/internal/ssoflow"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
 )
 
@@ -361,6 +362,15 @@ func main() {
 	impersonationSvc := impersonation.New(pool.Pool, auditSvc)
 	complianceEval := compliance.NewEvaluator(pool.Pool)
 
+	// SP-initiated SSO federation flow. Uses the SAME shared secret
+	// the dev-token endpoint uses to sign its state cookie — that
+	// secret is required to boot in production, so this flow is
+	// always available when the platform is up. publicURL is what
+	// the IdP redirects back to; must match the chart's
+	// VAULTSCAN_API_PUBLIC_URL.
+	ssoFlowSvc := ssoflow.New(pool.Pool, ssoSvc, verifier, auditSvc,
+		[]byte(cfg.JWTSharedSecret), cfg.APIPublicURL())
+
 	router := api.Mount(&api.Services{
 		Pool: pool.Pool, Cfg: cfg, Log: log, Verifier: verifier,
 		Audit: auditSvc, Bus: bus, Branding: brand,
@@ -377,6 +387,7 @@ func main() {
 		SSOConfig: ssoSvc, SCIMTokens: scimSvc,
 		PlanRequests: planReqSvc, Impersonation: impersonationSvc,
 		ComplianceEval: complianceEval,
+		SSOFlow: ssoFlowSvc,
 	})
 
 	// Wrap the router so every request gets an OTel span with the route

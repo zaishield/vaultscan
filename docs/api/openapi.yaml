@@ -1058,6 +1058,96 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/auth/sso/{tenant_slug}/oidc/callback:
+    get:
+      summary: "GET /api/v1/auth/sso/{tenant_slug}/oidc/callback"
+      operationId: getAuthSsoTenantSlugOidcCallback
+      tags:
+        - auth
+      parameters:
+        - name: tenant_slug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/auth/sso/{tenant_slug}/oidc/start:
+    get:
+      summary: "GET /api/v1/auth/sso/{tenant_slug}/oidc/start"
+      operationId: getAuthSsoTenantSlugOidcStart
+      tags:
+        - auth
+      parameters:
+        - name: tenant_slug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/auth/sso/{tenant_slug}/saml/start:
+    get:
+      summary: "GET /api/v1/auth/sso/{tenant_slug}/saml/start"
+      operationId: getAuthSsoTenantSlugSamlStart
+      tags:
+        - auth
+      parameters:
+        - name: tenant_slug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/branding:
     get:
       summary: Resolve white-label branding by Host header.
@@ -4394,6 +4484,43 @@ paths:
       operationId: postAuthMfaVerify
       tags:
         - auth
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/auth/sso/{tenant_slug}/saml/acs:
+    post:
+      summary: "POST /api/v1/auth/sso/{tenant_slug}/saml/acs"
+      operationId: postAuthSsoTenantSlugSamlAcs
+      tags:
+        - auth
+      parameters:
+        - name: tenant_slug
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: false
         content:
