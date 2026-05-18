@@ -340,62 +340,201 @@ func (s *SCIMServer) queryUsers(ctx context.Context, tenantID uuid.UUID, filter 
 	return out, nil
 }
 
-// scimFilterToSQL converts a SCIM filter (possibly with AND/OR
-// composites) into a SQL fragment + placeholder arg list. The
-// returned SQL is wrapped in parens so it composes safely with an
-// outer WHERE.
+// scimFilterToSQL converts a SCIM filter into a SQL fragment +
+// placeholder arg list. Supports the full IdP-grade vocabulary:
 //
-// argOffset is the number of $N placeholders already consumed by the
-// caller's outer query; the function emits placeholders starting at
+//   * atoms:   field eq "v" | field sw "v" | field ew "v" |
+//              field co "v" | field pr
+//   * boolean: AND, OR (case-insensitive), left-to-right within
+//              same precedence
+//   * grouping: parenthesised sub-expressions, e.g.
+//              `(userName sw "a" or userName sw "b") and name.formatted pr`
+//
+// argOffset is the number of $N placeholders already consumed by
+// the caller's outer query; emitted placeholders start at
 // argOffset+1.
 //
-// Splitting strategy: tokenise on the top-level " and "/" or "
-// connectives (case-insensitive). We do NOT support grouped parens
-// like `(a or b) and c` — those IdPs that need them MUST send no
-// filter and post-filter client-side.
+// Returned SQL is always wrapped in an outer pair of parens so it
+// composes safely with an outer WHERE.
 func scimFilterToSQL(filter string, argOffset int) (string, []any, error) {
-	tokens := tokeniseSCIMComposite(filter)
-	if len(tokens) == 0 {
+	p := &scimParser{input: strings.TrimSpace(filter), pos: 0, argOffset: argOffset}
+	if p.input == "" {
 		return "", nil, errors.New("scim: empty filter")
 	}
-	// tokens alternate clause | connective | clause | connective | clause …
-	// odd-indexed slots are "and" / "or"; even-indexed slots are
-	// individual `field op value` clauses parsed by parseSCIMFilter.
-	if len(tokens)%2 == 0 {
-		return "", nil, errors.New("scim: trailing connective in filter")
+	sql, args, err := p.parseExpr()
+	if err != nil {
+		return "", nil, err
 	}
-	// Empty trailing slot (added by the tokeniser when a connective
-	// has no following clause) is also a malformed filter.
-	for _, t := range tokens {
-		if t == "" {
-			return "", nil, errors.New("scim: trailing connective in filter")
-		}
+	p.skipWS()
+	if p.pos != len(p.input) {
+		return "", nil, fmt.Errorf("scim: trailing input at offset %d", p.pos)
 	}
+	return "(" + sql + ")", args, nil
+}
 
-	var args []any
-	var sql strings.Builder
-	sql.WriteString("(")
-	for i, tok := range tokens {
-		if i%2 == 1 {
-			switch strings.ToLower(tok) {
-			case "and":
-				sql.WriteString(" AND ")
-			case "or":
-				sql.WriteString(" OR ")
-			default:
-				return "", nil, fmt.Errorf("scim: unknown connective %q", tok)
-			}
-			continue
+// scimParser is a tiny recursive-descent parser for the SCIM filter
+// grammar. Grammar (case-insensitive keywords):
+//
+//   expr   := orExpr
+//   orExpr := andExpr ( "or"  andExpr )*
+//   andExpr := atom    ( "and" atom    )*
+//   atom    := "(" expr ")"  |  field op value?
+//
+// "and" binds tighter than "or" (standard precedence). The parser
+// tracks `args` and `argOffset` so each placeholder gets a unique
+// $N consistent with the caller's outer query.
+type scimParser struct {
+	input         string
+	pos           int
+	argOffset     int
+	argsConsumed  int
+}
+
+func (p *scimParser) skipWS() {
+	for p.pos < len(p.input) && (p.input[p.pos] == ' ' || p.input[p.pos] == '\t') {
+		p.pos++
+	}
+}
+
+func (p *scimParser) parseExpr() (string, []any, error) {
+	return p.parseOr()
+}
+
+func (p *scimParser) parseOr() (string, []any, error) {
+	left, leftArgs, err := p.parseAnd()
+	if err != nil {
+		return "", nil, err
+	}
+	for {
+		p.skipWS()
+		if !p.consumeKeyword("or") {
+			return left, leftArgs, nil
 		}
-		clauseSQL, clauseArgs, err := scimAtomToSQL(tok, argOffset+len(args))
+		right, rightArgs, err := p.parseAnd()
 		if err != nil {
 			return "", nil, err
 		}
-		sql.WriteString(clauseSQL)
-		args = append(args, clauseArgs...)
+		left = "(" + left + " OR " + right + ")"
+		leftArgs = append(leftArgs, rightArgs...)
 	}
-	sql.WriteString(")")
-	return sql.String(), args, nil
+}
+
+func (p *scimParser) parseAnd() (string, []any, error) {
+	left, leftArgs, err := p.parseAtom()
+	if err != nil {
+		return "", nil, err
+	}
+	for {
+		p.skipWS()
+		if !p.consumeKeyword("and") {
+			return left, leftArgs, nil
+		}
+		right, rightArgs, err := p.parseAtom()
+		if err != nil {
+			return "", nil, err
+		}
+		left = "(" + left + " AND " + right + ")"
+		leftArgs = append(leftArgs, rightArgs...)
+	}
+}
+
+func (p *scimParser) parseAtom() (string, []any, error) {
+	p.skipWS()
+	if p.pos >= len(p.input) {
+		return "", nil, errors.New("scim: unexpected end of filter")
+	}
+	if p.input[p.pos] == '(' {
+		p.pos++
+		inner, args, err := p.parseExpr()
+		if err != nil {
+			return "", nil, err
+		}
+		p.skipWS()
+		if p.pos >= len(p.input) || p.input[p.pos] != ')' {
+			return "", nil, errors.New("scim: missing closing paren")
+		}
+		p.pos++
+		return inner, args, nil
+	}
+	// Atom = "field op value" or "field pr".
+	atom, err := p.readAtomString()
+	if err != nil {
+		return "", nil, err
+	}
+	sql, args, err := scimAtomToSQL(atom, p.argOffset+p.consumedArgsCount())
+	if err != nil {
+		return "", nil, err
+	}
+	p.bumpArgsConsumed(len(args))
+	return sql, args, nil
+}
+
+// readAtomString consumes one atom up to the next top-level
+// connective (`and` / `or`) or closing paren. Respects double-quote
+// scopes so a value can contain reserved words.
+func (p *scimParser) readAtomString() (string, error) {
+	p.skipWS()
+	start := p.pos
+	inQuote := false
+	for p.pos < len(p.input) {
+		c := p.input[p.pos]
+		if c == '"' {
+			inQuote = !inQuote
+			p.pos++
+			continue
+		}
+		if !inQuote {
+			if c == ')' {
+				break
+			}
+			// Look ahead for a top-level connective.
+			if c == ' ' || c == '\t' {
+				rest := p.input[p.pos:]
+				if hasPrefixCI(rest, " and ") || hasPrefixCI(rest, " or ") ||
+					hasPrefixSuffixCI(rest, " and") || hasPrefixSuffixCI(rest, " or") {
+					break
+				}
+			}
+		}
+		p.pos++
+	}
+	atom := strings.TrimSpace(p.input[start:p.pos])
+	if atom == "" {
+		return "", errors.New("scim: empty atom")
+	}
+	return atom, nil
+}
+
+// consumeKeyword advances past `<keyword>` (case-insensitive) if it
+// matches at the current position followed by whitespace, paren, or
+// EOF. Returns false (and doesn't advance) otherwise.
+func (p *scimParser) consumeKeyword(kw string) bool {
+	p.skipWS()
+	if p.pos+len(kw) > len(p.input) {
+		return false
+	}
+	if !strings.EqualFold(p.input[p.pos:p.pos+len(kw)], kw) {
+		return false
+	}
+	next := p.pos + len(kw)
+	if next < len(p.input) {
+		c := p.input[next]
+		if c != ' ' && c != '\t' && c != '(' && c != ')' {
+			return false
+		}
+	}
+	p.pos = next
+	return true
+}
+
+// argsConsumed lives on the parser state — we can't recompute from
+// the input string mid-parse. Track via an auxiliary counter.
+func (p *scimParser) consumedArgsCount() int  { return p.argsConsumed }
+func (p *scimParser) bumpArgsConsumed(n int)  { p.argsConsumed += n }
+func hasPrefixCI(s, prefix string) bool       { return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix) }
+func hasPrefixSuffixCI(s, kw string) bool {
+	// Match s starting with kw and ending at EOF (no trailing space).
+	return strings.EqualFold(s, kw)
 }
 
 // scimAtomToSQL converts a single `field op value` (or `field pr`)

@@ -1,0 +1,36 @@
+# release-notes-config.yml — drives the auto-generated release notes
+# published by .github/workflows/release.yml on every v* tag.
+#
+# GitHub reads this from the default branch; per-release notes are
+# composed by GitHub's "Generate release notes" API filtered by these
+# rules. Customers see the categorised changelog on the release page
+# + via the API. Internal CHANGELOG.md stays the canonical engineer-
+# facing log; this file is the customer-facing slice.
+
+changelog:
+  exclude:
+    labels:
+      - chore
+      - ci
+      - internal
+      - test
+      - dependencies
+    authors:
+      - dependabot
+      - renovate-bot
+
+  categories:
+    - title: "🚨 Breaking changes"
+      labels: ["breaking"]
+    - title: "✨ New features"
+      labels: ["feature", "enhancement"]
+    - title: "🔒 Security"
+      labels: ["security"]
+    - title: "🐛 Bug fixes"
+      labels: ["bug", "fix"]
+    - title: "📚 Documentation"
+      labels: ["docs", "documentation"]
+    - title: "🏗 Infrastructure / ops"
+      labels: ["infra", "ops", "deploy"]
+    - title: "🔧 Other changes"
+      labels: ["*"]

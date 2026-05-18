@@ -81,6 +81,15 @@ agentGateway:
   resources:
     requests: { cpu: "1", memory: "1Gi" }
     limits:   { cpu: "4", memory: "4Gi" }
+  autoscaling:
+    # Agent-gateway holds long-lived mTLS connections from internal
+    # agents. Per-pod connection-count scales with agent fleet size,
+    # not request rate — set targetCPUUtilizationPercentage low so
+    # we spin up replicas before the connection table chokes.
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 60
   podDisruptionBudget:
     enabled: true
     minAvailable: 2
@@ -127,6 +136,9 @@ analyticsWorker:
   resources:
     requests: { cpu: "200m", memory: "256Mi" }
     limits:   { cpu: "2",    memory: "2Gi" }
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
 
 # ----- Cron-runner (Blueprint §22.4) ----------------------------------------
 # Leader-elected background worker. 2 replicas for HA-during-rolling-

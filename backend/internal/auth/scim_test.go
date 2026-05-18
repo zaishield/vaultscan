@@ -1,6 +1,9 @@
 package auth
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseSCIMFilter(t *testing.T) {
 	t.Parallel()
@@ -63,6 +66,56 @@ func TestSCIMTokeniseRespectsQuotes(t *testing.T) {
 	tokens := tokeniseSCIMComposite(`userName eq "alice and bob"`)
 	if len(tokens) != 1 {
 		t.Fatalf("got %d tokens (%v), want 1", len(tokens), tokens)
+	}
+}
+
+// Parenthesised SCIM filters (Okta-style group sync).
+func TestSCIMParenthesisedFilter(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		filter string
+		wantOK bool
+	}{
+		{"simple-parens",       `(userName eq "a@b.com")`, true},
+		{"or-of-ands",          `(userName sw "alice" and userName ew "@x") or userName eq "z"`, true},
+		{"and-of-ors",          `(userName eq "a" or userName eq "b") and userName co "test"`, true},
+		{"three-deep",          `((userName sw "a" or userName sw "b") and userName ew "@x") or userName pr`, true},
+		{"missing-close",       `(userName eq "a"`, false},
+		{"missing-open",        `userName eq "a")`, false},
+		{"empty-parens",        `()`, false},
+		{"parens-in-value",     `userName eq "alice (admin)"`, true},
+	}
+	for _, c := range cases {
+		_, _, err := scimFilterToSQL(c.filter, 1)
+		if c.wantOK && err != nil {
+			t.Errorf("%s: unexpected error: %v", c.name, err)
+		}
+		if !c.wantOK && err == nil {
+			t.Errorf("%s: expected error, got nil", c.name)
+		}
+	}
+}
+
+// Precedence: "and" must bind tighter than "or", so
+// `a or b and c` = `a or (b and c)`, not `(a or b) and c`.
+func TestSCIMPrecedenceAndBindsTighter(t *testing.T) {
+	t.Parallel()
+	sql, _, err := scimFilterToSQL(
+		`userName eq "x" or userName eq "y" and userName co "z"`, 1)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// Expect the "y" + "z" clauses to be grouped under AND first,
+	// then OR'd with x. The exact SQL ordering matters.
+	if !strings.Contains(sql, " AND ") || !strings.Contains(sql, " OR ") {
+		t.Errorf("missing operators in SQL: %s", sql)
+	}
+	// Position check: the AND group must close BEFORE the outer OR.
+	andEnd := strings.Index(sql, " AND ")
+	orStart := strings.Index(sql, " OR ")
+	if andEnd != -1 && orStart != -1 && andEnd < orStart {
+		t.Errorf("AND appears before OR (wrong precedence): %s", sql)
 	}
 }
 

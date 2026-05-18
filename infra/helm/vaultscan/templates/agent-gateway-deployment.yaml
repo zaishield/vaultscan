@@ -4,7 +4,9 @@ metadata:
   name: {{ include "vaultscan.fullname" . }}-agent-gateway
   labels: {{- include "vaultscan.componentLabels" (dict "component" "agent-gateway" "Chart" .Chart "Release" .Release) | nindent 4 }}
 spec:
+  {{- if not (and .Values.agentGateway.autoscaling .Values.agentGateway.autoscaling.enabled) }}
   replicas: {{ .Values.agentGateway.replicaCount }}
+  {{- end }}
   selector:
     matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "agent-gateway") | nindent 6 }}
   template:
@@ -76,4 +78,25 @@ spec:
   minAvailable: {{ .Values.agentGateway.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "agent-gateway") | nindent 6 }}
+{{- end }}
+{{- if and .Values.agentGateway.autoscaling .Values.agentGateway.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-agent-gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "vaultscan.fullname" . }}-agent-gateway
+  minReplicas: {{ .Values.agentGateway.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.agentGateway.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.agentGateway.autoscaling.targetCPUUtilizationPercentage }}
 {{- end }}

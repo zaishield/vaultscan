@@ -37,7 +37,7 @@ spec:
 {{- end }}
 {{- end }}
 
-{{- if and .Values.analyticsWorker.enabled (gt (.Values.analyticsWorker.replicaCount | int) 1) }}
+{{- if and .Values.analyticsWorker.enabled .Values.analyticsWorker.podDisruptionBudget.enabled (gt (.Values.analyticsWorker.replicaCount | int) 1) }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -46,9 +46,10 @@ metadata:
   labels: {{- include "vaultscan.componentLabels" (dict "component" "analytics-worker" "Chart" .Chart "Release" .Release) | nindent 4 }}
 spec:
   # Analytics is non-real-time; we tolerate brief outages but want
-  # at least one pod alive so dashboards don't show stale-by-hours
-  # numbers after a node drain.
-  minAvailable: 1
+  # at least minAvailable pod(s) alive so dashboards don't show
+  # stale-by-hours numbers after a node drain. minAvailable from
+  # values.yaml so operators can tune per-cluster.
+  minAvailable: {{ .Values.analyticsWorker.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "analytics-worker") | nindent 6 }}
 {{- end }}

@@ -56,6 +56,8 @@ module "vaultscan" {
   object_store_credentials_secret_name = module.object_storage.access_credentials_secret_name
   object_store_bucket                  = module.object_storage.bucket_name
   opensearch_endpoint                  = module.opensearch.endpoint
+  database_secret_data                 = module.database.secret_data
+  object_store_secret_data             = module.object_storage.secret_data
 
   # When running against a local kind cluster, layer the
   # local-overrides.yaml on top to disable Ingress / LoadBalancer /

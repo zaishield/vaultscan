@@ -1,0 +1,84 @@
+name: release
+
+# Cuts a release on every v* tag push.
+#
+# Steps:
+#  1. Verify the tag matches semver (v<major>.<minor>.<patch>[-pre]).
+#  2. Build + sign every container image (handled separately by
+#     security.yml > scanner-image-sign-and-pin; this workflow only
+#     orchestrates the release-notes + GitHub Release page).
+#  3. Generate categorised customer-facing release notes from PR
+#     labels (.github/release-notes-config.yml).
+#  4. Extract the matching section from CHANGELOG.md and prepend it
+#     to the GitHub-generated body so the engineer-facing log shows
+#     up first.
+#  5. Publish the GitHub Release as DRAFT — release manager reviews
+#     and clicks Publish.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to (re-)publish (e.g. v1.4.0)"
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release:
+    name: cut release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history to derive the changelog
+
+      - name: validate tag
+        id: tag
+        run: |
+          T="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          if ! echo "$T" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.+-]+)?$'; then
+            echo "FAIL: tag $T does not match v<major>.<minor>.<patch>[-pre]"
+            exit 1
+          fi
+          echo "tag=$T" >> "$GITHUB_OUTPUT"
+
+      - name: extract changelog section
+        id: changelog
+        # Pull the [version] section from CHANGELOG.md. Anchored to
+        # the line starting "## [v1.2.3]" → next "## [".
+        run: |
+          T="${{ steps.tag.outputs.tag }}"
+          # CHANGELOG headers use v-stripped versions: "## [1.2.3]"
+          STRIPPED="${T#v}"
+          awk -v ver="$STRIPPED" '
+            $0 ~ "^## \\[" ver "\\]" { capture=1; next }
+            capture && /^## \[/      { exit }
+            capture                  { print }
+          ' CHANGELOG.md > /tmp/changelog-section.md
+          if [ ! -s /tmp/changelog-section.md ]; then
+            echo "WARN: CHANGELOG.md has no section for $T — release notes will be auto-generated only"
+            echo "" > /tmp/changelog-section.md
+          fi
+          {
+            echo 'body<<EOF'
+            cat /tmp/changelog-section.md
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: create or update GitHub release (draft)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          draft: true
+          generate_release_notes: true        # GitHub auto-categorises by label
+          body: ${{ steps.changelog.outputs.body }}
+          fail_on_unmatched_files: false
+          token: ${{ secrets.GITHUB_TOKEN }}

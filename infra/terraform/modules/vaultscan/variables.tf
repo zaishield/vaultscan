@@ -21,10 +21,26 @@ variable "region" {
 
 variable "api_public_url" { type = string; default = "" }
 
-variable "database_dsn_secret_name"             { type = string }
-variable "object_store_credentials_secret_name" { type = string }
+variable "database_dsn_secret_name"             { type = string; default = "" }
+variable "object_store_credentials_secret_name" { type = string; default = "" }
 variable "object_store_bucket"                  { type = string }
 variable "opensearch_endpoint"                  { type = string }
+
+# Direct secret-data inputs. Each upstream cloud module exposes a
+# `secret_data` output (sensitive map); the env composition passes
+# it here. The consolidated Secret is composed directly without
+# data-source chaining, so Terraform's dependency graph stays clean.
+variable "database_secret_data" {
+  type      = map(string)
+  sensitive = true
+  default   = {}
+}
+
+variable "object_store_secret_data" {
+  type      = map(string)
+  sensitive = true
+  default   = {}
+}
 
 variable "extra_values_files" {
   type        = list(string)

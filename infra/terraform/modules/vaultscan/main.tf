@@ -25,23 +25,6 @@ resource "random_password" "evidence_key" {
   special = false
 }
 
-# Collect the upstream-module secret data into one chart-friendly
-# Secret. We read each by data block; the upstream secrets are
-# referenced by name so we don't duplicate their contents in state.
-data "kubernetes_secret_v1" "db" {
-  metadata {
-    name      = var.database_dsn_secret_name
-    namespace = var.namespace
-  }
-}
-
-data "kubernetes_secret_v1" "object_store" {
-  metadata {
-    name      = var.object_store_credentials_secret_name
-    namespace = var.namespace
-  }
-}
-
 resource "kubernetes_namespace_v1" "ns" {
   metadata { name = var.namespace }
 
@@ -50,14 +33,18 @@ resource "kubernetes_namespace_v1" "ns" {
   }
 }
 
+# Consolidated env Secret. Composed directly from upstream-module
+# outputs (database_secret_data + object_store_secret_data) — no
+# data-source chain needed, so the dependency graph stays explicit
+# and Terraform doesn't emit sensitive-merge noise on every plan.
 resource "kubernetes_secret_v1" "consolidated" {
   metadata {
     name      = "${var.release_name}-env"
     namespace = kubernetes_namespace_v1.ns.metadata[0].name
   }
   data = merge(
-    data.kubernetes_secret_v1.db.data,
-    data.kubernetes_secret_v1.object_store.data,
+    var.database_secret_data,
+    var.object_store_secret_data,
     {
       VAULTSCAN_JWT_SECRET          = random_password.jwt.result
       VAULTSCAN_EVIDENCE_MASTER_KEY = base64encode(random_password.evidence_key.result)
