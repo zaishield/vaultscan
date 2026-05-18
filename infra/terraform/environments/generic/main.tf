@@ -57,5 +57,10 @@ module "vaultscan" {
   object_store_bucket                  = module.object_storage.bucket_name
   opensearch_endpoint                  = module.opensearch.endpoint
 
+  # When running against a local kind cluster, layer the
+  # local-overrides.yaml on top to disable Ingress / LoadBalancer /
+  # Kyverno / backup. Toggle in <env>.tfvars.
+  extra_values_files = var.local_overrides_enabled ? ["${path.module}/local-overrides.yaml"] : []
+
   depends_on = [module.database, module.object_storage, module.opensearch]
 }

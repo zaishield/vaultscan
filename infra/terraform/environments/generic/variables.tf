@@ -33,3 +33,9 @@ variable "object_store_gb"   { type = number; default = 100 }
 
 variable "api_public_url"    { type = string; default = "" }
 variable "region"            { type = string; default = "" }
+
+variable "local_overrides_enabled" {
+  type        = bool
+  description = "Apply infra/terraform/environments/generic/local-overrides.yaml on top of the env overlay. Set true when running on a local kind cluster."
+  default     = false
+}

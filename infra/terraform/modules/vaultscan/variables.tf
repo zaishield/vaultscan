@@ -28,7 +28,7 @@ variable "opensearch_endpoint"                  { type = string }
 
 variable "extra_values_files" {
   type        = list(string)
-  description = "Additional values overlays the operator wants merged on top."
+  description = "Paths to additional values overlays. Module reads them with file() and merges on top of the env overlay."
   default     = []
 }
 

@@ -296,4 +296,65 @@ tfvars-guard:
 	  dev|staging|uat|prod) : ;; \
 	  *) echo "ENV must be one of: dev | staging | uat | prod"; exit 1 ;; \
 	esac
-	@test -f "$(TFVARS)" || { echo "missing $(TFVARS)"; exit 1; }
+
+# ----------------------------------------------------------------------------
+# Local Terraform path — kind clusters + the generic flavor
+# ----------------------------------------------------------------------------
+#
+# Each environment runs in its own kind cluster (vaultscan-${ENV}) +
+# its own Terraform workspace, so dev/staging/uat/prod can coexist
+# on one laptop without state collision.
+#
+# Resource budget per cluster (single CP + 2 workers for non-dev):
+#   dev: 2GB / 2c     staging: 3GB / 3c
+#   uat: 4GB / 3c     prod:    6GB / 4c
+# Running all four at once needs ~16GB free.
+#
+# Usage:
+#   make tf-local-up     ENV=dev         # creates kind cluster + tofu apply
+#   make tf-local-down   ENV=dev         # tofu destroy + delete kind cluster
+#   make tf-local-status                 # show all four cluster states
+#   make tf-local-up-all                 # bring up dev+staging+uat+prod
+#   make tf-local-down-all
+#   make tf-local-portforward ENV=dev    # expose api/portal on localhost
+
+LOCAL_TF_DIR = infra/terraform/environments/generic
+
+.PHONY: tf-local-up tf-local-down tf-local-status tf-local-up-all tf-local-down-all tf-local-portforward
+
+tf-local-status: ## Show kind-cluster status for every VaultScan env
+	@./tools/scripts/local-cluster.sh status
+
+tf-local-up: ## Create kind cluster for ENV + tofu apply against it
+	@test -n "$(ENV)" || { echo "ENV must be one of: dev | staging | uat | prod"; exit 1; }
+	./tools/scripts/local-cluster.sh up $(ENV)
+	$(TF) -chdir=$(LOCAL_TF_DIR) init
+	$(TF) -chdir=$(LOCAL_TF_DIR) workspace select -or-create $(ENV)
+	$(TF) -chdir=$(LOCAL_TF_DIR) apply -var-file=$(ENV).tfvars \
+	  -var=local_overrides_enabled=true -auto-approve
+
+tf-local-down: ## tofu destroy ENV + delete kind cluster
+	@test -n "$(ENV)" || { echo "ENV must be one of: dev | staging | uat | prod"; exit 1; }
+	-$(TF) -chdir=$(LOCAL_TF_DIR) workspace select $(ENV) 2>/dev/null && \
+	  $(TF) -chdir=$(LOCAL_TF_DIR) destroy -var-file=$(ENV).tfvars \
+	    -var=local_overrides_enabled=true -auto-approve
+	-$(TF) -chdir=$(LOCAL_TF_DIR) workspace select default 2>/dev/null
+	-$(TF) -chdir=$(LOCAL_TF_DIR) workspace delete $(ENV) 2>/dev/null
+	./tools/scripts/local-cluster.sh down $(ENV)
+
+tf-local-up-all: ## Sequentially bring up all four local envs
+	@for env in dev staging uat prod; do \
+	  $(MAKE) --no-print-directory tf-local-up ENV=$$env; \
+	done
+
+tf-local-down-all: ## Tear down all four local envs
+	@for env in dev staging uat prod; do \
+	  $(MAKE) --no-print-directory tf-local-down ENV=$$env || true; \
+	done
+
+tf-local-portforward: ## kubectl port-forward api (8080) + portal (5173) for ENV
+	@test -n "$(ENV)" || { echo "ENV must be one of: dev | staging | uat | prod"; exit 1; }
+	@echo "ENV=$(ENV) — Ctrl-C to stop. API at http://localhost:8080, portal at http://localhost:5173"
+	@kubectl --context kind-vaultscan-$(ENV) -n vaultscan port-forward svc/vaultscan-api    8080:8080 & \
+	 kubectl --context kind-vaultscan-$(ENV) -n vaultscan port-forward svc/vaultscan-portal 5173:80   & \
+	 wait

@@ -1,0 +1,46 @@
+# Helm overrides applied when running the generic flavor against a
+# local kind cluster (any of dev/staging/uat/prod).
+#
+# Disables the cloud-only bits that would fail on a laptop:
+#   - Ingress objects (no DNS resolution + no cert-manager)
+#   - LoadBalancer service for agent-gateway (kind has no LB
+#     provisioner unless metallb / cloud-provider-kind is installed)
+#   - Kyverno cosign verification (kyverno controller not installed)
+#   - Production-only HA bits that need 3+ nodes for the workloads
+#     we don't intend to test (kept on for staging/uat/prod overlays;
+#     they degrade gracefully when only one worker is available)
+#
+# The vaultscan module passes this overlay AFTER the env overlay so
+# these toggles win.
+
+api:
+  ingress:
+    enabled: false
+
+agentGateway:
+  service:
+    # Kind doesn't ship with a LB provisioner; clusterIP keeps the
+    # service reachable via port-forward.
+    type: ClusterIP
+
+portal:
+  ingress:
+    enabled: false
+
+kyverno:
+  cosignVerifyPolicy:
+    enabled: false
+
+# Production overlays default Postgres + MinIO + OpenSearch to large
+# replica counts. On a laptop we shrink them; the bitnami charts
+# rendered by the generic Terraform modules already cope, but we
+# also override the chart's own pgbouncer block so it doesn't try
+# to schedule 3 replicas of a service we're not actually consuming
+# in the local flow.
+pgbouncer:
+  enabled: false
+
+backup:
+  enabled: false
+restoreVerify:
+  enabled: false

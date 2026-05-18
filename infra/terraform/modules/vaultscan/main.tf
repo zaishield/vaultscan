@@ -73,7 +73,7 @@ resource "helm_release" "vaultscan" {
   namespace  = kubernetes_namespace_v1.ns.metadata[0].name
   values = concat(
     [file("${var.chart_path}/values-${var.environment}.yaml")],
-    var.extra_values_files,
+    [for p in var.extra_values_files : file(p)],
     [yamlencode({
       global = {
         region = var.region
