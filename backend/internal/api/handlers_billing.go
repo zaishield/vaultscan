@@ -22,6 +22,7 @@ import (
 
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/billing"
+	"github.com/zaishield/vaultscan/backend/internal/middleware"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
 )
 
@@ -224,10 +225,36 @@ func getMyUsage(s *Services) http.HandlerFunc {
 			usage, _ = s.Billing.UsageFor(r.Context(), partnerID, plan)
 		}
 
+		windowSec := s.Cfg.RateLimitWindowSec
+		if windowSec <= 0 {
+			windowSec = 60
+		}
+		limit := s.Cfg.RateLimitRPS * windowSec
+
 		rl := map[string]any{
-			"per_identity_rps":   s.Cfg.RateLimitRPS,
-			"window_seconds":     s.Cfg.RateLimitWindowSec,
+			"per_identity_rps":      s.Cfg.RateLimitRPS,
+			"window_seconds":        windowSec,
 			"per_tenant_multiplier": s.Cfg.PerTenantRateLimitMultiplier,
+			"limit_per_window":      limit,
+		}
+		// Best-effort Peek for "remaining tokens". -1 sentinel = not
+		// available (Redis unreachable, or backend doesn't implement
+		// Peek); UIs MUST display this as "unknown" rather than
+		// guessing zero.
+		if peekable, ok := s.Limiter.(middleware.Peekable); ok && peekable != nil {
+			identityRemain, _ := peekable.Peek(r.Context(), middleware.IdentityKey(r), limit, windowSec)
+			rl["identity_remaining"] = identityRemain
+			if id.TenantID != nil {
+				tenantLim := limit * s.Cfg.PerTenantRateLimitMultiplier
+				if tenantLim > 0 {
+					tenantRemain, _ := peekable.Peek(r.Context(),
+						"tenant:"+id.TenantID.String(), tenantLim, windowSec)
+					rl["tenant_remaining"] = tenantRemain
+					rl["tenant_limit_per_window"] = tenantLim
+				}
+			}
+		} else {
+			rl["identity_remaining"] = -1
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{

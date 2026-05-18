@@ -98,6 +98,8 @@ func main() {
 	if replica != nil {
 		defer replica.Close()
 		log.Info().Msg("read-replica configured; dashboards will route reads to replica")
+		stopReplicaLag := observability.StartReplicaLagExporter(ctx, replica.Pool, 30*time.Second)
+		defer stopReplicaLag()
 	}
 	// Pool stats → Prometheus every 10s. Lets ops alert on saturation
 	// (acquired ≈ max, sustained waiting > 0) before user-visible

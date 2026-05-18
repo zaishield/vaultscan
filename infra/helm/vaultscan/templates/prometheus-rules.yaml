@@ -61,6 +61,39 @@ spec:
               callers are timing out before getting a connection. Pool too small
               or upstream Postgres slow.
 
+    # ----- Replica health --------------------------------------------------
+    # vaultscan_db_replica_lag_seconds:
+    #   -1     → no replica monitored (gauge sentinel)
+    #   0..N   → live lag in seconds (replica behind primary by N)
+    #   1e9    → exporter couldn't reach the replica
+    - name: vaultscan.replica
+      rules:
+        - alert: VaultScanReplicaLagging
+          expr: vaultscan_db_replica_lag_seconds > 60 and vaultscan_db_replica_lag_seconds < 1e8
+          for: 5m
+          labels:
+            severity: warning
+            component: db-replica
+          annotations:
+            summary: "Read-replica lag {{`{{ $value }}`}}s > 60s"
+            description: |
+              Dashboards routed to the replica will serve stale data. Investigate
+              primary write rate, replica disk IO, and network. If the replica
+              cannot catch up, fall back to primary by clearing
+              VAULTSCAN_DATABASE_REPLICA_URL on the api Deployment.
+
+        - alert: VaultScanReplicaUnreachable
+          expr: vaultscan_db_replica_lag_seconds > 1e8
+          for: 2m
+          labels:
+            severity: critical
+            component: db-replica
+          annotations:
+            summary: "Replica lag exporter cannot reach replica"
+            description: |
+              The lag-exporter query failed. Reads routed to the replica will
+              fail; the read-fallback to primary is best-effort.
+
     # ----- Audit chain integrity -------------------------------------------
     - name: vaultscan.audit
       rules:

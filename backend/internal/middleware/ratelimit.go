@@ -44,6 +44,19 @@ type Limiter interface {
 	Name() string
 }
 
+// Peekable is the optional interface for limiters that can report
+// the remaining-token count without consuming one. Surfaces "your
+// quota is 87/100 right now" on /api/v1/usage. The InMemoryLimiter
+// implements this exactly; RedisLimiter implements a best-effort
+// approximation using ZCARD on the sliding-window key.
+type Peekable interface {
+	// Peek returns the current available token count for `key`. On
+	// limiters that can't introspect cheaply (or aren't configured
+	// to), it MAY return -1 to signal "unknown" — handlers should
+	// treat -1 as "data not available, do not display".
+	Peek(ctx context.Context, key string, limit, windowSec int) (remaining int, err error)
+}
+
 // ---- In-memory token bucket -----------------------------------------------
 
 type InMemoryLimiter struct {
@@ -118,6 +131,36 @@ func (l *InMemoryLimiter) Allow(_ context.Context, key string, limit, windowSec 
 	return true, nil
 }
 
+// Peek returns the InMemoryLimiter's current token count for `key`.
+// Mutates the bucket only by advancing its refill clock — the
+// caller's "remaining" reading should reflect time-since-last-Allow
+// just like Allow does. Returns 0 (not -1) when the key has never
+// been seen so the caller's "you have N requests left" UI defaults
+// to "fresh quota, full budget".
+func (l *InMemoryLimiter) Peek(_ context.Context, key string, limit, windowSec int) (int, error) {
+	if windowSec <= 0 {
+		windowSec = 1
+	}
+	rps := float64(limit) / float64(windowSec)
+	burst := float64(limit) * 2
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b, ok := l.buckets[key]
+	if !ok {
+		return int(burst), nil
+	}
+	now := time.Now()
+	delta := now.Sub(b.lastRefill).Seconds()
+	tokens := b.tokens + delta*rps
+	if tokens > burst {
+		tokens = burst
+	}
+	if tokens < 0 {
+		tokens = 0
+	}
+	return int(tokens), nil
+}
+
 // Size reports the number of live buckets — exposed so tests can
 // assert the eviction logic + so /metrics can publish gauge.
 func (l *InMemoryLimiter) Size() int {
@@ -162,6 +205,36 @@ func NewRedisLimiter(addr, password string, db int) (*RedisLimiter, error) {
 }
 
 func (rl *RedisLimiter) Name() string { return "redis" }
+
+// Peek returns the approximate remaining tokens for a key based on
+// ZCARD of its sliding-window set. Best-effort: between the ZCARD
+// read and the caller using the value, more requests may land. Used
+// for the customer-facing /usage endpoint where "approximately N
+// requests left" is fine — it's not an enforcement decision.
+//
+// Returns -1 on dial / command failures so the handler can show
+// "data unavailable" rather than misleading "0 remaining".
+func (rl *RedisLimiter) Peek(ctx context.Context, key string, limit, windowSec int) (int, error) {
+	c, err := rl.pool.get(ctx)
+	if err != nil {
+		return -1, nil
+	}
+	defer rl.pool.put(c)
+	reply, err := c.do(ctx, "ZCARD", key)
+	if err != nil {
+		return -1, nil
+	}
+	used, ok := reply.(int64)
+	if !ok {
+		return -1, nil
+	}
+	remaining := limit - int(used)
+	if remaining < 0 {
+		remaining = 0
+	}
+	_ = windowSec // included in signature for consistency; ZCARD already applies window via key
+	return remaining, nil
+}
 
 const slidingWindowLua = `
 local key = KEYS[1]

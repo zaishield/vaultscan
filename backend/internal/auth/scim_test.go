@@ -33,6 +33,39 @@ func TestParseSCIMFilter(t *testing.T) {
 	}
 }
 
+func TestSCIMCompositeFilter(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		filter string
+		wantOK bool
+	}{
+		{"single-clause-eq", `userName eq "a@b.com"`, true},
+		{"and-two-clauses", `userName sw "alice" and userName ew "@example.com"`, true},
+		{"or-two-clauses", `userName eq "a@b.com" or userName eq "c@d.com"`, true},
+		{"mixed-and-or", `userName sw "a" and userName co "b" or userName pr`, true},
+		{"trailing-connective", `userName eq "x" and`, false},
+		{"value-contains-keyword", `userName eq "needs and want"`, true},
+	}
+	for _, c := range cases {
+		_, _, err := scimFilterToSQL(c.filter, 1)
+		if c.wantOK && err != nil {
+			t.Errorf("%s: unexpected error %v", c.name, err)
+		}
+		if !c.wantOK && err == nil {
+			t.Errorf("%s: expected error, got nil", c.name)
+		}
+	}
+}
+
+func TestSCIMTokeniseRespectsQuotes(t *testing.T) {
+	// "and" inside a quoted value must NOT be treated as a connective.
+	tokens := tokeniseSCIMComposite(`userName eq "alice and bob"`)
+	if len(tokens) != 1 {
+		t.Fatalf("got %d tokens (%v), want 1", len(tokens), tokens)
+	}
+}
+
 func TestSCIMLikeEscape(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{

@@ -352,6 +352,13 @@ func (s *Service) fanout(ctx context.Context, ev eventbus.Event) {
 
 func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, name string,
 	config map[string]any, ev eventbus.Event) {
+	var err error
+	ctx, end := observability.Span(ctx, "integrations.deliver",
+		"integration_id", integrationID.String(),
+		"type", itype,
+		"event_type", string(ev.Type))
+	defer func() { end(err) }()
+
 	body, err := s.buildPayload(ctx, itype, name, ev)
 	if err != nil {
 		return

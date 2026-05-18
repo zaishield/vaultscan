@@ -333,6 +333,13 @@ func (rl *RateLimit) Middleware() func(http.Handler) http.Handler {
 	}
 }
 
+// IdentityKey is the exported form of the per-request rate-limit
+// bucket key. Handlers that surface "remaining quota" to a user
+// (/api/v1/usage) need the same key the limit middleware uses; this
+// is that key. It's a thin wrapper around the unexported identityKey
+// kept for back-compat with existing call sites.
+func IdentityKey(r *http.Request) string { return identityKey(r) }
+
 func identityKey(r *http.Request) string {
 	if id, err := auth.FromContext(r.Context()); err == nil {
 		return "user:" + id.UserID.String()

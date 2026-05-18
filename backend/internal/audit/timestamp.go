@@ -41,6 +41,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/zaishield/vaultscan/backend/internal/circuitbreaker"
 )
 
 // TimestampToken is what TimeStamp returns + persists into
@@ -76,6 +78,11 @@ type TSAClient struct {
 	// (1.3.6.1.5.5.7.3.8) — any other EKU is suspicious. Defaults
 	// to that one OID if nil.
 	ExpectedKeyUsages []x509.ExtKeyUsage
+
+	// breaker short-circuits TSA calls when the upstream is failing
+	// repeatedly. Audit anchoring is a background cron — burning a
+	// minute every tick on a dead TSA delays unrelated work.
+	breaker *circuitbreaker.Breaker
 }
 
 // NewTSAClient with a 30s timeout. Pass "" for the default URL
@@ -87,6 +94,11 @@ func NewTSAClient(url string) *TSAClient {
 	return &TSAClient{
 		URL:    url,
 		Client: &http.Client{Timeout: 30 * time.Second},
+		breaker: circuitbreaker.New(circuitbreaker.Config{
+			Name:        "audit-tsa",
+			MaxFailures: 5,
+			Cooldown:    30 * time.Second,
+		}),
 	}
 }
 
@@ -123,9 +135,20 @@ func (c *TSAClient) Timestamp(ctx context.Context, hash []byte) (*TimestampToken
 	httpReq.Header.Set("Content-Type", "application/timestamp-query")
 	httpReq.Header.Set("Accept", "application/timestamp-reply")
 
-	resp, err := c.Client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("rfc3161: POST %s: %w", c.URL, err)
+	var resp *http.Response
+	doCall := func() error {
+		var doErr error
+		resp, doErr = c.Client.Do(httpReq)
+		return doErr
+	}
+	if c.breaker != nil {
+		if err := c.breaker.Call(doCall); err != nil {
+			return nil, fmt.Errorf("rfc3161: POST %s: %w", c.URL, err)
+		}
+	} else {
+		if err := doCall(); err != nil {
+			return nil, fmt.Errorf("rfc3161: POST %s: %w", c.URL, err)
+		}
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

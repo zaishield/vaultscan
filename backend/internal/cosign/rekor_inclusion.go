@@ -37,6 +37,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/zaishield/vaultscan/backend/internal/circuitbreaker"
 )
 
 // LeafPrefix and NodePrefix are the domain separators from RFC 6962
@@ -150,6 +152,7 @@ func HashLeaf(body []byte) []byte {
 type RekorHTTPClient struct {
 	BaseURL string         // e.g. https://rekor.sigstore.dev
 	Client  *http.Client   // optional; nil → 10s-timeout default
+	breaker *circuitbreaker.Breaker
 }
 
 // NewRekorHTTPClient with a 10s timeout (Rekor responses are small
@@ -159,6 +162,11 @@ func NewRekorHTTPClient(baseURL string) *RekorHTTPClient {
 	return &RekorHTTPClient{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Client:  &http.Client{Timeout: 10 * time.Second},
+		breaker: circuitbreaker.New(circuitbreaker.Config{
+			Name:        "cosign-rekor",
+			MaxFailures: 5,
+			Cooldown:    30 * time.Second,
+		}),
 	}
 }
 
@@ -181,9 +189,20 @@ func (c *RekorHTTPClient) FetchProof(ctx context.Context, uuid string) (*LogProo
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("rekor: GET %s: %w", url, err)
+	var resp *http.Response
+	doCall := func() error {
+		var doErr error
+		resp, doErr = client.Do(req)
+		return doErr
+	}
+	if c.breaker != nil {
+		if err := c.breaker.Call(doCall); err != nil {
+			return nil, fmt.Errorf("rekor: GET %s: %w", url, err)
+		}
+	} else {
+		if err := doCall(); err != nil {
+			return nil, fmt.Errorf("rekor: GET %s: %w", url, err)
+		}
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

@@ -235,6 +235,54 @@ func main() {
 			}
 			return err
 		}},
+		// Re-wrap existing evidence under the new DEK after a rotation.
+		// Runs hourly with a bounded batch so a tenant with millions of
+		// objects gets chewed through over hours rather than blocking
+		// one tick. Idempotent: it's safe to skip ticks and resume.
+		{name: "dek_rewrap_sweep", interval: time.Hour, fn: func(ctx context.Context) error {
+			batch := 500
+			if v := os.Getenv("VAULTSCAN_DEK_REWRAP_BATCH"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 10000 {
+					batch = n
+				}
+			}
+			// Pull tenants with objects below the latest version.
+			rows, err := pool.Pool.Query(ctx, `
+				SELECT DISTINCT fe.tenant_id
+				  FROM finding_evidence fe
+				  JOIN (
+				      SELECT tenant_id, MAX(key_version) AS latest
+				        FROM tenant_data_keys
+				       WHERE retired_at IS NULL
+				       GROUP BY tenant_id
+				  ) tdk ON tdk.tenant_id = fe.tenant_id
+				 WHERE fe.encrypted = true
+				   AND fe.encryption_key_version IS NOT NULL
+				   AND fe.encryption_key_version < tdk.latest
+				 LIMIT 50`)
+			if err != nil {
+				return err
+			}
+			var tenantIDs []uuid.UUID
+			for rows.Next() {
+				var id uuid.UUID
+				if err := rows.Scan(&id); err == nil {
+					tenantIDs = append(tenantIDs, id)
+				}
+			}
+			rows.Close()
+
+			totalRewrapped := 0
+			for _, tid := range tenantIDs {
+				n, _, _ := vault.ReWrapTenantObjects(ctx, tid, batch)
+				totalRewrapped += n
+			}
+			if totalRewrapped > 0 {
+				log.Info().Int("objects", totalRewrapped).Int("tenants", len(tenantIDs)).
+					Msg("DEK re-wrap sweep")
+			}
+			return nil
+		}},
 	}
 
 	var wg sync.WaitGroup

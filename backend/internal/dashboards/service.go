@@ -160,9 +160,15 @@ type KV struct {
 	Count int    `json:"count"`
 }
 
-func (s *Service) Technical(ctx context.Context, tenantID uuid.UUID) (*Technical, error) {
+func (s *Service) Technical(ctx context.Context, tenantID uuid.UUID) (out *Technical, err error) {
+	ctx, end := observability.Span(ctx, "dashboards.Technical",
+		"tenant_id", tenantID.String())
+	defer func() { end(err) }()
+
 	t := &Technical{BySeverity: map[string]int{}, ByScanner: map[string]int{}}
-	rows, _ := s.pool.Query(ctx,
+	out = t
+	rd := s.reader()
+	rows, _ := rd.Query(ctx,
 		`SELECT severity, COUNT(*) FROM findings WHERE tenant_id=$1 GROUP BY severity`, tenantID)
 	defer rows.Close()
 	for rows.Next() {
@@ -172,7 +178,7 @@ func (s *Service) Technical(ctx context.Context, tenantID uuid.UUID) (*Technical
 			t.BySeverity[k] = v
 		}
 	}
-	asset, _ := s.pool.Query(ctx, `
+	asset, _ := rd.Query(ctx, `
 		SELECT COALESCE(a.value, 'unassigned'), COUNT(*)
 		  FROM findings f LEFT JOIN assets a ON a.id = f.asset_id
 		 WHERE f.tenant_id=$1
@@ -184,7 +190,7 @@ func (s *Service) Technical(ctx context.Context, tenantID uuid.UUID) (*Technical
 			t.ByAsset = append(t.ByAsset, kv)
 		}
 	}
-	scanner, _ := s.pool.Query(ctx,
+	scanner, _ := rd.Query(ctx,
 		`SELECT scanner, COUNT(*) FROM findings WHERE tenant_id=$1 GROUP BY scanner`, tenantID)
 	defer scanner.Close()
 	for scanner.Next() {
@@ -194,7 +200,7 @@ func (s *Service) Technical(ctx context.Context, tenantID uuid.UUID) (*Technical
 			t.ByScanner[k] = v
 		}
 	}
-	_ = s.pool.QueryRow(ctx, `
+	_ = rd.QueryRow(ctx, `
 		SELECT COUNT(*) FILTER (WHERE scan_type='network'),
 		       COUNT(*) FILTER (WHERE scan_type='network' AND port > 0),
 		       COUNT(*) FILTER (WHERE scan_type='tls'),
@@ -226,9 +232,14 @@ type LicenseUsage struct {
 	AgentsUsed int `json:"agents_used"`
 }
 
-func (s *Service) Partner(ctx context.Context, partnerID uuid.UUID) (*Partner, error) {
+func (s *Service) Partner(ctx context.Context, partnerID uuid.UUID) (out *Partner, err error) {
+	ctx, end := observability.Span(ctx, "dashboards.Partner",
+		"partner_id", partnerID.String())
+	defer func() { end(err) }()
+
 	p := &Partner{BillingCounters: map[string]int{}}
-	_ = s.pool.QueryRow(ctx, `
+	out = p
+	_ = s.reader().QueryRow(ctx, `
 		SELECT
 		  (SELECT COUNT(*) FROM tenants WHERE partner_id=$1),
 		  (SELECT COUNT(*) FROM tenants WHERE partner_id=$1 AND status='active'),
@@ -313,7 +324,7 @@ func (s *Service) CriticalFindings(ctx context.Context, tenantID uuid.UUID, r Ra
 		args = append(args, r.Since)
 	}
 	q += " ORDER BY last_seen DESC LIMIT $2"
-	rows, err := s.pool.Query(ctx, q, args...)
+	rows, err := s.reader().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +346,7 @@ func (s *Service) SLABreaches(ctx context.Context, tenantID uuid.UUID, limit int
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.reader().Query(ctx, `
 		SELECT id, title, severity, COALESCE(affected_endpoint, ''),
 		       COALESCE(cve, ''), status, last_seen
 		  FROM findings
@@ -382,7 +393,7 @@ func (s *Service) RecentScans(ctx context.Context, tenantID uuid.UUID, r Range, 
 		args = append(args, r.Since)
 	}
 	q += " ORDER BY j.created_at DESC LIMIT $2"
-	rows, err := s.pool.Query(ctx, q, args...)
+	rows, err := s.reader().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

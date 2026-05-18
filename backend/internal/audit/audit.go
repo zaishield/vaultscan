@@ -18,6 +18,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
+
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 // auditLogger emits a structured warning whenever Record fails so that
@@ -94,8 +96,13 @@ type Entry struct {
 // using `_ = svc.Record(...)` still produce an ops-visible signal. The
 // log carries event + actor + target so an operator can correlate the
 // missing row with the in-flight tenant operation.
-func (s *Service) Record(ctx context.Context, e Entry) error {
-	err := s.recordInner(ctx, e)
+func (s *Service) Record(ctx context.Context, e Entry) (err error) {
+	ctx, end := observability.Span(ctx, "audit.Record",
+		"event", e.Event,
+		"actor_type", e.ActorType,
+		"target_type", e.TargetType)
+	defer func() { end(err) }()
+	err = s.recordInner(ctx, e)
 	if err != nil {
 		auditLogger.Warn().Err(err).
 			Str("event", e.Event).

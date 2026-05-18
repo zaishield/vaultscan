@@ -94,6 +94,11 @@ type Services struct {
 	// can add Redis/OpenSearch/Keycloak via Services.Health.Register
 	// before calling Mount.
 	Health *health.Registry
+
+	// Limiter is the rate-limit backend chosen by Mount() during
+	// middleware wiring. Exposed so the /api/v1/usage handler can
+	// Peek() the caller's remaining tokens. nil before Mount runs.
+	Limiter middleware.Limiter
 }
 
 // Mount returns a fully wired HTTP router.
@@ -274,6 +279,9 @@ func Mount(s *Services) http.Handler {
 		if windowSec <= 0 {
 			windowSec = 60
 		}
+		// Expose the constructed limiter on Services so the /api/v1/usage
+		// handler can surface remaining-token counts via Peek().
+		s.Limiter = limiter
 		// Convert RPS-style config into limit-over-window: configured
 		// RPS × window = total requests allowed in the rolling window.
 		mid := middleware.NewRateLimitMiddleware(limiter, s.Cfg.RateLimitRPS*windowSec, windowSec)

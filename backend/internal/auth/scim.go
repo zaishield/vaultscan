@@ -279,9 +279,8 @@ func (s *SCIMServer) deleteUser(w http.ResponseWriter, r *http.Request, userID u
 
 // queryUsers translates a SCIM filter into a SQL WHERE clause.
 // Supports the operators most real-world IdPs (Okta, Azure AD,
-// JumpCloud) emit: eq, sw, ew, co, pr. Multi-clause filters (AND/OR)
-// are not supported — those IdPs that need them fall back to
-// client-side filtering by passing no filter.
+// JumpCloud) emit: eq, sw, ew, co, pr — including AND/OR composite
+// chains.
 //
 // Filter forms:
 //
@@ -290,44 +289,25 @@ func (s *SCIMServer) deleteUser(w http.ResponseWriter, r *http.Request, userID u
 //	userName ew "@example.com" — ends with
 //	userName co "alice"        — contains
 //	userName pr                — present (non-null, non-empty)
+//	A op B and C op D          — both clauses must match
+//	A op B or C op D           — either clause matches
+//
+// Mixed AND + OR is supported left-to-right without parens (no
+// precedence engine); IdPs that need parens send `?filter=` empty
+// and filter client-side.
 func (s *SCIMServer) queryUsers(ctx context.Context, tenantID uuid.UUID, filter string) ([]SCIMUser, error) {
 	q := `SELECT id, email, COALESCE(full_name,''), status,
 	             to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 	        FROM users WHERE tenant_id = $1`
 	args := []any{tenantID}
 	if filter != "" {
-		field, op, value, err := parseSCIMFilter(filter)
+		clauseSQL, clauseArgs, err := scimFilterToSQL(filter, len(args))
 		if err != nil {
 			return nil, err
 		}
-		col := ""
-		switch field {
-		case "username", "email":
-			col = "email"
-		case "id":
-			col = "id"
-		case "name.formatted", "displayname":
-			col = "full_name"
-		default:
-			return nil, fmt.Errorf("scim: filter on %q not supported", field)
-		}
-		switch op {
-		case "eq":
-			q += fmt.Sprintf(" AND %s = $%d", col, len(args)+1)
-			args = append(args, value)
-		case "sw":
-			q += fmt.Sprintf(" AND %s ILIKE $%d", col, len(args)+1)
-			args = append(args, scimLikeEscape(value)+"%")
-		case "ew":
-			q += fmt.Sprintf(" AND %s ILIKE $%d", col, len(args)+1)
-			args = append(args, "%"+scimLikeEscape(value))
-		case "co":
-			q += fmt.Sprintf(" AND %s ILIKE $%d", col, len(args)+1)
-			args = append(args, "%"+scimLikeEscape(value)+"%")
-		case "pr":
-			q += fmt.Sprintf(" AND %s IS NOT NULL AND %s <> ''", col, col)
-		default:
-			return nil, fmt.Errorf("scim: operator %q not supported", op)
+		if clauseSQL != "" {
+			q += " AND " + clauseSQL
+			args = append(args, clauseArgs...)
 		}
 	}
 	q += " ORDER BY email LIMIT 200"
@@ -358,6 +338,166 @@ func (s *SCIMServer) queryUsers(ctx context.Context, tenantID uuid.UUID, filter 
 		})
 	}
 	return out, nil
+}
+
+// scimFilterToSQL converts a SCIM filter (possibly with AND/OR
+// composites) into a SQL fragment + placeholder arg list. The
+// returned SQL is wrapped in parens so it composes safely with an
+// outer WHERE.
+//
+// argOffset is the number of $N placeholders already consumed by the
+// caller's outer query; the function emits placeholders starting at
+// argOffset+1.
+//
+// Splitting strategy: tokenise on the top-level " and "/" or "
+// connectives (case-insensitive). We do NOT support grouped parens
+// like `(a or b) and c` — those IdPs that need them MUST send no
+// filter and post-filter client-side.
+func scimFilterToSQL(filter string, argOffset int) (string, []any, error) {
+	tokens := tokeniseSCIMComposite(filter)
+	if len(tokens) == 0 {
+		return "", nil, errors.New("scim: empty filter")
+	}
+	// tokens alternate clause | connective | clause | connective | clause …
+	// odd-indexed slots are "and" / "or"; even-indexed slots are
+	// individual `field op value` clauses parsed by parseSCIMFilter.
+	if len(tokens)%2 == 0 {
+		return "", nil, errors.New("scim: trailing connective in filter")
+	}
+	// Empty trailing slot (added by the tokeniser when a connective
+	// has no following clause) is also a malformed filter.
+	for _, t := range tokens {
+		if t == "" {
+			return "", nil, errors.New("scim: trailing connective in filter")
+		}
+	}
+
+	var args []any
+	var sql strings.Builder
+	sql.WriteString("(")
+	for i, tok := range tokens {
+		if i%2 == 1 {
+			switch strings.ToLower(tok) {
+			case "and":
+				sql.WriteString(" AND ")
+			case "or":
+				sql.WriteString(" OR ")
+			default:
+				return "", nil, fmt.Errorf("scim: unknown connective %q", tok)
+			}
+			continue
+		}
+		clauseSQL, clauseArgs, err := scimAtomToSQL(tok, argOffset+len(args))
+		if err != nil {
+			return "", nil, err
+		}
+		sql.WriteString(clauseSQL)
+		args = append(args, clauseArgs...)
+	}
+	sql.WriteString(")")
+	return sql.String(), args, nil
+}
+
+// scimAtomToSQL converts a single `field op value` (or `field pr`)
+// atom into a SQL fragment + args.
+func scimAtomToSQL(atom string, argOffset int) (string, []any, error) {
+	field, op, value, err := parseSCIMFilter(atom)
+	if err != nil {
+		return "", nil, err
+	}
+	col := ""
+	switch field {
+	case "username", "email":
+		col = "email"
+	case "id":
+		col = "id"
+	case "name.formatted", "displayname":
+		col = "full_name"
+	default:
+		return "", nil, fmt.Errorf("scim: filter on %q not supported", field)
+	}
+	switch op {
+	case "eq":
+		return fmt.Sprintf("%s = $%d", col, argOffset+1), []any{value}, nil
+	case "sw":
+		return fmt.Sprintf("%s ILIKE $%d", col, argOffset+1), []any{scimLikeEscape(value) + "%"}, nil
+	case "ew":
+		return fmt.Sprintf("%s ILIKE $%d", col, argOffset+1), []any{"%" + scimLikeEscape(value)}, nil
+	case "co":
+		return fmt.Sprintf("%s ILIKE $%d", col, argOffset+1), []any{"%" + scimLikeEscape(value) + "%"}, nil
+	case "pr":
+		return fmt.Sprintf("%s IS NOT NULL AND %s <> ''", col, col), nil, nil
+	}
+	return "", nil, fmt.Errorf("scim: operator %q not supported", op)
+}
+
+// tokeniseSCIMComposite splits a filter on top-level " and "/" or "
+// connectives. Quoted values may contain those words verbatim — the
+// tokeniser respects double-quote scopes so `userName eq "user and
+// other"` stays one atom.
+func tokeniseSCIMComposite(filter string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inQuote := false
+	i := 0
+	for i < len(filter) {
+		c := filter[i]
+		if c == '"' {
+			inQuote = !inQuote
+			cur.WriteByte(c)
+			i++
+			continue
+		}
+		if !inQuote {
+			// Check for " and " or " or " at this position.
+			if matchesConnective(filter[i:], " and ") {
+				if t := strings.TrimSpace(cur.String()); t != "" {
+					tokens = append(tokens, t)
+				}
+				tokens = append(tokens, "and")
+				cur.Reset()
+				i += len(" and ")
+				continue
+			}
+			if matchesConnective(filter[i:], " or ") {
+				if t := strings.TrimSpace(cur.String()); t != "" {
+					tokens = append(tokens, t)
+				}
+				tokens = append(tokens, "or")
+				cur.Reset()
+				i += len(" or ")
+				continue
+			}
+		}
+		cur.WriteByte(c)
+		i++
+	}
+	if t := strings.TrimSpace(cur.String()); t != "" {
+		// Trailing-connective detection: if the buffer ends with a bare
+		// connective word (no value), that's a malformed filter — flag
+		// it as an empty trailing token so scimFilterToSQL surfaces the
+		// even-count error.
+		low := strings.ToLower(t)
+		if low == "and" || low == "or" {
+			tokens = append(tokens, low, "")
+		} else if strings.HasSuffix(low, " and") || strings.HasSuffix(low, " or") {
+			// e.g. `userName eq "x" and` → push the clause then an
+			// empty trailing slot so the caller sees a trailing
+			// connective.
+			cut := strings.LastIndex(low, " ")
+			tokens = append(tokens, strings.TrimSpace(t[:cut]), strings.TrimSpace(low[cut:]), "")
+		} else {
+			tokens = append(tokens, t)
+		}
+	}
+	return tokens
+}
+
+func matchesConnective(haystack, needle string) bool {
+	if len(haystack) < len(needle) {
+		return false
+	}
+	return strings.EqualFold(haystack[:len(needle)], needle)
 }
 
 // ---- helpers --------------------------------------------------------------
