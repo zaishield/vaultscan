@@ -358,6 +358,27 @@ jobs:
           grep -q "kind: Deployment$" "$F"
           grep -q "vaultscan-cron-runner" "$F" || { echo "FAIL: cron-runner missing in env=${{ matrix.env }}"; exit 1; }
 
+  terraform:
+    name: tofu validate (all clouds)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, gcp, azure, generic]
+    steps:
+      - uses: actions/checkout@v4
+      - name: install OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.7.0
+      - name: fmt check
+        run: tofu -chdir=infra/terraform fmt -check -recursive
+      - name: init without backend
+        run: tofu -chdir=infra/terraform/environments/${{ matrix.cloud }} init -backend=false
+      - name: validate
+        run: tofu -chdir=infra/terraform/environments/${{ matrix.cloud }} validate
+
   compose:
     name: docker-compose config drift
     runs-on: ubuntu-latest

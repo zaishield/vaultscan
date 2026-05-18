@@ -1,0 +1,10 @@
+environment       = "dev"
+location          = "westeurope"
+availability_zones = ["1"]
+node_vm_size      = "Standard_D2s_v5"
+node_min_size     = 1
+node_max_size     = 3
+node_desired_size = 2
+db_sku_name       = "B_Standard_B1ms"
+db_storage_mb     = 32768
+enable_db_replica = false

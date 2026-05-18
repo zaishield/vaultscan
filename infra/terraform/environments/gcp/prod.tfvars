@@ -1,0 +1,11 @@
+environment = "prod"
+project_id  = "my-gcp-project"
+region      = "europe-west1"
+node_machine_type = "n2-standard-8"
+node_min_size     = 3
+node_max_size     = 18
+node_desired_size = 6
+db_tier           = "db-custom-4-15360"
+db_storage_gb     = 500
+enable_db_replica = true
+api_public_url    = "https://api.vaultscan.zaishield.com"

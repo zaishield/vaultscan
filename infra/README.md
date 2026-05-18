@@ -6,7 +6,7 @@ VaultScan that lives outside the application code itself.
 ```
 infra/
 ├── compose/          dev stack (docker-compose; not for staging+ use)
-├── helm/             Helm chart — the ONLY supported production path
+├── helm/             Helm chart — the supported in-cluster deploy
 │   └── vaultscan/
 │       ├── values.yaml            baseline (production-shaped)
 │       ├── values-dev.yaml        single-replica overlay
@@ -16,6 +16,16 @@ infra/
 │       ├── values.kind.yaml       kind-cluster CI overlay
 │       ├── templates/             deployment / service / ingress / RBAC / etc.
 │       └── kind-cluster.yaml      kind config used by deploy-verify.sh
+├── terraform/        cloud-agnostic IaC (OpenTofu / Terraform)
+│   ├── modules/
+│   │   ├── kubernetes/{aws,gcp,azure,generic}/    cluster provisioning
+│   │   ├── database/{aws,gcp,azure,generic}/      managed Postgres
+│   │   ├── object-storage/{aws,gcp,azure,generic} S3-equivalent
+│   │   ├── opensearch/{aws,generic}/              analytics index
+│   │   └── vaultscan/                             Helm install wrapper
+│   └── environments/{aws,gcp,azure,generic}/
+│       ├── main.tf  variables.tf  outputs.tf  backend.tf  versions.tf
+│       ├── dev.tfvars  staging.tfvars  uat.tfvars  prod.tfvars
 ├── images/           images that are NOT the application binary
 │   └── restore-verify/    alpine + pg_restore + awscli for the DR drill
 ├── keycloak/         realm-import JSON used by the compose stack
@@ -24,18 +34,20 @@ infra/
 
 ## What to use for each environment
 
-| Environment | Path |
-| --- | --- |
-| Local dev (single dev box) | `make bootstrap` → `infra/compose/docker-compose.yml` |
-| CI kind smoke | `infra/helm/deploy-verify.sh` + `values.kind.yaml` |
-| Shared dev cluster | `make helm-dev` → `values-dev.yaml` |
-| Staging cluster | `make helm-staging` → `values-staging.yaml` |
-| UAT cluster | `make helm-uat` → `values-uat.yaml` |
-| Production cluster | `make helm-prod` → `values-prod.yaml` |
+| Environment | Infra (one of) | App layer |
+| --- | --- | --- |
+| Local dev (single dev box) | n/a (docker-compose) | `make bootstrap` |
+| Shared dev cluster | `make tf-apply CLOUD=… ENV=dev` | bundled in same apply (Helm chart) |
+| Staging cluster | `make tf-apply CLOUD=… ENV=staging` | bundled |
+| UAT cluster | `make tf-apply CLOUD=… ENV=uat` | bundled |
+| Production cluster | `make tf-apply CLOUD=… ENV=prod` | bundled |
+| CI kind smoke (chart only) | `infra/helm/deploy-verify.sh` | uses values.kind.yaml |
 
-There are no Terraform modules in this repo — the chart assumes the
-cluster, managed Postgres, OpenSearch, and object store are
-pre-provisioned by the platform team's IaC tree (out of scope here).
+`CLOUD` is one of `aws | gcp | azure | generic`. The same composition
+works against any of them — only the module sources differ. The
+Helm chart is invoked from inside the Terraform composition; you
+can also `make helm-<env>` separately if the cluster is already
+provisioned.
 
 ## What used to live under `infra/k8s/`
 

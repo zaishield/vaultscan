@@ -230,3 +230,70 @@ helm-prod: ## Install/upgrade production — operator MUST review the diff first
 	@read -r -p "Type 'yes' to proceed with helm upgrade: " ans && [ "$$ans" = "yes" ]
 	$(HELM) upgrade --install $(RELEASE) $(CHART) -n $(NAMESPACE) --create-namespace \
 	  -f $(CHART)/values-prod.yaml $(EXTRA)
+
+# ----------------------------------------------------------------------------
+# Terraform / OpenTofu — cloud-agnostic IaC
+# ----------------------------------------------------------------------------
+#
+# Usage:
+#   make tf-init   CLOUD=aws ENV=dev
+#   make tf-plan   CLOUD=aws ENV=prod
+#   make tf-apply  CLOUD=gcp ENV=staging
+#   make tf-destroy CLOUD=generic ENV=dev
+#
+# CLOUD must be one of: aws | gcp | azure | generic
+# ENV   must be one of: dev | staging | uat | prod
+#
+# Defaults to OpenTofu (TF=tofu). Override TF=terraform to use HashiCorp's
+# binary. The compositions are byte-identical between the two.
+
+TF       ?= tofu
+TF_DIR    = infra/terraform/environments/$(CLOUD)
+TFVARS    = $(TF_DIR)/$(ENV).tfvars
+
+.PHONY: tf-init tf-fmt tf-validate tf-plan tf-apply tf-destroy tf-output
+
+tf-fmt: ## Format every Terraform file under infra/terraform/
+	$(TF) -chdir=infra/terraform fmt -recursive
+
+tf-validate: tf-guard ## Validate the active CLOUD composition (no apply)
+	$(TF) -chdir=$(TF_DIR) init -backend=false
+	$(TF) -chdir=$(TF_DIR) validate
+
+tf-init: tf-guard ## tofu init (initializes the backend)
+	$(TF) -chdir=$(TF_DIR) init
+
+tf-plan: tf-guard tfvars-guard ## tofu plan -var-file=ENV.tfvars
+	$(TF) -chdir=$(TF_DIR) plan -var-file=$(ENV).tfvars
+
+tf-apply: tf-guard tfvars-guard ## tofu apply for non-prod; production prompts
+	@if [ "$(ENV)" = "prod" ]; then \
+	  printf '\033[1;31m!! PRODUCTION TERRAFORM APPLY — review plan first\033[0m\n'; \
+	  $(TF) -chdir=$(TF_DIR) plan -var-file=$(ENV).tfvars; \
+	  read -r -p "Type 'yes' to apply: " ans && [ "$$ans" = "yes" ] || exit 1; \
+	fi
+	$(TF) -chdir=$(TF_DIR) apply -var-file=$(ENV).tfvars
+
+tf-destroy: tf-guard tfvars-guard ## tofu destroy — production refuses
+	@if [ "$(ENV)" = "prod" ]; then \
+	  printf '\033[1;31m!! refusing tf-destroy on prod via Makefile. Run tofu destroy manually after confirming with on-call.\033[0m\n'; \
+	  exit 1; \
+	fi
+	$(TF) -chdir=$(TF_DIR) destroy -var-file=$(ENV).tfvars
+
+tf-output: tf-guard ## Show outputs of the active composition
+	$(TF) -chdir=$(TF_DIR) output
+
+# Internal: refuse to run with a missing CLOUD or unsupported value.
+tf-guard:
+	@case "$(CLOUD)" in \
+	  aws|gcp|azure|generic) : ;; \
+	  *) echo "CLOUD must be one of: aws | gcp | azure | generic"; exit 1 ;; \
+	esac
+
+tfvars-guard:
+	@case "$(ENV)" in \
+	  dev|staging|uat|prod) : ;; \
+	  *) echo "ENV must be one of: dev | staging | uat | prod"; exit 1 ;; \
+	esac
+	@test -f "$(TFVARS)" || { echo "missing $(TFVARS)"; exit 1; }

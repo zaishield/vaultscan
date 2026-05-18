@@ -1,0 +1,10 @@
+environment       = "prod"
+location          = "westeurope"
+node_vm_size      = "Standard_D8s_v5"
+node_min_size     = 3
+node_max_size     = 18
+node_desired_size = 6
+db_sku_name       = "GP_Standard_D4s_v3"
+db_storage_mb     = 524288
+enable_db_replica = true
+api_public_url    = "https://api.vaultscan.zaishield.com"

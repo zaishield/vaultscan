@@ -1,0 +1,9 @@
+environment = "uat"
+project_id  = "my-gcp-project"
+region      = "europe-west1"
+node_machine_type = "e2-standard-4"
+node_desired_size = 3
+db_tier           = "db-custom-2-7680"
+db_storage_gb     = 200
+enable_db_replica = true
+api_public_url    = "https://api-uat.vaultscan.zaishield.com"

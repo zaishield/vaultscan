@@ -1,0 +1,11 @@
+environment = "dev"
+project_id  = "my-gcp-project"   # CHANGE ME
+region      = "europe-west1"
+zones       = ["europe-west1-b"]
+node_machine_type = "e2-medium"
+node_min_size     = 1
+node_max_size     = 3
+node_desired_size = 2
+db_tier           = "db-custom-1-3840"
+db_storage_gb     = 50
+enable_db_replica = false
