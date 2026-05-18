@@ -6,8 +6,18 @@ Release: {{ .Release.Name }}  Namespace: {{ .Release.Namespace }}
 Components:
   • API:               {{ include "vaultscan.fullname" . }}-api               ({{ .Values.api.replicaCount }} replicas)
   • Agent gateway:     {{ include "vaultscan.fullname" . }}-agent-gateway     ({{ .Values.agentGateway.replicaCount }} replicas)
+  {{- if .Values.portal.enabled }}
   • Portal:            {{ include "vaultscan.fullname" . }}-portal            ({{ .Values.portal.replicaCount }} replicas)
+  {{- end }}
+  {{- if .Values.analyticsWorker.enabled }}
   • Analytics worker:  {{ include "vaultscan.fullname" . }}-analytics-worker  ({{ .Values.analyticsWorker.replicaCount }} replicas)
+  {{- end }}
+  {{- if .Values.cronRunner.enabled }}
+  • Cron runner:       {{ include "vaultscan.fullname" . }}-cron-runner       ({{ .Values.cronRunner.replicaCount }} replicas)
+  {{- end }}
+  {{- if .Values.scannerWorker.enabled }}
+  • Scanner regions:   {{ len .Values.scannerWorker.regions }}
+  {{- end }}
 
 URLs:
 {{- range .Values.portal.ingress.hosts }}

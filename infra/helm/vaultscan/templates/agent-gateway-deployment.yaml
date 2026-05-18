@@ -16,6 +16,9 @@ spec:
       # complete before SIGKILL — agents otherwise retry the same
       # upload against another pod.
       terminationGracePeriodSeconds: 60
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "vaultscan.podSecurityContext" . | nindent 8 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -23,23 +26,30 @@ spec:
         - name: agent-gateway
           image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.agentGateway.image.repository "tag" .Values.agentGateway.image.tag) }}
           imagePullPolicy: {{ .Values.agentGateway.image.pullPolicy | default "IfNotPresent" }}
+          securityContext:
+            {{- include "vaultscan.containerSecurityContext" . | nindent 12 }}
           ports: [{ name: tls, containerPort: 8443 }]
           envFrom: {{- include "vaultscan.envFrom" (dict "root" .) | nindent 12 }}
           readinessProbe:
+            # Probe runs over plain HTTP on the mTLS port — the
+            # /healthz handler is mounted on a non-TLS listener
+            # inside the binary specifically for kubelet probes.
             httpGet: { path: /healthz, port: tls }
+            initialDelaySeconds: 3
             periodSeconds: 5
             failureThreshold: 2
           livenessProbe:
             httpGet: { path: /healthz, port: tls }
             periodSeconds: 15
             failureThreshold: 3
-          lifecycle:
-            preStop:
-              # 15s drain — readinessProbe will go red and the
-              # service stops routing new connections before SIGTERM.
-              exec:
-                command: ["/bin/sh", "-c", "sleep 15"]
+          # Distroless — no /bin/sh for sleep. SIGTERM handler in
+          # the binary drains mTLS sessions within the grace period.
+          lifecycle: {}
           resources: {{- toYaml .Values.agentGateway.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: { sizeLimit: 256Mi } }
 ---
 apiVersion: v1
 kind: Service

@@ -313,18 +313,47 @@ jobs:
           fi
 
   helm:
-    name: helm chart lint
+    name: helm chart lint + per-env render
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [dev, staging, uat, prod]
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.0
-      - run: helm lint infra/helm/vaultscan
-      - run: helm template infra/helm/vaultscan --debug > /tmp/render.yaml
-      - name: verify pod security context rendered
+      - name: lint default values
+        run: helm lint infra/helm/vaultscan
+      - name: lint ${{ matrix.env }} overlay
+        run: helm lint infra/helm/vaultscan -f infra/helm/vaultscan/values-${{ matrix.env }}.yaml
+      - name: template ${{ matrix.env }} overlay
         run: |
-          grep -q "readOnlyRootFilesystem: true" /tmp/render.yaml
-          grep -q "runAsNonRoot: true"           /tmp/render.yaml
-          grep -q "seccompProfile"               /tmp/render.yaml
+          helm template vaultscan infra/helm/vaultscan \
+            -f infra/helm/vaultscan/values-${{ matrix.env }}.yaml \
+            --debug > /tmp/render-${{ matrix.env }}.yaml
+      - name: verify pod security context rendered on every workload
+        run: |
+          set -euo pipefail
+          F=/tmp/render-${{ matrix.env }}.yaml
+          for w in api agent-gateway analytics-worker cron-runner; do
+            kind="Deployment"
+            # readOnlyRootFilesystem must appear at least once per workload
+            # the chart deploys. Skip if the env disables that workload.
+            if grep -q "name: vaultscan-${w}$" "$F"; then
+              if ! awk "/name: vaultscan-${w}$/,/^---/" "$F" | grep -q "readOnlyRootFilesystem: true"; then
+                echo "FAIL: ${w} in env=${{ matrix.env }} missing readOnlyRootFilesystem"
+                exit 1
+              fi
+            fi
+          done
+          # Universal security must always appear somewhere.
+          grep -q "runAsNonRoot: true" "$F"
+          grep -q "seccompProfile"     "$F"
+      - name: verify cron-runner is deployed (every env)
+        run: |
+          F=/tmp/render-${{ matrix.env }}.yaml
+          grep -q "kind: Deployment$" "$F"
+          grep -q "vaultscan-cron-runner" "$F" || { echo "FAIL: cron-runner missing in env=${{ matrix.env }}"; exit 1; }

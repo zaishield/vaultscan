@@ -1,0 +1,114 @@
+# values-dev.yaml — local / shared dev cluster.
+#
+# Posture: minimal replicas, in-cluster Postgres/MinIO, dev-token auth
+# enabled, signed images NOT required, inbound webhook signatures NOT
+# required (operators can populate secrets as they go).
+#
+# Apply:
+#   helm upgrade --install vaultscan infra/helm/vaultscan \
+#     -f infra/helm/vaultscan/values-dev.yaml \
+#     --set "secrets.inline.databaseURL=postgres://..." \
+#     --set "databases.external.postgresURL=postgres://..."
+
+global:
+  imageRegistry: registry.zaishield.com
+  imageRepositoryPrefix: vaultscan
+  imageTag: "dev"
+  env: development
+  region: ""                    # single-region dev — residency check no-ops
+  podAnnotations: {}
+
+api:
+  replicaCount: 1
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi"   }
+  autoscaling:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+  ingress:
+    enabled: false
+  rateLimitRPS: 1000             # generous for dev so tests aren't throttled
+  rateLimitBackend: memory
+  requireInboundSignatures: "false"
+  publicURL: ""
+
+agentGateway:
+  replicaCount: 1
+  service:
+    type: ClusterIP              # no LB in dev
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
+  podDisruptionBudget:
+    enabled: false
+
+portal:
+  enabled: true
+  replicaCount: 1
+  ingress:
+    enabled: false
+  resources:
+    requests: { cpu: "50m",  memory: "64Mi"  }
+    limits:   { cpu: "200m", memory: "256Mi" }
+  podDisruptionBudget:
+    enabled: false
+
+analyticsWorker:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
+
+cronRunner:
+  enabled: true
+  replicaCount: 1
+  podDisruptionBudget:
+    enabled: false
+
+scannerWorker:
+  enabled: false                  # dev typically runs nuclei/zap locally
+  requireSignedImages: "false"
+
+databases:
+  external:
+    # Populated via --set on install — dev typically runs Postgres
+    # via the deploy-verify.sh script's bitnami sidecar.
+    postgresURL: ""
+    postgresReplicaURL: ""        # no replica in dev
+    opensearchURL: ""
+    objectStoreURL: ""
+    keycloakIssuer: ""
+    eventBusURL: ""
+
+# Inline secrets so the dev installer doesn't need pre-created Secrets.
+secrets:
+  existingSecret: ""
+  inline:
+    databaseURL: ""
+    jwtSecret: "dev-jwt-secret-deliberately-long-enough-to-pass-validator-xxxxxxxx"
+    evidenceMasterKey: "Ynl0ZXMtZ2VuZXJhdGVkLWZvci1kZXYtdXNlLW9ubHktbm90LXByb2QyAA=="
+    jobSigningKey: ""
+    objectStoreKey: "devminio"
+    objectStoreSecret: "devminio-secret-please-rotate-in-prod"
+
+networkPolicies:
+  enabled: false                  # CNI in dev clusters often doesn't support them
+
+serviceMonitor:
+  enabled: false
+metrics:
+  prometheusRule:
+    enabled: false
+
+pgbouncer:
+  enabled: false                  # not needed at dev replica count
+backup:
+  enabled: false
+restoreVerify:
+  enabled: false
+kyverno:
+  cosignVerifyPolicy:
+    enabled: false

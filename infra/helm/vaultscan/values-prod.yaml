@@ -1,0 +1,177 @@
+# values-prod.yaml — production.
+#
+# Posture: strict everything. Every gate enforced, autoscaling on, PDBs
+# minAvailable >= 2 where possible, network policies on, signed images
+# required, inbound HMAC required, Kyverno cosign enforce, backups +
+# restore-verify on, replicated Postgres with pgBouncer in front.
+#
+# What an operator MUST override per region (via --set or a region-
+# specific overlay):
+#   - global.region                — eu | us | ae | ...
+#   - databases.external.*         — managed Postgres / OpenSearch / S3
+#   - api.ingress.hosts[0].host    — region-specific DNS
+#   - portal.ingress.hosts[0].host — region-specific DNS
+#   - secrets.existingSecret       — SealedSecret / External Secret reference
+#
+# This file is the BASELINE production posture; regional overlays go
+# on top via -f values-prod.yaml -f values-prod-eu.yaml.
+
+global:
+  imageRegistry: registry.zaishield.com
+  imageRepositoryPrefix: vaultscan
+  imageTag: ""                    # release pipeline pins to git-SHA / SemVer
+  env: production
+  region: ""                      # MUST set per-cluster
+  brandingDefaultPartnerSlug: zaishield-direct
+
+api:
+  replicaCount: 3
+  resources:
+    requests: { cpu: "1",   memory: "1Gi" }
+    limits:   { cpu: "4",   memory: "8Gi" }
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: api.vaultscan.zaishield.com
+        paths: ["/"]
+    tls:
+      - secretName: vaultscan-api-tls
+        hosts: [api.vaultscan.zaishield.com]
+  rateLimitRPS: 100
+  rateLimitBackend: redis
+  rateLimitRedisAddr: "redis.vaultscan-data:6379"
+  requireInboundSignatures: "true"
+  auditExportHardCap: "10000000"
+  publicURL: "https://api.vaultscan.zaishield.com"
+
+agentGateway:
+  replicaCount: 3
+  service:
+    type: LoadBalancer
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+portal:
+  enabled: true
+  replicaCount: 3
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: vaultscan.zaishield.com
+        paths: ["/"]
+    tls:
+      - secretName: vaultscan-portal-tls
+        hosts: [vaultscan.zaishield.com]
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+analyticsWorker:
+  enabled: true
+  replicaCount: 2
+
+cronRunner:
+  enabled: true
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+scannerWorker:
+  enabled: true
+  requireSignedImages: "true"
+  imageRegistry: registry.zaishield.com/vaultscan/scanners
+  # Per-region scanner farm. Each region gets its own Deployment +
+  # namespace + RBAC + NetworkPolicy.
+  regions:
+    - name: us-east-1
+      replicaCount: 3
+    - name: eu-west-1
+      replicaCount: 2
+    - name: ap-south-1
+      replicaCount: 2
+  networkPolicyEgress:
+    - to:
+        - ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] }
+
+databases:
+  external:
+    postgresURL: ""               # SealedSecret reference, never inlined
+    postgresReplicaURL: ""        # streaming replica recommended in production
+    opensearchURL: ""
+    objectStoreURL: ""
+    objectStoreBucket: vaultscan-evidence
+    objectStoreRegion: "us-east-1"
+    keycloakIssuer: "https://auth.vaultscan.zaishield.com/realms/vaultscan"
+    eventBusURL: "nats://nats.vaultscan-data:4222"
+
+secrets:
+  existingSecret: vaultscan-api-env
+
+networkPolicies:
+  enabled: true
+serviceMonitor:
+  enabled: true
+metrics:
+  prometheusRule:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+pgbouncer:
+  enabled: true
+  transaction:
+    replicaCount: 3
+    maxClientConn: 500
+    defaultPoolSize: 30
+    reservePoolSize: 5
+  session:
+    replicaCount: 2
+    maxClientConn: 50
+    defaultPoolSize: 8
+
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  pgHost: pgbouncer-session.vaultscan-data
+  pgUser: vaultscan
+  pgDatabase: vaultscan
+  pgSecretName: vaultscan-postgres-credentials
+  s3Bucket: vaultscan-backups
+  s3Endpoint: https://s3.amazonaws.com
+  s3SecretName: vaultscan-backup-s3-credentials
+  retention:
+    daily: 14
+    weekly: 8
+    monthly: 24
+
+restoreVerify:
+  enabled: true
+  schedule: "0 4 * * *"
+
+kyverno:
+  cosignVerifyPolicy:
+    enabled: true
+    action: enforce
+    imageRefPattern: "registry.zaishield.com/vaultscan/*"
+    subjectRegex: "https://github.com/zaishield/vaultscan/.*"
+
+# Observability — in production, point at the cluster's OTel collector.
+observability:
+  otelExporter: otlp
+  otelEndpoint: "otel-collector.observability:4318"

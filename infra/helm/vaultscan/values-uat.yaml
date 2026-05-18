@@ -1,0 +1,136 @@
+# values-uat.yaml — UAT (customer acceptance) cluster.
+#
+# Posture: a near-production environment that a partner / pilot
+# customer drives directly. Identical security gates to production
+# but a separate identity provider tenant, isolated databases, and
+# distinct branded DNS so the customer sees what they will see at
+# go-live. UAT data is treated as real customer data (NDA / DPA
+# obligations apply) so backups are enabled and Kyverno enforces.
+
+global:
+  imageRegistry: registry.zaishield.com
+  imageRepositoryPrefix: vaultscan
+  imageTag: ""                    # release pipeline sets UAT tag
+  env: production                 # enforce every production gate
+  # UAT may be region-pinned per customer contract. Operators override
+  # via --set when the customer requires e.g. EU residency.
+  region: ""
+
+api:
+  replicaCount: 2
+  resources:
+    requests: { cpu: "1",   memory: "1Gi" }
+    limits:   { cpu: "4",   memory: "4Gi" }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: api-uat.vaultscan.zaishield.com
+        paths: ["/"]
+    tls:
+      - secretName: vaultscan-api-uat-tls
+        hosts: [api-uat.vaultscan.zaishield.com]
+  rateLimitRPS: 100
+  rateLimitBackend: redis
+  rateLimitRedisAddr: "redis.vaultscan-uat:6379"
+  requireInboundSignatures: "true"
+  publicURL: "https://api-uat.vaultscan.zaishield.com"
+
+agentGateway:
+  replicaCount: 2
+  service:
+    type: LoadBalancer
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+portal:
+  enabled: true
+  replicaCount: 2
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: uat.vaultscan.zaishield.com
+        paths: ["/"]
+    tls:
+      - secretName: vaultscan-portal-uat-tls
+        hosts: [uat.vaultscan.zaishield.com]
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+analyticsWorker:
+  enabled: true
+  replicaCount: 2
+
+cronRunner:
+  enabled: true
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+scannerWorker:
+  enabled: true
+  requireSignedImages: "true"
+  regions:
+    - name: us-east-1
+      replicaCount: 2
+  networkPolicyEgress:
+    - to:
+        - ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] }
+
+databases:
+  external:
+    postgresURL: ""               # operator-set via SealedSecret reference
+    postgresReplicaURL: ""
+    opensearchURL: ""
+    objectStoreURL: ""
+    objectStoreBucket: vaultscan-evidence-uat
+    keycloakIssuer: "https://auth-uat.vaultscan.zaishield.com/realms/vaultscan"
+    eventBusURL: "nats://nats.vaultscan-uat:4222"
+
+secrets:
+  existingSecret: vaultscan-api-env-uat
+
+networkPolicies:
+  enabled: true
+serviceMonitor:
+  enabled: true
+metrics:
+  prometheusRule:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+pgbouncer:
+  enabled: true
+  transaction: { replicaCount: 2, maxClientConn: 300, defaultPoolSize: 25, reservePoolSize: 5 }
+  session:     { replicaCount: 1, maxClientConn: 40,  defaultPoolSize: 6 }
+
+backup:
+  enabled: true
+  schedule: "0 1 * * *"
+  pgHost: pgbouncer-uat.vaultscan-data
+  s3Bucket: vaultscan-backups-uat
+restoreVerify:
+  enabled: true
+  schedule: "0 3 * * *"
+
+kyverno:
+  cosignVerifyPolicy:
+    enabled: true
+    action: enforce               # block unsigned images — UAT IS customer data

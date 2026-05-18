@@ -28,14 +28,24 @@ spec:
       # before kubelet sends SIGTERM, so no request lands on a
       # half-shut-down api process.
       terminationGracePeriodSeconds: 45
+      # The API never calls the K8s API — disable token mount.
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "vaultscan.podSecurityContext" . | nindent 8 }}
       containers:
         - name: api
           image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.api.image.repository "tag" .Values.api.image.tag) }}
           imagePullPolicy: {{ .Values.api.image.pullPolicy | default "IfNotPresent" }}
+          securityContext:
+            {{- include "vaultscan.containerSecurityContext" . | nindent 12 }}
           ports: [{ name: http, containerPort: 8080 }]
           envFrom: {{- include "vaultscan.envFrom" (dict "root" .) | nindent 12 }}
           readinessProbe:
+            # /readyz isn't ready until DB + audit-chain checks pass.
+            # initialDelaySeconds=2 avoids the first probe arriving
+            # before the listener binds.
             httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 2
             periodSeconds: 5
             failureThreshold: 2
           livenessProbe:
@@ -46,11 +56,16 @@ spec:
           # requests drain. /readyz starts failing immediately so
           # the LB removes us from rotation; the sleep gives kube-
           # proxy + ingress time to propagate the change.
-          lifecycle:
-            preStop:
-              exec:
-                command: ["/bin/sh", "-c", "sleep 15"]
+          # Distroless has no /bin/sh — use the API binary's
+          # built-in graceful shutdown which the SIGTERM handler
+          # picks up. The sleep is approximated by
+          # terminationGracePeriodSeconds + readinessProbe failure.
+          lifecycle: {}
           resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: { sizeLimit: 256Mi } }
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}

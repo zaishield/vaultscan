@@ -4,14 +4,23 @@ metadata:
   name: {{ include "vaultscan.fullname" . }}-config
   labels: {{- include "vaultscan.labels" . | nindent 4 }}
 data:
+  # ----- Core env ----------------------------------------------------------
   VAULTSCAN_ENV: {{ .Values.global.env | quote }}
   VAULTSCAN_API_ADDR: ":8080"
   VAULTSCAN_AGENT_GATEWAY_ADDR: ":8443"
   VAULTSCAN_BRANDING_DEFAULT: {{ .Values.global.brandingDefaultPartnerSlug | quote }}
-  VAULTSCAN_RATE_LIMIT_RPS: {{ .Values.api.rateLimitRPS | quote }}
-  VAULTSCAN_EMERGENCY_STOP_MAX_LATENCY: {{ .Values.api.emergencyStopMaxLatencySeconds | quote }}
+
+  # ----- Deployment-zone ---------------------------------------------------
+  {{- with .Values.global.region }}
+  VAULTSCAN_REGION: {{ . | quote }}
+  {{- end }}
+
+  # ----- Database / search / object-store / SSO endpoints -----------------
   {{- with .Values.databases.external.postgresURL }}
   VAULTSCAN_DATABASE_URL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.databases.external.postgresReplicaURL }}
+  VAULTSCAN_DATABASE_REPLICA_URL: {{ . | quote }}
   {{- end }}
   {{- with .Values.databases.external.opensearchURL }}
   VAULTSCAN_OPENSEARCH_URL: {{ . | quote }}
@@ -22,9 +31,42 @@ data:
   {{- with .Values.databases.external.objectStoreBucket }}
   VAULTSCAN_OBJECT_STORE_BUCKET: {{ . | quote }}
   {{- end }}
+  {{- with .Values.databases.external.objectStoreRegion }}
+  VAULTSCAN_OBJECT_STORE_REGION: {{ . | quote }}
+  {{- end }}
   {{- with .Values.databases.external.keycloakIssuer }}
   VAULTSCAN_KEYCLOAK_ISSUER: {{ . | quote }}
   {{- end }}
   {{- with .Values.databases.external.eventBusURL }}
   VAULTSCAN_EVENTBUS_URL: {{ . | quote }}
+  {{- end }}
+
+  # ----- Rate-limit + quota policy ----------------------------------------
+  VAULTSCAN_RATE_LIMIT_RPS: {{ .Values.api.rateLimitRPS | quote }}
+  VAULTSCAN_RATE_LIMIT_WINDOW_SEC: {{ .Values.api.rateLimitWindowSec | default 60 | quote }}
+  VAULTSCAN_RATE_LIMIT_TENANT_MULTIPLIER: {{ .Values.api.perTenantRateLimitMultiplier | default 10 | quote }}
+  VAULTSCAN_RATE_LIMIT_BACKEND: {{ .Values.api.rateLimitBackend | default "memory" | quote }}
+  {{- with .Values.api.rateLimitRedisAddr }}
+  VAULTSCAN_RATE_LIMIT_REDIS_ADDR: {{ . | quote }}
+  {{- end }}
+
+  # ----- Operational policy gates -----------------------------------------
+  VAULTSCAN_EMERGENCY_STOP_MAX_LATENCY: {{ .Values.api.emergencyStopMaxLatencySeconds | quote }}
+  VAULTSCAN_REQUIRE_INBOUND_SIG: {{ .Values.api.requireInboundSignatures | default "true" | quote }}
+  VAULTSCAN_REQUIRE_SIGNED_IMAGES: {{ .Values.scannerWorker.requireSignedImages | default "true" | quote }}
+  VAULTSCAN_AUDIT_EXPORT_HARD_CAP: {{ .Values.api.auditExportHardCap | default "10000000" | quote }}
+  VAULTSCAN_DEK_ROTATION_DAYS: {{ .Values.cronRunner.dekRotationDays | default "90" | quote }}
+  VAULTSCAN_DEK_REWRAP_BATCH: {{ .Values.cronRunner.dekRewrapBatch | default "500" | quote }}
+
+  # ----- Tracing / observability ------------------------------------------
+  {{- with .Values.observability.otelExporter }}
+  VAULTSCAN_OTEL_EXPORTER: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.observability.otelEndpoint }}
+  VAULTSCAN_OTEL_ENDPOINT: {{ . | quote }}
+  {{- end }}
+
+  # ----- API public URL (used by scanner-worker bootstrap) ----------------
+  {{- with .Values.api.publicURL }}
+  VAULTSCAN_API_PUBLIC_URL: {{ . | quote }}
   {{- end }}

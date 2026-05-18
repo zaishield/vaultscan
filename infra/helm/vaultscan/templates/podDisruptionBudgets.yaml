@@ -37,7 +37,7 @@ spec:
 {{- end }}
 {{- end }}
 
-{{- if .Values.analyticsWorker.enabled }}
+{{- if and .Values.analyticsWorker.enabled (gt (.Values.analyticsWorker.replicaCount | int) 1) }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -53,7 +53,7 @@ spec:
     matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "analytics-worker") | nindent 6 }}
 {{- end }}
 
-{{- if .Values.portal.enabled }}
+{{- if and .Values.portal.enabled .Values.portal.podDisruptionBudget.enabled (gt (.Values.portal.replicaCount | int) 1) }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -63,8 +63,8 @@ metadata:
 spec:
   # Portal is customer-facing static-asset serving. Any node drain
   # without a PDB can yank all replicas at once and cause a 30-60s
-  # outage while replacements come up.
-  minAvailable: 2
+  # outage while replacements come up. minAvailable from values.
+  minAvailable: {{ .Values.portal.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "portal") | nindent 6 }}
 {{- end }}

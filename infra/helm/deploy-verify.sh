@@ -56,21 +56,23 @@ docker push localhost:5000/vaultscan/api:kind-test
 
 # Optional companion images. Skip if their Dockerfile isn't present so
 # the script works during partial migrations.
-for image in agent-gateway portal analytics-worker; do
+for image in agent-gateway portal analytics-worker cron-runner scanner-worker; do
   dockerfile=""
+  context="$ROOT/backend"
   case "$image" in
     agent-gateway)    dockerfile="$ROOT/backend/cmd/agent-gateway/Dockerfile" ;;
-    portal)           dockerfile="$ROOT/frontend/Dockerfile" ;;
+    portal)           dockerfile="$ROOT/frontend/Dockerfile";       context="$ROOT/frontend" ;;
     analytics-worker) dockerfile="$ROOT/backend/cmd/analytics-worker/Dockerfile" ;;
+    cron-runner)      dockerfile="$ROOT/backend/cmd/cron-runner/Dockerfile" ;;
+    scanner-worker)   dockerfile="$ROOT/backend/cmd/scanner-worker/Dockerfile" ;;
   esac
   if [ -n "$dockerfile" ] && [ -f "$dockerfile" ]; then
     log "building $image image"
     docker build -t "localhost:5000/vaultscan/$image:kind-test" \
-      -f "$dockerfile" "$(dirname "$dockerfile")"
+      -f "$dockerfile" "$context"
     docker push "localhost:5000/vaultscan/$image:kind-test"
   else
     log "skipping $image (no Dockerfile yet — using placeholder)"
-    # Tag a tiny image as the placeholder so the chart can render.
     docker pull -q nginxinc/nginx-unprivileged:1.27-alpine >/dev/null
     docker tag nginxinc/nginx-unprivileged:1.27-alpine "localhost:5000/vaultscan/$image:kind-test"
     docker push -q "localhost:5000/vaultscan/$image:kind-test" >/dev/null

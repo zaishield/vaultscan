@@ -39,6 +39,8 @@ spec:
                   value: {{ .Values.backup.pgHost | quote }}
                 - name: PGUSER
                   value: {{ .Values.backup.pgUser | quote }}
+                - name: PGDATABASE
+                  value: {{ .Values.backup.pgDatabase | default "vaultscan" | quote }}
                 - name: PGPASSWORD
                   valueFrom:
                     secretKeyRef:
@@ -63,12 +65,18 @@ spec:
                 - |
                   set -euo pipefail
                   STAMP=$(date -u +%Y-%m-%dT%H-%M-%S)
-                  DEST="s3://${S3_BUCKET}/$(date -u +%Y-%m-%d)/vaultscan-${STAMP}.sql.gz"
-                  echo "Dumping ${PGHOST} to ${DEST}"
-                  pg_dump --format=custom --no-owner --no-privileges --jobs=4 \
+                  DEST="s3://${S3_BUCKET}/$(date -u +%Y-%m-%d)/vaultscan-${STAMP}.dump.gz"
+                  echo "Dumping ${PGUSER}@${PGHOST}/${PGDATABASE} to ${DEST}"
+                  # pg_dump connects via PGHOST/PGUSER/PGPASSWORD/PGDATABASE
+                  # env vars; the positional arg is the database name only.
+                  # --format=custom is mandatory for --jobs (parallel dump).
+                  # Note: --jobs requires the directory format on disk; we
+                  # write to stdout instead, so drop --jobs and rely on
+                  # gzip --best for compression speed.
+                  pg_dump --format=custom --no-owner --no-privileges \
                           --exclude-table-data='bus_events' \
                           --exclude-table-data='auth_ip_failures' \
-                          ${PGUSER}@${PGHOST} \
+                          "${PGDATABASE}" \
                     | gzip --best \
                     | aws s3 cp --endpoint-url "${S3_ENDPOINT}" - "${DEST}" \
                           --metadata cluster=$(hostname) \
@@ -76,8 +84,9 @@ spec:
                   echo "Verifying upload..."
                   aws s3 ls --endpoint-url "${S3_ENDPOINT}" "${DEST}"
                   echo "Tagging retention=daily on object"
+                  KEY="${DEST#s3://${S3_BUCKET}/}"
                   aws s3api put-object-tagging --endpoint-url "${S3_ENDPOINT}" \
-                       --bucket "${S3_BUCKET}" --key "$(echo ${DEST} | sed 's|s3://[^/]*/||')" \
+                       --bucket "${S3_BUCKET}" --key "${KEY}" \
                        --tagging 'TagSet=[{Key=retention,Value=daily}]'
               volumeMounts:
                 - name: tmp

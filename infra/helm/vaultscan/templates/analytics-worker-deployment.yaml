@@ -14,6 +14,9 @@ spec:
       # Analytics worker batches event-bus events into the warehouse;
       # 45s grace lets the in-flight batch flush before SIGKILL.
       terminationGracePeriodSeconds: 45
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "vaultscan.podSecurityContext" . | nindent 8 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -21,7 +24,13 @@ spec:
         - name: analytics-worker
           image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.analyticsWorker.image.repository "tag" .Values.analyticsWorker.image.tag) }}
           imagePullPolicy: {{ .Values.analyticsWorker.image.pullPolicy | default "IfNotPresent" }}
+          securityContext:
+            {{- include "vaultscan.containerSecurityContext" . | nindent 12 }}
           envFrom: {{- include "vaultscan.envFrom" (dict "root" .) | nindent 12 }}
           env:
             - { name: VAULTSCAN_ANALYTICS_INPROC, value: "false" }
           resources: {{- toYaml .Values.analyticsWorker.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: { sizeLimit: 256Mi } }

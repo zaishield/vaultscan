@@ -1,0 +1,114 @@
+{{- if .Values.cronRunner.enabled }}
+{{/*
+Cron-runner (Blueprint §22.4).
+
+Leader-elected background worker that drives every periodic task in
+the platform. Multiple replicas are SAFE — every job takes a Postgres
+advisory lock keyed on the job name, so only the lock-holder executes
+the work and follower replicas exit early. Two replicas is the sweet
+spot: HA-during-rolling-restart without doubling the DB load.
+
+What it runs (see backend/cmd/cron-runner/main.go for the full list):
+  - findings.SweepSLABreaches            hourly
+  - evidence.SweepExpired                hourly
+  - evidence.RotateStaleTenantKeys       24h
+  - evidence.ReWrapTenantObjects         hourly (bounded batch)
+  - audit.VerifyDeep                     hourly
+  - audit.ShipBatch (SIEM forwarder)     30s
+  - scanorch.NodeOps.FailoverStalled     30s
+  - reporting.RunDue                     5m
+  - agent telemetry rollup               hourly
+  - vaultscan_ensure_month_partition     6h
+  - compliance.Evaluator.EvaluateAll     6h
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-cron-runner
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "cron-runner" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  replicas: {{ .Values.cronRunner.replicaCount }}
+  selector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "cron-runner") | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "cron-runner") | nindent 8 }}
+      {{- with .Values.global.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      # No K8s API calls from cron-runner — disable token mount.
+      automountServiceAccountToken: false
+      # 60s grace lets the active leader finish its current tick
+      # (including the bounded DEK re-wrap batch) before SIGKILL.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- include "vaultscan.podSecurityContext" . | nindent 8 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cron-runner
+          image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.cronRunner.image.repository "tag" .Values.cronRunner.image.tag) }}
+          imagePullPolicy: {{ .Values.cronRunner.image.pullPolicy | default "IfNotPresent" }}
+          securityContext:
+            {{- include "vaultscan.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - { name: admin, containerPort: 9091 }
+          envFrom: {{- include "vaultscan.envFrom" (dict "root" .) | nindent 12 }}
+          env:
+            - { name: VAULTSCAN_CRON_ADMIN_ADDR, value: ":9091" }
+            {{- with .Values.global.region }}
+            - { name: VAULTSCAN_REGION, value: {{ . | quote }} }
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: admin }
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: admin }
+            periodSeconds: 30
+            failureThreshold: 3
+          resources: {{- toYaml .Values.cronRunner.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: { sizeLimit: 256Mi } }
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-cron-runner
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "cron-runner" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  type: ClusterIP
+  # Metrics-only service — exposed for the Prometheus ServiceMonitor.
+  selector: {{- include "vaultscan.componentSelector" (dict "root" . "component" "cron-runner") | nindent 4 }}
+  ports:
+    - { name: admin, port: 9091, targetPort: admin }
+{{- if .Values.cronRunner.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-cron-runner
+spec:
+  # Leader-elected pattern means we always need at least one pod up
+  # so the next leader election can complete promptly.
+  minAvailable: {{ .Values.cronRunner.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "cron-runner") | nindent 6 }}
+{{- end }}
+{{- end }}

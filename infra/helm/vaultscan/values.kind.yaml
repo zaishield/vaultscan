@@ -53,10 +53,20 @@ portal:
     limits:   { cpu: "200m", memory: "256Mi" }
 
 analyticsWorker:
+  enabled: true
   replicaCount: 1
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "512Mi" }
+
+cronRunner:
+  enabled: true
+  replicaCount: 1
+  podDisruptionBudget:
+    enabled: false
+  resources:
+    requests: { cpu: "50m",  memory: "64Mi"  }
+    limits:   { cpu: "500m", memory: "256Mi" }
 
 databases:
   external:

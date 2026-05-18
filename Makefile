@@ -169,3 +169,64 @@ integration-test: ## Run integration tests against the live compose Postgres
 	$(COMPOSE) run --rm migrate
 	cd backend && VAULTSCAN_TEST_DATABASE_URL=postgres://vaultscan:vaultscan@localhost:$(VAULTSCAN_POSTGRES_PORT)/vaultscan?sslmode=disable \
 	  go test -tags=integration -count=1 -v ./test/integration/...
+
+# ----------------------------------------------------------------------------
+# Helm — per-environment install / upgrade
+# ----------------------------------------------------------------------------
+#
+# Each target installs the chart against the current kubectl context with
+# the corresponding values overlay. NAMESPACE defaults to "vaultscan-$env"
+# so dev/staging/uat/prod can coexist in one cluster for testing.
+#
+# Production usage:
+#   kubectl config use-context prod-eu
+#   make helm-prod EXTRA="--set databases.external.postgresURL=<DSN>"
+
+HELM ?= helm
+RELEASE ?= vaultscan
+CHART := infra/helm/vaultscan
+
+.PHONY: helm-lint helm-template-dev helm-template-staging helm-template-uat helm-template-prod \
+        helm-dev helm-staging helm-uat helm-prod
+
+helm-lint: ## helm lint the chart against every values overlay
+	$(HELM) lint $(CHART)
+	$(HELM) lint $(CHART) -f $(CHART)/values-dev.yaml
+	$(HELM) lint $(CHART) -f $(CHART)/values-staging.yaml
+	$(HELM) lint $(CHART) -f $(CHART)/values-uat.yaml
+	$(HELM) lint $(CHART) -f $(CHART)/values-prod.yaml
+
+helm-template-dev: ## Render the chart with the dev overlay
+	$(HELM) template $(RELEASE) $(CHART) -f $(CHART)/values-dev.yaml --debug
+
+helm-template-staging: ## Render the chart with the staging overlay
+	$(HELM) template $(RELEASE) $(CHART) -f $(CHART)/values-staging.yaml --debug
+
+helm-template-uat: ## Render the chart with the UAT overlay
+	$(HELM) template $(RELEASE) $(CHART) -f $(CHART)/values-uat.yaml --debug
+
+helm-template-prod: ## Render the chart with the production overlay
+	$(HELM) template $(RELEASE) $(CHART) -f $(CHART)/values-prod.yaml --debug
+
+helm-dev: NAMESPACE ?= vaultscan-dev
+helm-dev: ## Install/upgrade dev
+	$(HELM) upgrade --install $(RELEASE) $(CHART) -n $(NAMESPACE) --create-namespace \
+	  -f $(CHART)/values-dev.yaml $(EXTRA)
+
+helm-staging: NAMESPACE ?= vaultscan-staging
+helm-staging: ## Install/upgrade staging
+	$(HELM) upgrade --install $(RELEASE) $(CHART) -n $(NAMESPACE) --create-namespace \
+	  -f $(CHART)/values-staging.yaml $(EXTRA)
+
+helm-uat: NAMESPACE ?= vaultscan-uat
+helm-uat: ## Install/upgrade UAT
+	$(HELM) upgrade --install $(RELEASE) $(CHART) -n $(NAMESPACE) --create-namespace \
+	  -f $(CHART)/values-uat.yaml $(EXTRA)
+
+helm-prod: NAMESPACE ?= vaultscan
+helm-prod: ## Install/upgrade production — operator MUST review the diff first
+	@printf '\033[1;33m!! PRODUCTION INSTALL — review diff before confirming\033[0m\n'
+	-$(HELM) diff upgrade $(RELEASE) $(CHART) -n $(NAMESPACE) -f $(CHART)/values-prod.yaml $(EXTRA)
+	@read -r -p "Type 'yes' to proceed with helm upgrade: " ans && [ "$$ans" = "yes" ]
+	$(HELM) upgrade --install $(RELEASE) $(CHART) -n $(NAMESPACE) --create-namespace \
+	  -f $(CHART)/values-prod.yaml $(EXTRA)

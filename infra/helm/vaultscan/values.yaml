@@ -8,6 +8,11 @@ global:
   imagePullSecrets: []
   env: production           # set to "development" to enable the dev-token endpoint
   brandingDefaultPartnerSlug: zaishield-direct
+  # Deployment-zone code (ae|eu|uk|in|us|sg|au|jp). Stamped onto every
+  # backend pod as VAULTSCAN_REGION so the residency gate refuses
+  # cross-region writes when a tenant is pinned. Leave empty for
+  # single-region deployments.
+  region: ""
   podAnnotations: {}
   podLabels: {}
 
@@ -46,7 +51,20 @@ api:
       - secretName: vaultscan-api-tls
         hosts: [api.vaultscan.zaishield.com]
   rateLimitRPS: 100
+  rateLimitWindowSec: 60
+  perTenantRateLimitMultiplier: 10
+  rateLimitBackend: memory          # memory | redis (production = redis)
+  rateLimitRedisAddr: ""            # e.g. redis.vaultscan-data:6379
   emergencyStopMaxLatencySeconds: 30
+  # Production default: refuse inbound webhook callbacks that don't
+  # carry a valid HMAC. Set to "false" only during initial migration
+  # while operators populate per-integration signing secrets.
+  requireInboundSignatures: "true"
+  auditExportHardCap: "10000000"
+  # Public URL that external scanner workers + the cron-runner use
+  # to reach the API (orchestrator public-key fetch, etc.). When
+  # empty the workers fall back to the in-cluster service DNS.
+  publicURL: ""
 
 # ----- Agent gateway (Blueprint §6.3, §27.3) -------------------------------
 agentGateway:
@@ -69,6 +87,7 @@ agentGateway:
 
 # ----- Portal (Blueprint §7) ------------------------------------------------
 portal:
+  enabled: true
   replicaCount: 2
   image:
     repository: portal
@@ -76,6 +95,10 @@ portal:
   service:
     type: ClusterIP
     port: 80
+  # nginx-unprivileged listens on 8080 (the only port a non-root user
+  # can bind by default). The service targets that; the Service port
+  # above stays 80 for ingress backward-compat.
+  containerPort: 8080
   ingress:
     enabled: true
     className: nginx
@@ -90,9 +113,13 @@ portal:
   resources:
     requests: { cpu: "100m", memory: "128Mi" }
     limits:   { cpu: "500m", memory: "256Mi" }
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
 
 # ----- Analytics worker (Blueprint §26.4) -----------------------------------
 analyticsWorker:
+  enabled: true
   replicaCount: 2
   image:
     repository: analytics-worker
@@ -100,6 +127,23 @@ analyticsWorker:
   resources:
     requests: { cpu: "200m", memory: "256Mi" }
     limits:   { cpu: "2",    memory: "2Gi" }
+
+# ----- Cron-runner (Blueprint §22.4) ----------------------------------------
+# Leader-elected background worker. 2 replicas for HA-during-rolling-
+# restart; the advisory-lock pattern means only one runs each tick.
+cronRunner:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: cron-runner
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits:   { cpu: "1",    memory: "1Gi"   }
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
 
 # ----- Scanner Worker (Blueprint §12) --------------------------------------
 # One Deployment per region. Each pod claims dispatched external-plane
@@ -138,9 +182,9 @@ scannerWorker:
 migrations:
   enabled: true
   image:
-    repository: api      # the api image ships the migrate binary
+    repository: api      # the api image ships the migrate binary at /app/migrate
     tag: ""
-  command: ["/usr/local/bin/migrate", "-dir", "/backend/migrations"]
+  command: ["/app/migrate", "-dir", "/app/migrations"]
   backoffLimit: 3
   resources:
     requests: { cpu: "100m", memory: "256Mi" }
@@ -154,12 +198,24 @@ databases:
     opensearch: false
     minio: false
   external:
-    postgresURL: ""      # postgres://user:pass@pg.example.com:5432/vaultscan?sslmode=require
+    postgresURL: ""              # postgres://user:pass@pg.example.com:5432/vaultscan?sslmode=require
+    # Read-only replica. Empty = no replica configured; all reads go
+    # to the primary. Wire to a streaming replica for the dashboard
+    # read-path load relief documented in docs/operations/replica-routing.md.
+    postgresReplicaURL: ""
     opensearchURL: ""
     objectStoreURL: ""
     objectStoreBucket: vaultscan-evidence
+    objectStoreRegion: ""        # informational; AWS SDK uses this for SigV4
     keycloakIssuer: ""
     eventBusURL: nats://nats.vaultscan-control:4222
+
+# ----- Observability -------------------------------------------------------
+observability:
+  # OTLP HTTP exporter target. Empty = tracing disabled (no-op tracer).
+  # Set to "otlp" + endpoint to push spans to an OTel collector.
+  otelExporter: ""
+  otelEndpoint: ""
 
 # ----- Secrets --------------------------------------------------------------
 # Provide an existing Secret with the keys listed in README.md.

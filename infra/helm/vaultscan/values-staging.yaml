@@ -1,0 +1,140 @@
+# values-staging.yaml — staging cluster.
+#
+# Posture: pre-production mirror. Same security gates as production
+# (signed images required, inbound HMAC required, network policies on,
+# Kyverno cosign verify on) but smaller resource footprint and looser
+# DNS / TLS so an SRE can test changes without consuming production
+# budget.
+#
+# Staging differences vs production:
+#   - 2 replicas per workload (vs 3) — saves cost
+#   - autoscaling on but lower ceiling
+#   - dedicated staging registry tag suffix (-staging)
+#   - rate-limit Redis backend optional (memory acceptable for staging)
+#   - data-residency pin disabled (staging is single-region)
+
+global:
+  imageRegistry: registry.zaishield.com
+  imageRepositoryPrefix: vaultscan
+  imageTag: ""                    # release pipeline sets the staging tag
+  env: production                 # enforce all production gates
+  region: ""
+
+api:
+  replicaCount: 2
+  resources:
+    requests: { cpu: "500m", memory: "512Mi" }
+    limits:   { cpu: "2",    memory: "4Gi"   }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-staging
+    hosts:
+      - host: api-staging.vaultscan.zaishield.com
+        paths: ["/"]
+    tls:
+      - secretName: vaultscan-api-staging-tls
+        hosts: [api-staging.vaultscan.zaishield.com]
+  rateLimitRPS: 100
+  rateLimitBackend: memory
+  requireInboundSignatures: "true"
+  publicURL: "https://api-staging.vaultscan.zaishield.com"
+
+agentGateway:
+  replicaCount: 2
+  service:
+    type: LoadBalancer
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+portal:
+  enabled: true
+  replicaCount: 2
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-staging
+    hosts:
+      - host: staging.vaultscan.zaishield.com
+        paths: ["/"]
+    tls:
+      - secretName: vaultscan-portal-staging-tls
+        hosts: [staging.vaultscan.zaishield.com]
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+analyticsWorker:
+  enabled: true
+  replicaCount: 2
+
+cronRunner:
+  enabled: true
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+scannerWorker:
+  enabled: true
+  requireSignedImages: "true"
+  regions:
+    - name: us-east-1
+      replicaCount: 1
+  networkPolicyEgress:
+    - to:
+        - ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16] }
+
+databases:
+  external:
+    # Operator sets these via --set or sealed-secrets reference.
+    postgresURL: ""
+    postgresReplicaURL: ""        # populate when staging gets a streaming replica
+    opensearchURL: ""
+    objectStoreURL: ""
+    objectStoreBucket: vaultscan-evidence-staging
+    keycloakIssuer: "https://auth-staging.vaultscan.zaishield.com/realms/vaultscan"
+    eventBusURL: "nats://nats.vaultscan-staging:4222"
+
+secrets:
+  existingSecret: vaultscan-api-env-staging
+
+networkPolicies:
+  enabled: true
+serviceMonitor:
+  enabled: true
+metrics:
+  prometheusRule:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+
+pgbouncer:
+  enabled: true
+  transaction: { replicaCount: 1, maxClientConn: 200, defaultPoolSize: 20, reservePoolSize: 5 }
+  session:     { replicaCount: 1, maxClientConn: 30,  defaultPoolSize: 4 }
+
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  pgHost: pgbouncer-staging.vaultscan-data
+  s3Bucket: vaultscan-backups-staging
+restoreVerify:
+  enabled: true
+  schedule: "0 4 * * *"
+
+kyverno:
+  cosignVerifyPolicy:
+    enabled: true
+    action: audit                 # warn-only in staging until SRE confirms

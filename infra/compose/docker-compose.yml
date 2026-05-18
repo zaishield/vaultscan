@@ -228,6 +228,24 @@ services:
       opensearch:
         condition: service_healthy
 
+  # Cron-runner: leader-elected periodic-task runner (SLA sweep, DEK
+  # rotation + re-wrap, audit verify-deep, partition maintenance, SIEM
+  # shipping, scheduled report generation). Without this, the dev stack
+  # silently skips every Blueprint §22.4 scheduled task.
+  cron-runner:
+    build:
+      context: ../..
+      dockerfile: infra/compose/cron-runner.Dockerfile
+    image: vaultscan-cron-runner:dev
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+      VAULTSCAN_CRON_ADMIN_ADDR: ":9091"
+    ports: ["${VAULTSCAN_CRON_ADMIN_PORT:-9091}:9091"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   vaultscan-pg: {}
   vaultscan-os: {}

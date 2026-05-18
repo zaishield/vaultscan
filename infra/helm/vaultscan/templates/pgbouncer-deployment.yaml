@@ -32,7 +32,7 @@ kind: Deployment
 metadata:
   name: {{ include "vaultscan.fullname" . }}-pgbouncer-tx
   labels:
-    {{- include "vaultscan.componentLabels" (dict "root" . "component" "pgbouncer-tx") | nindent 4 }}
+    {{- include "vaultscan.componentLabels" (dict "component" "pgbouncer-tx" "Chart" .Chart "Release" .Release) | nindent 4 }}
 spec:
   replicas: {{ .Values.pgbouncer.transaction.replicaCount }}
   selector:
@@ -41,7 +41,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "vaultscan.componentLabels" (dict "root" . "component" "pgbouncer-tx") | nindent 8 }}
+        {{- include "vaultscan.componentSelector" (dict "root" . "component" "pgbouncer-tx") | nindent 8 }}
     spec:
       securityContext:
         {{- include "vaultscan.podSecurityContext" . | nindent 8 }}
@@ -89,7 +89,7 @@ kind: Deployment
 metadata:
   name: {{ include "vaultscan.fullname" . }}-pgbouncer-session
   labels:
-    {{- include "vaultscan.componentLabels" (dict "root" . "component" "pgbouncer-session") | nindent 4 }}
+    {{- include "vaultscan.componentLabels" (dict "component" "pgbouncer-session" "Chart" .Chart "Release" .Release) | nindent 4 }}
 spec:
   replicas: {{ .Values.pgbouncer.session.replicaCount }}
   selector:
@@ -98,7 +98,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "vaultscan.componentLabels" (dict "root" . "component" "pgbouncer-session") | nindent 8 }}
+        {{- include "vaultscan.componentSelector" (dict "root" . "component" "pgbouncer-session") | nindent 8 }}
     spec:
       securityContext:
         {{- include "vaultscan.podSecurityContext" . | nindent 8 }}

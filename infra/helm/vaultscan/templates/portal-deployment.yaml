@@ -16,6 +16,17 @@ spec:
       labels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "portal") | nindent 8 }}
     spec:
       terminationGracePeriodSeconds: 30
+      automountServiceAccountToken: false
+      # nginx-unprivileged runs as uid 101 by default. We use the
+      # image's own user rather than the global 65532 because nginx
+      # needs to read its bundled config + write to /var/cache/nginx
+      # via writable emptyDir mounts below.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile: { type: RuntimeDefault }
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -23,20 +34,36 @@ spec:
         - name: portal
           image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.portal.image.repository "tag" .Values.portal.image.tag) }}
           imagePullPolicy: {{ .Values.portal.image.pullPolicy | default "IfNotPresent" }}
-          ports: [{ name: http, containerPort: 80 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          # nginx-unprivileged binds 8080 — only port a non-root user
+          # can claim by default. Service maps :80 → :8080 below.
+          ports: [{ name: http, containerPort: {{ .Values.portal.containerPort | default 8080 }} }]
           resources: {{- toYaml .Values.portal.resources | nindent 12 }}
           readinessProbe:
-            httpGet: { path: /, port: http }
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
             periodSeconds: 10
             failureThreshold: 2
           livenessProbe:
-            httpGet: { path: /, port: http }
+            httpGet: { path: /healthz, port: http }
             periodSeconds: 30
             failureThreshold: 3
-          lifecycle:
-            preStop:
-              exec:
-                command: ["/bin/sh", "-c", "sleep 10"]
+          lifecycle: {}
+          # Writable mounts for nginx — cache, run pid, temp config
+          # spool. Without these, readOnlyRootFilesystem causes nginx
+          # to fail on first request (cannot open temp file).
+          volumeMounts:
+            - { name: nginx-cache, mountPath: /var/cache/nginx }
+            - { name: nginx-run,   mountPath: /var/run }
+            - { name: tmp,         mountPath: /tmp }
+      volumes:
+        - { name: nginx-cache, emptyDir: { sizeLimit: 64Mi } }
+        - { name: nginx-run,   emptyDir: { sizeLimit: 4Mi } }
+        - { name: tmp,         emptyDir: { sizeLimit: 64Mi } }
 ---
 apiVersion: v1
 kind: Service

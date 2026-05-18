@@ -17,12 +17,17 @@ spec:
       labels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "migrations") | nindent 8 }}
     spec:
       restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "vaultscan.podSecurityContext" . | nindent 8 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: migrate
           image: {{ include "vaultscan.image" (dict "root" . "repository" .Values.migrations.image.repository "tag" .Values.migrations.image.tag) }}
+          securityContext:
+            {{- include "vaultscan.containerSecurityContext" . | nindent 12 }}
           command: {{- toYaml .Values.migrations.command | nindent 12 }}
           envFrom: {{- include "vaultscan.envFrom" (dict "root" .) | nindent 12 }}
           resources: {{- toYaml .Values.migrations.resources | nindent 12 }}
