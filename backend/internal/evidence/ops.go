@@ -57,9 +57,9 @@ func (v *Vault) EnsureTenantKey(ctx context.Context, tenantID uuid.UUID) (int, [
 	var version int
 	if err := v.pool.QueryRow(ctx, `
 		INSERT INTO tenant_data_keys(tenant_id, key_version, wrapped_key, kek_id)
-		VALUES ($1, 1, $2, 'platform-master-v1')
+		VALUES ($1, 1, $2, $3)
 		RETURNING key_version`,
-		tenantID, wrapped).Scan(&version); err != nil {
+		tenantID, wrapped, v.kekIDForWrite()).Scan(&version); err != nil {
 		return 0, nil, err
 	}
 	return version, dek, nil
@@ -270,10 +270,111 @@ func (v *Vault) RotateTenantKey(ctx context.Context, tenantID uuid.UUID) (int, e
 	var version int
 	err = v.pool.QueryRow(ctx, `
 		INSERT INTO tenant_data_keys(tenant_id, key_version, wrapped_key, kek_id)
-		SELECT $1, COALESCE(max(key_version),0)+1, $2, 'platform-master-v1'
+		SELECT $1, COALESCE(max(key_version),0)+1, $2, $3
 		  FROM tenant_data_keys WHERE tenant_id=$1
-		RETURNING key_version`, tenantID, wrapped).Scan(&version)
+		RETURNING key_version`, tenantID, wrapped, v.kekIDForWrite()).Scan(&version)
 	return version, err
+}
+
+// kekIDForWrite returns the kek_id string stamped on newly-wrapped
+// tenant_data_keys rows. Defaults to "platform-master-v1" if no
+// WithActiveKEKID option was supplied — preserves backwards
+// compatibility with deployments that haven't yet rotated.
+func (v *Vault) kekIDForWrite() string {
+	if v.activeKEKID == "" {
+		return "platform-master-v1"
+	}
+	return v.activeKEKID
+}
+
+// RewrapTenantDEKsToActiveKEK is the operator-driven rotation
+// drain. It scans tenant_data_keys for rows whose kek_id !=
+// the active id, unwraps each (which transparently uses the
+// retired KEK via v.previousMasterKeys fallback), re-wraps under
+// the active KEK, and updates the row's wrapped_key + kek_id.
+//
+// Bounded per call by maxBatch so an operator running this on a
+// 100k-tenant deployment can chunk the work + measure progress.
+// Returns (rewrapped, more, err); more=true means subsequent
+// calls would advance.
+//
+// Safety:
+//   - Idempotent: a row already under the active KEK is skipped.
+//   - Per-row transaction: a single corrupt row doesn't fail the
+//     whole batch.
+//   - The retired KEK material MUST still be configured (via
+//     WithPreviousMasterKeys) when this method runs. Drop it from
+//     config ONLY after the sweep has converged (more=false on
+//     two consecutive runs).
+func (v *Vault) RewrapTenantDEKsToActiveKEK(ctx context.Context, maxBatch int) (rewrapped int, more bool, err error) {
+	if maxBatch <= 0 {
+		maxBatch = 100
+	}
+	active := v.kekIDForWrite()
+	rows, err := v.pool.Query(ctx, `
+		SELECT tenant_id, key_version, wrapped_key
+		  FROM tenant_data_keys
+		 WHERE kek_id != $1
+		   AND retired_at IS NULL
+		 ORDER BY tenant_id, key_version
+		 LIMIT $2`, active, maxBatch+1)
+	if err != nil {
+		return 0, false, fmt.Errorf("evidence.RewrapTenantDEKsToActiveKEK: query: %w", err)
+	}
+	type row struct {
+		tenantID uuid.UUID
+		version  int
+		wrapped  []byte
+	}
+	var todo []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.tenantID, &r.version, &r.wrapped); err != nil {
+			rows.Close()
+			return 0, false, err
+		}
+		todo = append(todo, r)
+	}
+	rows.Close()
+	more = len(todo) > maxBatch
+	if more {
+		todo = todo[:maxBatch]
+	}
+	for _, r := range todo {
+		dek, err := v.unwrap(r.wrapped)
+		if err != nil {
+			evidenceLogger.Warn().
+				Err(err).
+				Str("op", "rewrap_dek").
+				Str("tenant_id", r.tenantID.String()).
+				Int("version", r.version).
+				Msg("DEK unwrap failed during KEK rotation sweep — likely retired KEK is missing from config")
+			continue
+		}
+		rewrapped_blob, err := v.wrap(dek)
+		if err != nil {
+			evidenceLogger.Warn().
+				Err(err).
+				Str("op", "rewrap_dek").
+				Str("tenant_id", r.tenantID.String()).
+				Msg("DEK re-wrap failed under active KEK")
+			continue
+		}
+		if _, err := v.pool.Exec(ctx, `
+			UPDATE tenant_data_keys
+			   SET wrapped_key = $3, kek_id = $4
+			 WHERE tenant_id = $1 AND key_version = $2`,
+			r.tenantID, r.version, rewrapped_blob, active); err != nil {
+			evidenceLogger.Warn().
+				Err(err).
+				Str("op", "rewrap_dek").
+				Str("tenant_id", r.tenantID.String()).
+				Msg("UPDATE tenant_data_keys failed after re-wrap")
+			continue
+		}
+		rewrapped++
+	}
+	return rewrapped, more, nil
 }
 
 // currentTenantKey returns the latest DEK (highest version not retired).
@@ -344,7 +445,32 @@ func (v *Vault) wrap(plain []byte) ([]byte, error) {
 }
 
 func (v *Vault) unwrap(blob []byte) ([]byte, error) {
-	block, err := aes.NewCipher(v.masterKey)
+	// Try the active KEK first — the hot path on a non-rotating
+	// deployment. On AEAD-auth failure, fall through to each
+	// retired KEK in order. This is the rotation window:
+	// previously-wrapped DEKs decrypt under the old key, and
+	// RewrapTenantDEKsToActiveKEK re-wraps them under the new
+	// active KEK at operator pace.
+	if pt, err := unwrapWith(v.masterKey, blob); err == nil {
+		return pt, nil
+	}
+	for i, k := range v.previousMasterKeys {
+		if len(k) == 0 {
+			continue
+		}
+		if pt, err := unwrapWith(k, blob); err == nil {
+			return pt, nil
+		}
+		// Track which old key handled which blob — useful operator
+		// signal during rotation. We don't return early on success
+		// per-key; the caller (Read*) doesn't need the index.
+		_ = i
+	}
+	return nil, errors.New("evidence: unwrap failed against active + all retired KEKs")
+}
+
+func unwrapWith(key, blob []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}

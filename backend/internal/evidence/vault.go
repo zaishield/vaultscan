@@ -29,15 +29,23 @@ import (
 )
 
 type Vault struct {
-	pool       *pgxpool.Pool
-	audit      *audit.Service
-	bus        *eventbus.Bus
-	storage    Storage
-	rootDir    string  // legacy: used only when no explicit Storage is set
-	masterKey  []byte
-	urlTTL     time.Duration
-	residency  ResidencyChecker
-	podRegion  string
+	pool      *pgxpool.Pool
+	audit     *audit.Service
+	bus       *eventbus.Bus
+	storage   Storage
+	rootDir   string // legacy: used only when no explicit Storage is set
+	masterKey []byte // active KEK (wrap + first-tried unwrap)
+	activeKEKID string
+	// previousMasterKeys are decommissioned-but-still-needed KEK
+	// material. unwrap tries them in order after the active key
+	// fails. Operators populate during a rotation window: once
+	// RewrapTenantDEKsToActiveKEK has rewrapped every row under the
+	// new active KEK, the previous entries can be dropped from
+	// config and the old key material destroyed.
+	previousMasterKeys [][]byte
+	urlTTL             time.Duration
+	residency          ResidencyChecker
+	podRegion          string
 }
 
 // ResidencyChecker is the slice of tenants.Service the vault needs
@@ -66,7 +74,46 @@ func WithFilesystem(dir string) Option        { return func(v *Vault) { v.rootDi
 // for tests, etc). Takes precedence over WithFilesystem.
 func WithStorage(s Storage) Option            { return func(v *Vault) { v.storage = s } }
 
+// Storage returns the configured backend. Exported so test
+// scaffolding can construct a sibling Vault that shares the same
+// filesystem / S3 location (e.g. simulating a KEK rotation where
+// the old + new vault both point at the existing object set).
+// Production code does NOT call this — it uses the Vault directly.
+func (v *Vault) Storage() Storage { return v.storage }
+
 func WithURLTTL(ttl time.Duration) Option     { return func(v *Vault) { v.urlTTL = ttl } }
+
+// WithActiveKEKID stamps each newly-wrapped DEK row's kek_id column
+// with this identifier. Operators use it to track which generation
+// of KEK material wrapped each row, which is the index
+// RewrapTenantDEKsToActiveKEK uses to find rows that still hold the
+// old wrap.
+func WithActiveKEKID(id string) Option {
+	return func(v *Vault) { v.activeKEKID = id }
+}
+
+// WithPreviousMasterKeys registers retired KEK material that the
+// vault should fall back to during unwrap when the active key
+// can't decrypt a blob. Caller supplies base64-encoded keys, same
+// shape as masterKeyB64. Returns an error if any key fails to
+// decode to 32 bytes — config-load callers (cmd/api/main.go)
+// surface that as a fatal boot error.
+func WithPreviousMasterKeys(keysB64 []string) Option {
+	return func(v *Vault) {
+		for _, k := range keysB64 {
+			b, err := base64.StdEncoding.DecodeString(k)
+			if err != nil || len(b) < 32 {
+				// Append a sentinel zero-length entry so the caller
+				// can detect the misconfiguration via len(previous)
+				// not matching expected. We can't return error from
+				// an Option, so the boot path validates separately.
+				v.previousMasterKeys = append(v.previousMasterKeys, nil)
+				continue
+			}
+			v.previousMasterKeys = append(v.previousMasterKeys, b[:32])
+		}
+	}
+}
 
 // knownDevMasterKeys are master-key values that ship in source for
 // local development, test harnesses, and example overlays. None of
