@@ -12,6 +12,13 @@
 /backend/migrate
 /backend/seed
 /backend/agent-gateway
+/backend/audit-bundle
+/backend/loadtest
+/backend/oasgen
+/backend/scanner-worker
+/backend/analytics-worker
+/backend/cron-runner
+/backend/bench
 /agent/agent
 
 # Go
