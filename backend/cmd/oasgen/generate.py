@@ -246,6 +246,26 @@ SUMMARY_HINTS = {
     "PUT /api/v1/tenants/{tenant_id}/residency": "Pin or clear the tenant's data-residency commitment.",
     "POST /api/v1/integrations/{integration_id}/inbound": "Partner-side inbound webhook callback (authenticated by HMAC, not bearer).",
     "PUT /api/v1/integrations/{integration_id}/signing-secret": "Rotate the inbound webhook signing secret.",
+
+    # ----- External + internal plane (migration 0061) ----------------
+    "GET /api/v1/tenants/{tenant_id}/sso":     "Read the tenant's SAML/OIDC IdP federation config.",
+    "PUT /api/v1/tenants/{tenant_id}/sso":     "Upsert the tenant's SAML/OIDC IdP federation config. Customer self-serve.",
+    "GET /api/v1/tenants/{tenant_id}/scim/tokens": "List SCIM provisioning tokens (metadata; no plaintext).",
+    "POST /api/v1/tenants/{tenant_id}/scim/tokens": "Mint a SCIM provisioning token. Plaintext returned ONCE.",
+    "DELETE /api/v1/tenants/{tenant_id}/scim/tokens/{token_id}": "Revoke a SCIM provisioning token.",
+    "GET /api/v1/partners/{partner_id}/billing/plan-requests":  "List the partner's plan-change requests.",
+    "POST /api/v1/partners/{partner_id}/billing/plan-requests": "File a plan-change request (customer-initiated).",
+    "GET /api/v1/compliance/tenants/{tenant_id}/rollup":   "Per-framework compliance coverage rollup for the tenant.",
+    "POST /api/v1/compliance/tenants/{tenant_id}/snapshot": "Persist a frozen 'as-of' snapshot of the tenant's compliance rollup.",
+    "GET /api/v1/platform/billing/plan-requests":          "Operator queue of pending plan-change requests.",
+    "POST /api/v1/platform/billing/plan-requests/{id}/decide": "Approve / reject / cancel a customer plan-change request.",
+    "POST /api/v1/platform/billing/usage-adjustments":     "Operator credit / surcharge for a partner's monthly usage.",
+    "POST /api/v1/platform/impersonate":                   "Open a support-engineer impersonation session (ticket-tagged, dual-audited).",
+    "DELETE /api/v1/platform/impersonate/{session_id}":    "End an open impersonation session.",
+    "GET /api/v1/platform/impersonate/active":             "List currently-open impersonation sessions.",
+    "POST /api/v1/platform/tenants/{tenant_id}/quarantine":   "Mark a tenant for hard-delete after the 7-day quarantine window.",
+    "DELETE /api/v1/platform/tenants/{tenant_id}/quarantine": "Cancel a tenant's quarantine and restore access.",
+    "POST /api/v1/platform/tenants/{tenant_id}/migrate":      "Move a tenant from one partner to another (full audit trail).",
 }
 
 

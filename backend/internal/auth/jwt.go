@@ -122,6 +122,9 @@ func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 		Roles:       claims.Roles,
 		MFAVerified: claims.MFA,
 		Permissions: map[string]bool{},
+
+		ImpersonationSessionID: claims.ImpersonationSessionID,
+		OperatorID:             claims.OperatorID,
 	}
 	if claims.Subject != "" {
 		uid, err := uuid.Parse(claims.Subject)

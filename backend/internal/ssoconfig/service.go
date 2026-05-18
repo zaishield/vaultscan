@@ -177,3 +177,55 @@ func (s *Service) Set(ctx context.Context, tenantID uuid.UUID, in SetInput, acto
 	})
 	return s.Get(ctx, tenantID)
 }
+
+// LoadConfigForTenant returns the SAML/OIDC settings as a flat
+// struct that the federation handlers can pass into auth.SAMLConfig
+// or auth.NewOIDCVerifier. Returns enabled=false when the tenant
+// has no SSO configured, so the caller falls through to local /
+// platform-default IdP.
+//
+// Federation note: the SP-initiated handlers
+// (/auth/sso/{slug}/saml/{start,acs} and /oidc/{start,callback})
+// are not yet wired into server.go. The data this method returns
+// is consumed by the handlers when they ship; today the table is
+// used by the customer admin to PRE-CONFIGURE federation, and the
+// /sso GET endpoint to read it back for verification.
+//
+// Tracking issue: see CHANGELOG "Pending" section + the
+// integrator.md role guide for the contract.
+func (s *Service) LoadConfigForTenant(ctx context.Context, tenantID uuid.UUID) (*LoadedConfig, error) {
+	c, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !c.Enabled || c.ProviderType == "none" {
+		return &LoadedConfig{Enabled: false}, nil
+	}
+	out := &LoadedConfig{
+		Enabled:      true,
+		ProviderType: c.ProviderType,
+		ClaimMapping: c.ClaimMapping,
+		MetadataXML:  c.MetadataXML,
+		DiscoveryURL: c.DiscoveryURL,
+		ClientID:     c.ClientID,
+	}
+	// Look up the secret directly — Get() intentionally returns it
+	// as a bool. The federation handler needs the actual value.
+	_ = s.pool.QueryRow(ctx,
+		`SELECT COALESCE(client_secret,'') FROM tenant_sso_config WHERE tenant_id=$1`,
+		tenantID).Scan(&out.ClientSecret)
+	return out, nil
+}
+
+// LoadedConfig is the flat consumer-ready view of one tenant's SSO
+// config. Returned by LoadConfigForTenant; consumed by federation
+// handlers (when they ship) + by validation tooling.
+type LoadedConfig struct {
+	Enabled      bool
+	ProviderType string            // saml | oidc
+	ClaimMapping map[string]string
+	MetadataXML  string            // SAML only
+	DiscoveryURL string            // OIDC only
+	ClientID     string            // OIDC only
+	ClientSecret string            // OIDC only — sensitive
+}

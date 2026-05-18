@@ -230,6 +230,31 @@ func Mount(s *Services) http.Handler {
 	// Public branding endpoint (Blueprint §8.5)
 	r.Get("/api/v1/branding", brandingByDomain(s))
 
+	// SCIM 2.0 server. Bearer-token auth via scimtokens; the IdP
+	// gets a 401 if the (tenant, token) pair doesn't match an
+	// active row in tenant_scim_tokens. Lives at /scim/v2 (NOT
+	// under /api/v1) per SCIM convention so IdP connectors find it.
+	if s.SCIMTokens != nil {
+		scimSrv := auth.NewSCIMServer(s.Pool)
+		r.Route("/scim/v2", func(r chi.Router) {
+			r.Use(middleware.SCIMTokenAuth(s.SCIMTokens))
+			r.Get("/Users", scimSrv.HandleUsers)
+			r.Post("/Users", scimSrv.HandleUsers)
+			r.Get("/Users/{id}", func(w http.ResponseWriter, r *http.Request) {
+				scimSrv.HandleUserByID(w, r, chi.URLParam(r, "id"))
+			})
+			r.Put("/Users/{id}", func(w http.ResponseWriter, r *http.Request) {
+				scimSrv.HandleUserByID(w, r, chi.URLParam(r, "id"))
+			})
+			r.Patch("/Users/{id}", func(w http.ResponseWriter, r *http.Request) {
+				scimSrv.HandleUserByID(w, r, chi.URLParam(r, "id"))
+			})
+			r.Delete("/Users/{id}", func(w http.ResponseWriter, r *http.Request) {
+				scimSrv.HandleUserByID(w, r, chi.URLParam(r, "id"))
+			})
+		})
+	}
+
 	// Construct the rate-limit backend BEFORE the public routes so
 	// the auth-surface limiters below can use it. The authenticated-
 	// route group re-uses the same s.Limiter via the middleware
@@ -319,6 +344,12 @@ func Mount(s *Services) http.Handler {
 		// for the lifetime of this request. Must come AFTER Auth and
 		// TenantScope so the identity is resolved before we bind.
 		r.Use(middleware.TenantBinding(s.Pool))
+		// Impersonation enforcement: when the JWT carries an
+		// impersonation_session_id, refuse if the session is ended/
+		// expired + increment its request_count for the audit.
+		if s.Impersonation != nil {
+			r.Use(middleware.ImpersonationEnforce(s.Impersonation))
+		}
 		// Rate-limit backend already constructed + stored on s.Limiter
 		// earlier in Mount() so the unauthenticated auth-surface
 		// routes can use it. Re-use here for the authenticated group.

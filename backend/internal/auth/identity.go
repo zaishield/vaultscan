@@ -22,6 +22,16 @@ type Identity struct {
 	Roles       []string         // role codes
 	Permissions map[string]bool  // permission codes
 	MFAVerified bool
+
+	// ImpersonationSessionID is the support_impersonation_sessions.id
+	// when this identity was derived from a support break-glass JWT.
+	// Empty string for normal tokens. middleware.ImpersonationEnforce
+	// uses it to call Touch + refuse expired sessions.
+	ImpersonationSessionID string
+	// OperatorID is the support engineer who opened the session.
+	// Empty for non-impersonation tokens. Audit hooks reference this
+	// so every audit row carries BOTH the operator + the target.
+	OperatorID string
 }
 
 func (i *Identity) Has(permission string) bool {

@@ -140,9 +140,25 @@ if [[ -z "${DRY_RUN}" ]]; then
     log "  ${t}: present"
   }
   for t in tenant_data_keys tenant_pool_routing tenant_isolation_history \
-           tenant_residency_history integration_inbound_log; do
+           tenant_residency_history integration_inbound_log \
+           tenant_sso_config tenant_scim_tokens support_impersonation_sessions \
+           plan_change_requests partner_plan_history tenant_partner_migrations \
+           compliance_rollup_snapshots billing_usage_adjustments; do
     expect_table "$t"
   done
+
+  # Migration 0061 added quarantine_* columns to tenants. A partial
+  # restore that brought the table back but missed the column would
+  # break the platform-admin quarantine endpoint silently.
+  for col in quarantine_started_at quarantine_initiated_by quarantine_reason; do
+    n=$(docker exec "${SANDBOX}" psql -U drill -d drill -At -c \
+        "SELECT 1 FROM information_schema.columns
+          WHERE table_name='tenants' AND column_name='${col}'") || true
+    if [[ "${n}" != "1" ]]; then
+      die "tenants.${col} missing — migration 0061 not applied"
+    fi
+  done
+  log "  tenants.quarantine_* columns: present"
 
   # Also verify the integrations table has the GA columns. A schema
   # version drift here is hard to spot otherwise (the table exists,

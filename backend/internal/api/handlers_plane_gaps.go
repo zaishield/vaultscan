@@ -27,14 +27,15 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/auth"
+	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/impersonation"
 	"github.com/zaishield/vaultscan/backend/internal/middleware"
 	"github.com/zaishield/vaultscan/backend/internal/scimtokens"
@@ -485,9 +486,29 @@ func createUsageAdjustment(s *Services) http.HandlerFunc {
 			internalErr(w, err)
 			return
 		}
-		// audit
+		// Audit + bus emit. Both are best-effort (don't fail the
+		// HTTP response if either trips); the row already landed.
 		if s.Audit != nil {
-			_ = json.NewEncoder(w) // unused; placeholder for future expansion
+			_ = s.Audit.Record(r.Context(), audit.Entry{
+				Event:      "billing.usage_adjusted",
+				ActorID:    &id.UserID,
+				TargetType: "partner",
+				TargetID:   in.PartnerID.String(),
+				Payload: map[string]any{
+					"month": in.Month, "metric": in.Metric, "delta": in.Delta,
+					"reason": in.Reason, "ticket_ref": in.TicketRef,
+				},
+			})
+		}
+		if s.Bus != nil {
+			s.Bus.Publish(r.Context(), eventbus.Event{
+				Type:      eventbus.BillingUsageAdjusted,
+				PartnerID: &in.PartnerID,
+				ActorID:   &id.UserID,
+				Payload: map[string]any{
+					"month": in.Month, "metric": in.Metric, "delta": in.Delta,
+				},
+			})
 		}
 		w.WriteHeader(http.StatusCreated)
 	}

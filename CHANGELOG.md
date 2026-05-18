@@ -6,6 +6,50 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased] — GA hardening
 
+### Added (external + internal plane gaps — migration 0061)
+
+- **Per-tenant SSO config** (`tenant_sso_config`): SAML / OIDC IdP
+  federation as a first-class table + `ssoconfig.Service` Get/Set
+  with rotation semantics (`-` clears the secret, `""` preserves).
+  Endpoints: `GET/PUT /api/v1/tenants/{id}/sso`.
+- **SCIM provisioning tokens** (`tenant_scim_tokens`): bcrypt-at-rest
+  with `vss_`-prefixed plaintext returned once. The /scim/v2 server
+  now actually mounts with bearer-token middleware so IdP connectors
+  authenticate. Endpoints: 3 CRUD + the SCIM /Users endpoints.
+- **Support-engineer impersonation** (`support_impersonation_sessions`):
+  60-min capped, ticket-tagged, **dual-audited** (one row under the
+  operator, one under the target, tied by session_id). JWT carries
+  `impersonation_session_id` claim; new middleware enforces the
+  session per request + increments request_count.
+- **Plan-change requests** (`plan_change_requests`): customer admins
+  file upgrade asks self-serve; operators decide in queue. Plan
+  transitions land in `partner_plan_history`.
+- **Tenant lifecycle** (`tenants.quarantine_*` columns +
+  `tenant_partner_migrations`): 7-day quarantine before hard-delete
+  (cron-runner purges past the window); transactional partner
+  migration with history.
+- **Compliance rollup** (`compliance_rollup_snapshots`): per-tenant
+  per-framework coverage % + breakdown; weekly snapshots for the
+  auditor "as-of" view.
+- **Billing usage adjustments** (`billing_usage_adjustments`):
+  finance credits / surcharges with ticket-ref. Auditable.
+- **11 new event types** on the bus (TenantSSOConfigured, …,
+  BillingUsageAdjusted) so integrations + analytics-indexer can
+  subscribe.
+- **3 new cron tasks**: tenant_purge_swept_quarantines,
+  compliance_rollup_snapshot, impersonation_session_expirer.
+- **DR drill** asserts every new 0061 table + the tenants.quarantine_*
+  columns post-restore.
+
+### Pending (not external-only)
+
+The SP-initiated SSO federation **handler** is not yet shipped: the
+config table is consumed by `ssoconfig.LoadConfigForTenant`, but
+the `/auth/sso/{slug}/saml/{start,acs}` and `/auth/sso/{slug}/oidc/
+{start,callback}` routes that drive cookie-based session + claim-
+mapping → JWT mint are a follow-up. Customers wire their IdP
+config today; the federated sign-in flow lands in the next minor.
+
 ### Added
 
 - **Data residency**: per-tenant `data_region` pin (migration 0055)

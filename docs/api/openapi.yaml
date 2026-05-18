@@ -233,6 +233,102 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/platform/impersonate/{session_id}:
+    delete:
+      summary: End an open impersonation session.
+      operationId: deletePlatformImpersonateSessionId
+      tags:
+        - platform-ops
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/platform/tenants/{tenant_id}/quarantine:
+    delete:
+      summary: "Cancel a tenant's quarantine and restore access."
+      operationId: deletePlatformTenantsTenantIdQuarantine
+      tags:
+        - platform-ops
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: Mark a tenant for hard-delete after the 7-day quarantine window.
+      operationId: postPlatformTenantsTenantIdQuarantine
+      tags:
+        - platform-ops
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/tenants/{tenant_id}/branding:
     delete:
       summary: "DELETE /api/v1/tenants/{tenant_id}/branding"
@@ -310,6 +406,41 @@ paths:
             schema:
               type: object
               additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/tenants/{tenant_id}/scim/tokens/{token_id}:
+    delete:
+      summary: Revoke a SCIM provisioning token.
+      operationId: deleteTenantsTenantIdScimTokensTokenId
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: token_id
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         200:
           description: Success
@@ -933,6 +1064,36 @@ paths:
       operationId: getBranding
       tags:
         - branding
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/compliance/tenants/{tenant_id}/rollup:
+    get:
+      summary: Per-framework compliance coverage rollup for the tenant.
+      operationId: getComplianceTenantsTenantIdRollup
+      tags:
+        - compliance
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         200:
           description: Success
@@ -2400,6 +2561,72 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/partners/{partner_id}/billing/plan-requests:
+    get:
+      summary: "List the partner's plan-change requests."
+      operationId: getPartnersPartnerIdBillingPlanrequests
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: File a plan-change request (customer-initiated).
+      operationId: postPartnersPartnerIdBillingPlanrequests
+      tags:
+        - partners
+      parameters:
+        - name: partner_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/partners/{partner_id}/billing/usage:
     get:
       summary: "GET /api/v1/partners/{partner_id}/billing/usage"
@@ -2597,6 +2824,54 @@ paths:
           required: true
           schema:
             type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/platform/billing/plan-requests:
+    get:
+      summary: Operator queue of pending plan-change requests.
+      operationId: getPlatformBillingPlanrequests
+      tags:
+        - platform-ops
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/platform/impersonate/active:
+    get:
+      summary: List currently-open impersonation sessions.
+      operationId: getPlatformImpersonateActive
+      tags:
+        - platform-ops
       responses:
         200:
           description: Success
@@ -3131,6 +3406,138 @@ paths:
           required: true
           schema:
             type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/tenants/{tenant_id}/scim/tokens:
+    get:
+      summary: List SCIM provisioning tokens (metadata; no plaintext).
+      operationId: getTenantsTenantIdScimTokens
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    post:
+      summary: Mint a SCIM provisioning token. Plaintext returned ONCE.
+      operationId: postTenantsTenantIdScimTokens
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/tenants/{tenant_id}/sso:
+    get:
+      summary: "Read the tenant's SAML/OIDC IdP federation config."
+      operationId: getTenantsTenantIdSso
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+    put:
+      summary: "Upsert the tenant's SAML/OIDC IdP federation config. Customer self-serve."
+      operationId: putTenantsTenantIdSso
+      tags:
+        - tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
       responses:
         200:
           description: Success
@@ -4020,6 +4427,43 @@ paths:
         - authorization
       parameters:
         - name: engagement_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/compliance/tenants/{tenant_id}/snapshot:
+    post:
+      summary: "Persist a frozen 'as-of' snapshot of the tenant's compliance rollup."
+      operationId: postComplianceTenantsTenantIdSnapshot
+      tags:
+        - compliance
+      parameters:
+        - name: tenant_id
           in: path
           required: true
           schema:
@@ -4967,6 +5411,74 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /api/v1/platform/billing/plan-requests/{id}/decide:
+    post:
+      summary: Approve / reject / cancel a customer plan-change request.
+      operationId: postPlatformBillingPlanrequestsIdDecide
+      tags:
+        - platform-ops
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/platform/billing/usage-adjustments:
+    post:
+      summary: "Operator credit / surcharge for a partner's monthly usage."
+      operationId: postPlatformBillingUsageadjustments
+      tags:
+        - platform-ops
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/platform/break-glass:
     post:
       summary: POST /api/v1/platform/break-glass
@@ -5004,6 +5516,74 @@ paths:
       operationId: postPlatformBreakglassRedeem
       tags:
         - platform-ops
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/platform/impersonate:
+    post:
+      summary: "Open a support-engineer impersonation session (ticket-tagged, dual-audited)."
+      operationId: postPlatformImpersonate
+      tags:
+        - platform-ops
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
+  /api/v1/platform/tenants/{tenant_id}/migrate:
+    post:
+      summary: Move a tenant from one partner to another (full audit trail).
+      operationId: postPlatformTenantsTenantIdMigrate
+      tags:
+        - platform-ops
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: false
         content:

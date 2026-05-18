@@ -54,6 +54,20 @@ const (
 	PartnerQuotaBlocked  = "PartnerQuotaBlocked"
 	PartnerQuotaWarning  = "PartnerQuotaWarning"
 	PartnerPlanChanged   = "PartnerPlanChanged"
+
+	// External + internal plane events (migration 0061). Listed
+	// here so integrations + the analytics indexer can subscribe.
+	TenantSSOConfigured        = "TenantSSOConfigured"
+	TenantSCIMTokenCreated     = "TenantSCIMTokenCreated"
+	TenantSCIMTokenRevoked     = "TenantSCIMTokenRevoked"
+	TenantQuarantined          = "TenantQuarantined"
+	TenantQuarantineCancelled  = "TenantQuarantineCancelled"
+	TenantMigratedToPartner    = "TenantMigratedToPartner"
+	PartnerPlanChangeRequested = "PartnerPlanChangeRequested"
+	PartnerPlanChangeDecided   = "PartnerPlanChangeDecided"
+	SupportImpersonationStarted = "SupportImpersonationStarted"
+	SupportImpersonationEnded   = "SupportImpersonationEnded"
+	BillingUsageAdjusted        = "BillingUsageAdjusted"
 )
 
 // AllEventTypes returns every event type the bus knows about.
@@ -66,6 +80,11 @@ func AllEventTypes() []string {
 		FindingAssigned, RetestRequested, RetestPassed, RetestFailed,
 		ReportGenerated, EvidenceDownloaded, EmergencyStopTriggered,
 		PartnerQuotaBlocked, PartnerQuotaWarning, PartnerPlanChanged,
+		TenantSSOConfigured, TenantSCIMTokenCreated, TenantSCIMTokenRevoked,
+		TenantQuarantined, TenantQuarantineCancelled, TenantMigratedToPartner,
+		PartnerPlanChangeRequested, PartnerPlanChangeDecided,
+		SupportImpersonationStarted, SupportImpersonationEnded,
+		BillingUsageAdjusted,
 	}
 }
 
