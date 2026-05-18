@@ -218,13 +218,20 @@ func (s *Service) OIDCCallback(w http.ResponseWriter, r *http.Request, tenantSlu
 		return
 	}
 
-	// Validate the id_token + extract claims. We use the OIDC
-	// discovery's JWKS URI as the verification source so the IdP
-	// can rotate keys without us re-deploying.
-	claims, err := s.validateIDToken(r.Context(), tokens.IDToken, disc.JWKSURI,
-		cfg.ClientID, state.Nonce)
+	// Validate the id_token end-to-end: signature against the IdP's
+	// JWKS (kid-routed, alg-pinned), iss matches discovery doc,
+	// aud contains our client_id, nonce matches the state cookie,
+	// iat within replay window, exp not past. See verifyIDToken in
+	// jwks_verify.go for the full check list.
+	claims, err := s.verifyIDToken(r.Context(), tokens.IDToken,
+		disc.JWKSURI, disc.Issuer, cfg.ClientID, state.Nonce)
 	if err != nil {
-		http.Error(w, `{"error":"id_token_invalid"}`, http.StatusUnauthorized)
+		// Surface the specific category so the operator can debug
+		// "did the IdP rotate" vs "did we deploy a different
+		// client_id" vs "is the IdP clock skewed".
+		http.Error(w,
+			fmt.Sprintf(`{"error":"id_token_invalid","detail":%q}`, err.Error()),
+			http.StatusUnauthorized)
 		return
 	}
 
@@ -313,48 +320,6 @@ func (s *Service) oidcClientCreds(tenantID string) (clientID, clientSecret strin
 		  FROM tenant_sso_config WHERE tenant_id = $1`, tid).
 		Scan(&clientID, &clientSecret)
 	return
-}
-
-// validateIDToken verifies the id_token's signature against the
-// IdP's JWKS, plus audience + nonce + expiry. Uses the existing
-// OIDCVerifier helper paths.
-func (s *Service) validateIDToken(ctx context.Context, idToken, jwksURI,
-	audience, expectedNonce string,
-) (jwt.MapClaims, error) {
-	// The auth.OIDCVerifier is JWKS-backed but tied to a single
-	// issuer at construction time. For per-tenant flexibility we
-	// parse the token without verifying then validate the relevant
-	// claims, and check the signature via JWKS lookup.
-	//
-	// In production-grade code we'd use github.com/coreos/go-oidc.
-	// For now this matches the existing auth/oidc.go implementation
-	// shape.
-	parts := strings.Split(idToken, ".")
-	if len(parts) != 3 {
-		return nil, errors.New("id_token: not 3 parts")
-	}
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("id_token: payload decode: %w", err)
-	}
-	var c jwt.MapClaims
-	if err := json.Unmarshal(payloadBytes, &c); err != nil {
-		return nil, fmt.Errorf("id_token: payload parse: %w", err)
-	}
-	// Audience + nonce + expiry checks. Signature verification is
-	// out of scope here — production deployments should swap in
-	// github.com/coreos/go-oidc which integrates JWKS rotation +
-	// algorithm pinning. The TODO is tracked in CHANGELOG.
-	if aud, _ := c["aud"].(string); aud != audience {
-		return nil, fmt.Errorf("id_token: aud=%q want %q", aud, audience)
-	}
-	if exp, _ := c["exp"].(float64); int64(exp) < time.Now().Unix() {
-		return nil, errors.New("id_token: expired")
-	}
-	if n, _ := c["nonce"].(string); n != expectedNonce {
-		return nil, errors.New("id_token: nonce mismatch")
-	}
-	return c, nil
 }
 
 // oidcClaimsToMap flattens jwt.MapClaims for mapClaims.

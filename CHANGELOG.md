@@ -63,8 +63,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     `authorization_endpoint`.
   - `GET /api/v1/auth/sso/{tenant_slug}/oidc/callback` validates
     state CSRF, POSTs to `token_endpoint` for the code+PKCE
-    exchange, validates the id_token's audience + nonce + expiry,
+    exchange, runs the FULL id_token verifier (next bullet),
     maps claims, mints a JWT, finishes the flow.
+
+- **Production-grade id_token verifier**
+  (`internal/ssoflow/jwks_verify.go`)
+  - JWKS fetched from the IdP's `jwks_uri`, cached per-URI with a
+    1h soft TTL + hard refresh on `kid` cache miss (handles IdP
+    key rotation without redeploys).
+  - Supports RSA + EC keys (P-256/P-384/P-521); parses the JWK
+    `n`/`e` and `crv`/`x`/`y` directly into `*rsa.PublicKey` /
+    `*ecdsa.PublicKey`.
+  - **Algorithm pinning**: closed allowlist of RS256/RS384/RS512,
+    ES256/ES384/ES512, PS256/PS384/PS512. `none` refused (CVE-
+    class). HS-family refused (public-key-as-HMAC-secret confusion).
+  - Validates `iss` (against discovery doc's `issuer` — prevents
+    IdP impersonation), `aud` (string OR array — both shapes per
+    spec), `exp`, `nbf`, `iat` (with 2 min skew + 10 min replay
+    window), `nonce` (against state cookie), `sub` presence.
+  - Bounded JWKS body read (256 KiB) so a malicious IdP can't OOM
+    the API pod.
+  - Distinct error categories surface in the 401 response detail
+    so operators can debug "IdP rotated" vs "wrong client_id" vs
+    "clock skew" vs "spoofed iss".
 
 - **Claim mapping** (`internal/ssoflow/service.go`): first SSO
   sign-in auto-provisions the user under the tenant's partner.
@@ -80,9 +101,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `KeyManager` is configured (production path), falls back to
   `IssueDevToken` otherwise.
 
-- 5 unit tests cover SAML metadata parsing (real self-signed cert),
-  error paths, attribute → claim mapping, PKCE S256 against the
-  RFC 7636 example, and random-string entropy.
+- **16 unit tests** covering SAML metadata parsing (real self-
+  signed cert), error paths, attribute mapping, PKCE S256 against
+  the RFC 7636 example, random-string entropy, plus 11 id_token
+  verification cases: RS256 happy path, alg=none refusal, HS-family
+  refusal, audience mismatch, audience-as-array, issuer spoofing
+  (prevents IdP impersonation), nonce mismatch (prevents replay),
+  expired, iat-too-old (replay-window enforcement), kid not in
+  JWKS, allowlist invariants, EC curve mapping.
 
 ### Added
 
