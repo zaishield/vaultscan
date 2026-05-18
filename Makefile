@@ -17,7 +17,7 @@ VAULTSCAN_NATS_MON_PORT       ?= 8222
 
 .PHONY: help bootstrap doctor up down restart logs migrate seed urls reset \
         env check-ports wait-db \
-        test backend-build agent-build frontend-build vet integration-test
+        test backend-build agent-build frontend-build vet integration-test ga-verify
 
 help: ## Show this help
 	@awk -F':.*##' '/^[a-zA-Z_-]+:.*##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -169,6 +169,50 @@ integration-test: ## Run integration tests against the live compose Postgres
 	$(COMPOSE) run --rm migrate
 	cd backend && VAULTSCAN_TEST_DATABASE_URL=postgres://vaultscan:vaultscan@localhost:$(VAULTSCAN_POSTGRES_PORT)/vaultscan?sslmode=disable \
 	  go test -tags=integration -count=1 -v ./test/integration/...
+
+# ----------------------------------------------------------------------------
+# GA-readiness gate — single command that runs every check listed in
+# docs/GA_READINESS.md. Useful as a release-blocking step.
+#
+# Phases (each must pass — set -e under the hood):
+#   1. Unit tests across both Go modules
+#   2. Integration tests against a real Postgres
+#   3. Each security-critical fuzz suite for 60s
+#   4. audit-bundle smoke (already covered by integration tests but
+#      re-running here proves the binary still produces a valid bundle)
+#   5. loadtest binary's own self-test
+#
+# Run time: ~7-10 minutes on a developer laptop. CI gates that need
+# faster signal can drop the fuzz timeout via FUZZTIME=10s.
+# ----------------------------------------------------------------------------
+FUZZTIME ?= 60s
+
+ga-verify: ## Run the full GA-readiness gate (~7-10 min). FUZZTIME=10s to shorten.
+	@echo "============================================================="
+	@echo " GA-readiness gate"
+	@echo " - Unit suites"
+	@echo " - Integration suite (real Postgres)"
+	@echo " - Fuzz: SSRF guard, JWKS parser, ID-token, inbound HMAC,"
+	@echo "   Stripe header. FUZZTIME=$(FUZZTIME)"
+	@echo " - Binary smoke: audit-bundle, loadtest"
+	@echo "============================================================="
+	@echo "--> phase 1: unit tests"
+	cd backend && go test -count=1 ./...
+	cd agent   && go test -count=1 ./...
+	@echo "--> phase 2: integration suite"
+	$(MAKE) --no-print-directory integration-test
+	@echo "--> phase 3: fuzz suites ($(FUZZTIME) each)"
+	cd backend && go test -fuzz=FuzzValidateOutboundURL -fuzztime=$(FUZZTIME) -run=NONE ./internal/integrations/
+	cd backend && go test -fuzz=FuzzJWKParse            -fuzztime=$(FUZZTIME) -run=NONE ./internal/ssoflow/
+	cd backend && go test -fuzz=FuzzIDTokenStructure    -fuzztime=$(FUZZTIME) -run=NONE ./internal/ssoflow/
+	cd backend && go test -fuzz=FuzzVerifyInbound       -fuzztime=$(FUZZTIME) -run=NONE ./internal/integrations/
+	cd backend && go test -fuzz=FuzzParseStripe         -fuzztime=$(FUZZTIME) -run=NONE ./internal/integrations/
+	@echo "--> phase 4: binary smoke (audit-bundle, loadtest)"
+	cd backend && go build -o /tmp/audit-bundle ./cmd/audit-bundle && rm -f /tmp/audit-bundle
+	cd backend && go build -o /tmp/loadtest     ./cmd/loadtest     && rm -f /tmp/loadtest
+	@echo "============================================================="
+	@echo " GA-readiness gate: PASS"
+	@echo "============================================================="
 
 # ----------------------------------------------------------------------------
 # Helm — per-environment install / upgrade

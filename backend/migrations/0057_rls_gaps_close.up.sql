@@ -38,28 +38,46 @@ BEGIN
 END $$;
 
 -- dashboard_sse_subscriptions --------------------------------------
-ALTER TABLE dashboard_sse_subscriptions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE dashboard_sse_subscriptions FORCE ROW LEVEL SECURITY;
-
-CREATE POLICY dashboard_sse_subscriptions_tenant_isolation
-  ON dashboard_sse_subscriptions
-  USING (
-    tenant_id::text = current_setting('vaultscan.tenant_id', true)
-    OR current_setting('vaultscan.tenant_id', true) = ''
-    OR current_setting('vaultscan.tenant_id', true) IS NULL
-  );
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+     WHERE schemaname = current_schema()
+       AND tablename = 'dashboard_sse_subscriptions'
+       AND policyname = 'dashboard_sse_subscriptions_tenant_isolation'
+  ) THEN
+    ALTER TABLE dashboard_sse_subscriptions ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE dashboard_sse_subscriptions FORCE ROW LEVEL SECURITY;
+    CREATE POLICY dashboard_sse_subscriptions_tenant_isolation
+      ON dashboard_sse_subscriptions
+      USING (
+        tenant_id::text = current_setting('vaultscan.tenant_id', true)
+        OR current_setting('vaultscan.tenant_id', true) = ''
+        OR current_setting('vaultscan.tenant_id', true) IS NULL
+      );
+  END IF;
+END $$;
 
 -- idempotency_keys -------------------------------------------------
-ALTER TABLE idempotency_keys ENABLE ROW LEVEL SECURITY;
-ALTER TABLE idempotency_keys FORCE ROW LEVEL SECURITY;
-
-CREATE POLICY idempotency_keys_tenant_isolation
-  ON idempotency_keys
-  USING (
-    tenant_id::text = current_setting('vaultscan.tenant_id', true)
-    OR current_setting('vaultscan.tenant_id', true) = ''
-    OR current_setting('vaultscan.tenant_id', true) IS NULL
-  );
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+     WHERE schemaname = current_schema()
+       AND tablename = 'idempotency_keys'
+       AND policyname = 'idempotency_keys_tenant_isolation'
+  ) THEN
+    ALTER TABLE idempotency_keys ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE idempotency_keys FORCE ROW LEVEL SECURITY;
+    CREATE POLICY idempotency_keys_tenant_isolation
+      ON idempotency_keys
+      USING (
+        tenant_id::text = current_setting('vaultscan.tenant_id', true)
+        OR current_setting('vaultscan.tenant_id', true) = ''
+        OR current_setting('vaultscan.tenant_id', true) IS NULL
+      );
+  END IF;
+END $$;
 
 -- audit_logs --------------------------------------------------------
 -- The original 0040 sweep deliberately excluded audit_logs on the
@@ -71,17 +89,26 @@ CREATE POLICY idempotency_keys_tenant_isolation
 -- middleware.TenantBinding), RLS pins the read to that tenant.
 -- That closes the SOC2-grade cross-tenant-leak hole that
 -- TestRLS_TenantCannotReadOtherTenant_AuditLogs surfaced.
-ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
-
-CREATE POLICY audit_logs_tenant_isolation
-  ON audit_logs
-  USING (
-    tenant_id IS NULL
-    OR tenant_id::text = current_setting('vaultscan.tenant_id', true)
-    OR current_setting('vaultscan.tenant_id', true) = ''
-    OR current_setting('vaultscan.tenant_id', true) IS NULL
-  );
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+     WHERE schemaname = current_schema()
+       AND tablename = 'audit_logs'
+       AND policyname = 'audit_logs_tenant_isolation'
+  ) THEN
+    ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
+    CREATE POLICY audit_logs_tenant_isolation
+      ON audit_logs
+      USING (
+        tenant_id IS NULL
+        OR tenant_id::text = current_setting('vaultscan.tenant_id', true)
+        OR current_setting('vaultscan.tenant_id', true) = ''
+        OR current_setting('vaultscan.tenant_id', true) IS NULL
+      );
+  END IF;
+END $$;
 
 -- Performance + correctness extras ---------------------------------
 
@@ -107,15 +134,22 @@ CREATE INDEX IF NOT EXISTS audit_logs_chain_tail_idx
 
 -- CHECK constraints on the documented enum-like columns. Refuses
 -- silent insertion of invalid values that would only be caught
--- much later when a dashboard tries to filter by them.
-ALTER TABLE findings
-  ADD CONSTRAINT findings_severity_check
-  CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info'));
-
-ALTER TABLE findings
-  ADD CONSTRAINT findings_status_check
-  CHECK (status IN (
-    'open', 'triaged', 'assigned', 'in_progress',
-    'risk_accepted', 'false_positive', 'remediated',
-    'retest_requested', 'retest_passed', 'retest_failed', 'closed'
-  ));
+-- much later when a dashboard tries to filter by them. Guarded so
+-- re-running this migration is a no-op.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'findings_severity_check') THEN
+    ALTER TABLE findings
+      ADD CONSTRAINT findings_severity_check
+      CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'findings_status_check') THEN
+    ALTER TABLE findings
+      ADD CONSTRAINT findings_status_check
+      CHECK (status IN (
+        'open', 'triaged', 'assigned', 'in_progress',
+        'risk_accepted', 'false_positive', 'remediated',
+        'retest_requested', 'retest_passed', 'retest_failed', 'closed'
+      ));
+  END IF;
+END $$;
