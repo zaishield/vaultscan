@@ -125,6 +125,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **SSRF guard on every outbound integration HTTP call**
+  (`internal/integrations/ssrf_guard.go`). Pre-resolves the target
+  host + refuses any URL whose resolution lands in a blocked CIDR
+  (cloud metadata services, RFC1918 private, loopback, link-local,
+  IPv6 ULA + link-local + multicast + IPv4-mapped). A custom
+  `net.Dialer.Control` callback re-checks the resolved IP at
+  TCP-connect time, closing the DNS-rebinding window. Validated by
+  17 test cases. Override: `VAULTSCAN_INTEGRATION_ALLOW_PRIVATE_HOSTS=true`
+  (footgun, not enabled in any production overlay).
+- **Per-IP rate limit on the unauthenticated auth surface**.
+  Previously, rate limits only applied AFTER `middleware.Auth`
+  ran, so `/api/v1/auth/dev-token`, `/api/v1/auth/mfa/verify`,
+  and `/api/v1/integrations/{id}/inbound` had no brute-force
+  protection. Tight defaults: 30 attempts / 5-minute window for
+  auth, 120 attempts / minute for inbound webhooks.
+- **`MaxBodySize` middleware now fast-rejects via Content-Length**
+  before reading the body, so a malicious >32 MiB Content-Length
+  header gets a 413 immediately rather than streaming the entire
+  body just to discover it's too big.
+- **`X-Robots-Tag: noindex, nofollow`** on every API response so
+  the public surfaces (status, branding, JWKS) don't accidentally
+  get indexed by search engines or LLM crawlers if a customer
+  support article links them.
+- **RFC 9116 security.txt** served at `/.well-known/security.txt`
+  and `/security.txt` (Contact, Expires, Encryption, Policy,
+  Hiring, Acknowledgements, Canonical, Preferred-Languages).
+  Contact + URLs configurable via env for white-label installs.
 - Production deployments default to refusing unpinned scanner
   images (`VAULTSCAN_REQUIRE_PINNED_IMAGES=true` via
   `envmode.IsProduction`).

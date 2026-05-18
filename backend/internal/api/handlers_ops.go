@@ -535,6 +535,10 @@ func uploadEvidenceWithDEK(s *Services) http.HandlerFunc {
 			writeTenantError(w, err)
 			return
 		}
+		// Global middleware caps r.Body at 32 MiB via MaxBodySize;
+		// no per-handler cap needed. If a future deployment needs
+		// >32 MB evidence, tighten / loosen at the middleware
+		// install site in server.go (one place to audit).
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			badRequest(w, err.Error())

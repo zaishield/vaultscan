@@ -234,12 +234,25 @@ func isValidRequestID(s string) bool {
 // unbounded memory. 32 MiB is the default — comfortably above the
 // largest legitimate request (multipart asset upload at 5 MiB,
 // authdocs at 10 MiB) and small enough to stop a single OOM attempt.
+//
+// Two-stage enforcement:
+//   1. Fast-reject via Content-Length header — saves us streaming
+//      a gigabyte just to discover it's too big.
+//   2. MaxBytesReader on r.Body — catches Transfer-Encoding:
+//      chunked uploads where Content-Length is absent / lies.
+//
+// 413 Request Entity Too Large is returned in both cases.
 func MaxBodySize(limitBytes int64) func(http.Handler) http.Handler {
 	if limitBytes <= 0 {
 		limitBytes = 32 << 20
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.ContentLength > limitBytes {
+				w.Header().Set("Connection", "close")
+				http.Error(w, "request body exceeds limit", http.StatusRequestEntityTooLarge)
+				return
+			}
 			r.Body = http.MaxBytesReader(w, r.Body, limitBytes)
 			next.ServeHTTP(w, r)
 		})
@@ -294,6 +307,13 @@ func SecurityHeaders() func(http.Handler) http.Handler {
 			h.Set("Cross-Origin-Opener-Policy", "same-origin")
 			h.Set("Cross-Origin-Resource-Policy", "same-origin")
 			h.Set("Cross-Origin-Embedder-Policy", "require-corp")
+			// Tell search engines + LLM crawlers to ignore the API
+			// surface. This is a defense-in-depth — the routes also
+			// require auth — but stops accidental indexing of
+			// public surfaces like /api/v1/branding or /api/v1/status
+			// that COULD leak partner names if a search engine
+			// follows a link from a customer support article.
+			h.Set("X-Robots-Tag", "noindex, nofollow")
 			next.ServeHTTP(w, r)
 		})
 	}

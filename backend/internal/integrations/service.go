@@ -68,7 +68,13 @@ func (s *Service) AttachWorkerPool(p *WorkerPool) {
 func New(pool *pgxpool.Pool, bus *eventbus.Bus, a *audit.Service) *Service {
 	return &Service{
 		pool: pool, bus: bus, audit: a,
-		client:         &http.Client{Timeout: 10 * time.Second},
+		// SSRF-guarded transport: the dialer.Control callback rejects
+		// any connection attempt whose post-resolution IP is in the
+		// blocked-CIDR list (cloud metadata, RFC1918, loopback, link-
+		// local, IPv6 ULA). The pre-flight validateOutboundURL call
+		// in deliver/test catches the obvious cases earlier with a
+		// cleaner error.
+		client:         &http.Client{Timeout: 10 * time.Second, Transport: newSafeTransport()},
 		MaxAttempts:    5,
 		InitialBackoff: time.Second,
 		breakers:       map[uuid.UUID]*circuitbreaker.Breaker{},
@@ -197,6 +203,12 @@ func (s *Service) Test(ctx context.Context, integrationID uuid.UUID) (*TestResul
 	}
 	if target == "" {
 		return &TestResult{Error: "no url / api_url configured"}, nil
+	}
+	// SSRF guard. validateOutboundURL pre-resolves the host and
+	// refuses any URL whose resolution lands in a blocked CIDR.
+	// The transport-level dialer guard catches DNS-rebinding races.
+	if _, err := validateOutboundURL(target); err != nil {
+		return &TestResult{Error: err.Error()}, nil
 	}
 	body, _ := json.Marshal(map[string]any{
 		"event_type": "vaultscan.test",
@@ -373,6 +385,15 @@ func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, n
 		if api, ok := config["api_url"].(string); ok {
 			target = api
 		}
+	}
+	// SSRF guard at dispatch time. A misconfigured / malicious
+	// integration target gets a 'ssrf_blocked' delivery error and
+	// the event lands in dead-letters for operator review, rather
+	// than the cluster making an outbound call to a metadata service
+	// or internal admin port.
+	if _, err := validateOutboundURL(target); err != nil {
+		s.recordDelivery(ctx, integrationID, ev, 1, "failed", 0, err.Error())
+		return
 	}
 	attempt := 0
 	delay := s.InitialBackoff

@@ -218,22 +218,74 @@ func Mount(s *Services) http.Handler {
 	// Public branding endpoint (Blueprint §8.5)
 	r.Get("/api/v1/branding", brandingByDomain(s))
 
+	// Construct the rate-limit backend BEFORE the public routes so
+	// the auth-surface limiters below can use it. The authenticated-
+	// route group re-uses the same s.Limiter via the middleware
+	// chain installed later. Pluggable backend:
+	//   memory → single-pod sync.Map token bucket
+	//   redis  → cross-pod sliding-window counter (atomic Lua EVAL)
+	// Production guard refuses to boot with backend=memory.
+	{
+		var limiter middleware.Limiter
+		switch s.Cfg.RateLimitBackend {
+		case "redis":
+			rl, err := middleware.NewRedisLimiter(
+				s.Cfg.RateLimitRedisAddr,
+				s.Cfg.RateLimitRedisPassword,
+				s.Cfg.RateLimitRedisDB,
+			)
+			if err == nil {
+				limiter = rl
+			} else {
+				limiter = middleware.NewInMemoryLimiter()
+			}
+		default:
+			limiter = middleware.NewInMemoryLimiter()
+		}
+		s.Limiter = limiter
+	}
+
+	// Per-IP rate limit for the unauthenticated auth surface. Sits
+	// outside the authenticated-route rate limiter (which only fires
+	// after middleware.Auth runs), so it's the ONLY guard against
+	// password / MFA brute-force. Tight default: 30 attempts /
+	// 5-minute window per source IP.
+	authLimitWindow := 300 // 5 min
+	authLimitMax := 30
+	authLimiter := middleware.NewRateLimitMiddleware(s.Limiter, authLimitMax, authLimitWindow)
+	authLimiter.SetFailOpen(s.Cfg.RateLimitFailOpen)
+
 	// Public-by-design inbound webhook receiver. Auth is the HMAC
 	// signature itself (verified inside the handler); no bearer
 	// token is required because the calling system is the partner,
-	// not the user. Global rate-limit middleware still applies.
-	r.Post("/api/v1/integrations/{integration_id}/inbound", inboundWebhook(s))
-	r.Post("/api/v1/auth/dev-token", devToken(s))
+	// not the user. Tight per-IP rate limit to stop signature-
+	// brute-force fishing.
+	inboundLimiter := middleware.NewRateLimitMiddleware(s.Limiter, 120, 60) // 120/min/IP
+	inboundLimiter.SetFailOpen(s.Cfg.RateLimitFailOpen)
+	r.With(inboundLimiter.Wrap).
+		Post("/api/v1/integrations/{integration_id}/inbound", inboundWebhook(s))
+
+	r.With(authLimiter.Wrap).Post("/api/v1/auth/dev-token", devToken(s))
 
 	// JWKS — public so external token consumers can fetch the active
 	// + verify_only RSA public keys without auth (RFC 7517 norm).
+	// Cache for 5 min on the client side; no rate limit needed for a
+	// static key set (operator's CDN should handle volume).
 	r.Get("/.well-known/jwks.json", jwksHandler(s))
 	r.Get("/api/v1/.well-known/jwks.json", jwksHandler(s))
+
+	// security.txt (RFC 9116) — coordinated-disclosure discovery
+	// for security researchers. Served at both the canonical path
+	// AND the apex /security.txt for older scanners. Cache for a
+	// day on the edge.
+	r.Get("/.well-known/security.txt", securityTxtHandler(s))
+	r.Get("/security.txt", securityTxtHandler(s))
 
 	// MFA second-step verify is reachable without a full JWT — the
 	// caller has just completed password auth and holds a short-lived
 	// challenge token. The MFA service does its own user-id check.
-	r.Post("/api/v1/auth/mfa/verify", mfaVerify(s))
+	// Per-IP limit prevents 6-digit-TOTP code brute-force.
+	r.With(authLimiter.Wrap).Post("/api/v1/auth/mfa/verify", mfaVerify(s))
 
 	// Public cloud public key. Scanner workers and internal agents fetch
 	// this on bootstrap to verify per-job signatures (Blueprint §11.3,
@@ -255,33 +307,14 @@ func Mount(s *Services) http.Handler {
 		// for the lifetime of this request. Must come AFTER Auth and
 		// TenantScope so the identity is resolved before we bind.
 		r.Use(middleware.TenantBinding(s.Pool))
-		// Rate limiting: pluggable backend selected by config.
-		//   memory → single-pod sync.Map token bucket
-		//   redis  → cross-pod sliding-window counter (atomic Lua EVAL)
-		// Production guard refuses to boot with backend=memory.
-		var limiter middleware.Limiter
-		switch s.Cfg.RateLimitBackend {
-		case "redis":
-			rl, err := middleware.NewRedisLimiter(
-				s.Cfg.RateLimitRedisAddr,
-				s.Cfg.RateLimitRedisPassword,
-				s.Cfg.RateLimitRedisDB,
-			)
-			if err == nil {
-				limiter = rl
-			} else {
-				limiter = middleware.NewInMemoryLimiter()
-			}
-		default:
-			limiter = middleware.NewInMemoryLimiter()
-		}
+		// Rate-limit backend already constructed + stored on s.Limiter
+		// earlier in Mount() so the unauthenticated auth-surface
+		// routes can use it. Re-use here for the authenticated group.
+		limiter := s.Limiter
 		windowSec := s.Cfg.RateLimitWindowSec
 		if windowSec <= 0 {
 			windowSec = 60
 		}
-		// Expose the constructed limiter on Services so the /api/v1/usage
-		// handler can surface remaining-token counts via Peek().
-		s.Limiter = limiter
 		// Convert RPS-style config into limit-over-window: configured
 		// RPS × window = total requests allowed in the rolling window.
 		mid := middleware.NewRateLimitMiddleware(limiter, s.Cfg.RateLimitRPS*windowSec, windowSec)

@@ -98,6 +98,15 @@ type Config struct {
 	BrandingDefault    string  // partner slug treated as the default if no domain matches
 	CORSAllowedOrigins []string
 
+	// RFC 9116 security.txt fields. Defaults point at zaishield.com;
+	// white-label installs MUST override via env. See
+	// internal/api/handlers_security_txt.go.
+	SecurityContact             string
+	SecurityPolicyURL           string
+	SecurityHiringURL           string
+	SecurityAcknowledgementsURL string
+	SecurityPreferredLanguage   string
+
 	RateLimitRPS       int
 	EmergencyStopMaxLatencySeconds int
 
@@ -216,6 +225,12 @@ func Load() (*Config, error) {
 		BrandingDefault:      getenv("VAULTSCAN_BRANDING_DEFAULT", "zaishield-direct"),
 		CORSAllowedOrigins:   splitList(getenv("VAULTSCAN_CORS_ALLOWED_ORIGINS",
 			"http://localhost:5173,http://localhost:3000")),
+
+		SecurityContact:             getenv("VAULTSCAN_SECURITY_CONTACT", ""),
+		SecurityPolicyURL:           getenv("VAULTSCAN_SECURITY_POLICY_URL", ""),
+		SecurityHiringURL:           getenv("VAULTSCAN_SECURITY_HIRING_URL", ""),
+		SecurityAcknowledgementsURL: getenv("VAULTSCAN_SECURITY_ACK_URL", ""),
+		SecurityPreferredLanguage:   getenv("VAULTSCAN_SECURITY_PREFLANG", ""),
 		RateLimitRPS:                   parseInt("VAULTSCAN_RATE_LIMIT_RPS", 100),
 		EmergencyStopMaxLatencySeconds: parseInt("VAULTSCAN_EMERGENCY_STOP_MAX_LATENCY", 30),
 		RateLimitBackend:       getenv("VAULTSCAN_RATE_LIMIT_BACKEND", "memory"),
