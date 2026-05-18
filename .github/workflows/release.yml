@@ -25,6 +25,17 @@ on:
         type: string
         required: true
 
+# Note on ordering: the security.yml workflow runs in parallel on
+# the same tag push. Its scanner-image-sign-and-pin + digests-aggregate
+# jobs commit tools/scanner-images/digests.json back to main. Cut
+# the release tag, wait for security.yml to finish (it commits the
+# digests update on a side commit), then re-checkout that commit
+# before publishing the release. The release notes themselves are
+# generated from CHANGELOG.md + GitHub's auto-categoriser, so they
+# don't depend on digests.json directly — but the GitHub Release's
+# asset list SHOULD include the populated file. The release manager
+# verifies this before clicking Publish on the draft.
+
 permissions:
   contents: write
   pull-requests: read

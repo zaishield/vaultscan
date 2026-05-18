@@ -3,6 +3,12 @@ name: security
 on:
   push:
     branches: [main, "claude/**"]
+    # v* tag pushes trigger the scanner-image-sign-and-pin job
+    # which is gated internally by `if: startsWith(github.ref,
+    # 'refs/tags/v')`. Without this `tags:` line that job would
+    # never run on a release tag — populating digests.json would
+    # be impossible from this workflow.
+    tags: ["v*"]
   pull_request:
     branches: [main]
   schedule:
