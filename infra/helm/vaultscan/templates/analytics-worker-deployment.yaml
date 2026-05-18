@@ -30,6 +30,24 @@ spec:
           env:
             - { name: VAULTSCAN_ANALYTICS_INPROC, value: "false" }
           resources: {{- toYaml .Values.analyticsWorker.resources | nindent 12 }}
+          # The worker exposes /healthz on :9090 for liveness and
+          # /readyz for readiness (latter checks DB + NATS reachability).
+          # Without these the kubelet has no signal that a stalled
+          # in-process loop has gone permanently bad.
+          livenessProbe:
+            httpGet: { path: /healthz, port: 9090 }
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: 9090 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          ports:
+            - { name: health, containerPort: 9090, protocol: TCP }
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
       volumes:

@@ -1,0 +1,89 @@
+-- 0057_rls_gaps_close.up.sql
+--
+-- Close three RLS coverage gaps surfaced by the GA audit:
+--
+--   compliance_evidence       (0049)  — tenant-scoped attestation evidence
+--   dashboard_sse_subscriptions (0028) — per-tenant SSE topic subs
+--   idempotency_keys          (0047)  — per-tenant request dedup
+--
+-- All three have a tenant_id column but were never enrolled into the
+-- baseline RLS policy that migration 0040 applied to the rest of the
+-- tenant-scoped tables. Without RLS, a SQL injection or a service-
+-- role bypass would cross tenant boundaries on these tables.
+--
+-- The policy uses the same vaultscan.tenant_id GUC that
+-- middleware.TenantBinding sets per request; no application-code
+-- change needed.
+
+-- compliance_evidence ----------------------------------------------
+ALTER TABLE compliance_evidence ENABLE ROW LEVEL SECURITY;
+ALTER TABLE compliance_evidence FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY compliance_evidence_tenant_isolation
+  ON compliance_evidence
+  USING (
+    tenant_id::text = current_setting('vaultscan.tenant_id', true)
+    OR current_setting('vaultscan.tenant_id', true) = ''
+    OR current_setting('vaultscan.tenant_id', true) IS NULL
+  );
+
+-- dashboard_sse_subscriptions --------------------------------------
+ALTER TABLE dashboard_sse_subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dashboard_sse_subscriptions FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY dashboard_sse_subscriptions_tenant_isolation
+  ON dashboard_sse_subscriptions
+  USING (
+    tenant_id::text = current_setting('vaultscan.tenant_id', true)
+    OR current_setting('vaultscan.tenant_id', true) = ''
+    OR current_setting('vaultscan.tenant_id', true) IS NULL
+  );
+
+-- idempotency_keys -------------------------------------------------
+ALTER TABLE idempotency_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE idempotency_keys FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY idempotency_keys_tenant_isolation
+  ON idempotency_keys
+  USING (
+    tenant_id::text = current_setting('vaultscan.tenant_id', true)
+    OR current_setting('vaultscan.tenant_id', true) = ''
+    OR current_setting('vaultscan.tenant_id', true) IS NULL
+  );
+
+-- Performance + correctness extras ---------------------------------
+
+-- Composite indices for the hot dashboard / SLA queries. The
+-- portal lists "findings open in tenant X past 30d" + "scan jobs
+-- by status in tenant Y" + "audit events of type Z in tenant W
+-- since cutoff" on every page load. Today those queries scan
+-- the tenant_id index then re-filter — costly at scale.
+CREATE INDEX IF NOT EXISTS findings_tenant_status_created_idx
+  ON findings (tenant_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS scan_jobs_tenant_status_created_idx
+  ON scan_jobs (tenant_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS audit_logs_tenant_event_occurred_idx
+  ON audit_logs (tenant_id, event, occurred_at DESC);
+
+-- Audit-chain tail lookup. verify-deep currently full-scans to
+-- find the head; with this partial index it's an index-only seek.
+CREATE INDEX IF NOT EXISTS audit_logs_chain_tail_idx
+  ON audit_logs (id DESC)
+  WHERE chain_hash IS NOT NULL;
+
+-- CHECK constraints on the documented enum-like columns. Refuses
+-- silent insertion of invalid values that would only be caught
+-- much later when a dashboard tries to filter by them.
+ALTER TABLE findings
+  ADD CONSTRAINT findings_severity_check
+  CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info'));
+
+ALTER TABLE findings
+  ADD CONSTRAINT findings_status_check
+  CHECK (status IN (
+    'open', 'triaged', 'assigned', 'in_progress',
+    'risk_accepted', 'false_positive', 'remediated',
+    'retest_requested', 'retest_passed', 'retest_failed', 'closed'
+  ));

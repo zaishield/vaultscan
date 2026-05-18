@@ -89,6 +89,15 @@ var (
 		Name: "vaultscan_integration_dead_letter_depth",
 		Help: "Pending (unresolved) DLQ entries across all integrations.",
 	})
+	// Evidence-vault integrity counter. Incremented by the hourly
+	// evidence_integrity_sample cron task each time a sampled blob
+	// fails to round-trip (storage read + decrypt + sha256 match).
+	// Any non-zero rate = a corruption-class incident; alert at
+	// rate > 0 over 1h.
+	EvidenceIntegrityFailures = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "vaultscan_evidence_integrity_failures_total",
+		Help: "Evidence blobs that failed round-trip verification during sample sweeps.",
+	})
 	EmergencyStopSLAms = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "vaultscan_emergency_stop_sla_ms",
 		Help:    "Time from operator request to agent ack, in milliseconds.",
@@ -172,6 +181,7 @@ func init() {
 		FindingsIngested,
 		FindingsDeduplicated,
 		AuditChainBreaks,
+		EvidenceIntegrityFailures,
 		AgentsByStatus,
 		IntegrationDeliveryFailures,
 		IntegrationDeadLetterDepth,

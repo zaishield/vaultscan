@@ -634,3 +634,52 @@ func (v *Vault) ChainOfCustodyMarkdown(ctx context.Context, evidenceID uuid.UUID
 	}
 	return b.String(), nil
 }
+
+// VerifyRandomSample picks `n` evidence rows at random (Postgres
+// TABLESAMPLE BERNOULLI for cheap sampling) and runs VerifyIntegrity
+// on each. Returns (passed, checked, error).
+//
+// Used by the cron-runner's hourly evidence_integrity_sample task
+// to catch bit-rot, half-restored backups, and KEK/DEK rotation
+// bugs that would otherwise only surface when a customer requests
+// a chain-of-custody report.
+//
+// Cheap by design: TABLESAMPLE is per-page sampling so even a 10M-
+// row table reads ~1% of pages to draw a 100-row sample.
+func (v *Vault) VerifyRandomSample(ctx context.Context, n int) (passed, checked int, err error) {
+	if n <= 0 {
+		return 0, 0, nil
+	}
+	// TABLESAMPLE BERNOULLI(p) draws roughly p% of rows. For a small
+	// requested n we don't need much; cap at 5% for tables of any
+	// realistic size.
+	rows, err := v.pool.Query(ctx, `
+		SELECT id FROM finding_evidence
+		 TABLESAMPLE BERNOULLI(5)
+		 WHERE encrypted = true
+		 LIMIT $1`, n)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	for _, id := range ids {
+		ok, err := v.VerifyIntegrity(ctx, id)
+		checked++
+		if err != nil {
+			// Treat read errors as failures; the caller's metric
+			// records (checked - passed) which surfaces it.
+			continue
+		}
+		if ok {
+			passed++
+		}
+	}
+	return passed, checked, nil
+}

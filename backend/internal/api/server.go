@@ -349,7 +349,11 @@ func Mount(s *Services) http.Handler {
 			// operator must populate tenant_pool_routing and
 			// dedicated_kek_ref; until then the dedicated tenant
 			// degrades to shared isolation rather than going dark.
-			r.With(middleware.RequirePermission("create_tenant")).
+			// Isolation promotion is one-way + affects billing / SLA /
+			// data-pool placement. Requires MFA on top of the
+			// create_tenant permission so a stolen low-privilege
+			// session can't change customer infra posture.
+			r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
 				Post("/{tenant_id}/promote-isolation", promoteTenantIsolation(s))
 			// Pin the tenant's data-residency commitment. Empty region
 			// clears the pin. Allowed regions match the whitelist in

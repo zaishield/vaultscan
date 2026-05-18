@@ -1,0 +1,68 @@
+name: dependency-review
+
+# Runs on every PR. Refuses to merge if the PR introduces a dependency
+# with a known CVE (>= moderate) or a license that's not on the
+# allowed list. Catches supply-chain risks at the diff level so we
+# don't have to wait for the nightly Trivy/govulncheck to flag it
+# post-merge.
+#
+# Companion to:
+#   security.yml > govulncheck (runtime CVE scan of the binary)
+#   security.yml > trivy-images (built container scan)
+#   security.yml > licenses     (full license inventory generation)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write     # so the action can post the review comment
+
+jobs:
+  review:
+    name: GitHub dependency-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          # Refuse moderate and above CVEs introduced by this PR.
+          fail-on-severity: moderate
+          # Allowed licenses — anything copy-left or unknown trips
+          # the action. Update with explicit one-off allow-listing
+          # rather than loosening the policy.
+          allow-licenses: >-
+            Apache-2.0,
+            MIT,
+            BSD-2-Clause,
+            BSD-3-Clause,
+            ISC,
+            MPL-2.0,
+            0BSD,
+            Unlicense,
+            CC0-1.0,
+            CC-BY-3.0,
+            CC-BY-4.0,
+            Python-2.0,
+            PostgreSQL,
+            Zlib
+          # Block known-problematic SPDX licenses outright.
+          deny-licenses: >-
+            GPL-2.0,
+            GPL-3.0,
+            AGPL-1.0,
+            AGPL-3.0,
+            LGPL-2.1,
+            LGPL-3.0,
+            CC-BY-NC-4.0,
+            CC-BY-SA-4.0,
+            SSPL-1.0,
+            BUSL-1.1
+          # Comment on the PR with a summary so reviewers don't
+          # need to dig into the workflow log.
+          comment-summary-in-pr: always
+          # Vulnerability advisory database — npm + go + python +
+          # rubygems all consulted via the action's defaults; nothing
+          # to configure beyond fail-on-severity above.

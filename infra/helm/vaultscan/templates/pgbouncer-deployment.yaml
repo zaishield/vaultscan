@@ -120,6 +120,14 @@ spec:
             - containerPort: 6432
           readinessProbe:
             tcpSocket: { port: 6432 }
+            initialDelaySeconds: 5
+          livenessProbe:
+            # Symmetry with the tx-mode bouncer above. Without
+            # liveness, a stuck bouncer (e.g. hung backend
+            # connections) keeps serving traffic until manually
+            # killed; with it, the kubelet restarts within ~30s.
+            tcpSocket: { port: 6432 }
+            initialDelaySeconds: 30
           resources:
             requests: { cpu: 50m, memory: 64Mi }
             limits:   { cpu: 500m, memory: 256Mi }

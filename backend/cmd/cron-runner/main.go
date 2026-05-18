@@ -182,6 +182,42 @@ func main() {
 		{name: "integrations_dlq_depth", interval: 30 * time.Second, fn: func(ctx context.Context) error {
 			return refreshDLQDepth(ctx, pool.Pool)
 		}},
+		// Auto-replay failed integration deliveries that look retry-
+		// safe: failure < N minutes old, attempts < N, integration
+		// still enabled. Bounded batch per tick so a backlog can't
+		// thunder against the downstream. Operators can disable via
+		// VAULTSCAN_INTEGRATION_AUTORETRY_DISABLED=true.
+		{name: "integrations_dlq_retry", interval: 5 * time.Minute, fn: func(ctx context.Context) error {
+			if os.Getenv("VAULTSCAN_INTEGRATION_AUTORETRY_DISABLED") == "true" {
+				return nil
+			}
+			return autoRetryDeadLetters(ctx, pool.Pool, intSvc, log)
+		}},
+		// Sample-based vault integrity verification post-restore.
+		// Picks N random evidence rows, decrypts each, asserts the
+		// HMAC + ciphertext round-trip. Surfaces corruption from
+		// a backup with bad keys / a partial restore / disk bit-rot.
+		{name: "evidence_integrity_sample", interval: time.Hour, fn: func(ctx context.Context) error {
+			n := 50
+			if v := os.Getenv("VAULTSCAN_EVIDENCE_INTEGRITY_SAMPLE_SIZE"); v != "" {
+				if k, err := strconv.Atoi(v); err == nil && k > 0 && k <= 10000 {
+					n = k
+				}
+			}
+			if vault == nil {
+				return nil
+			}
+			ok, checked, err := vault.VerifyRandomSample(ctx, n)
+			if err != nil {
+				return err
+			}
+			if ok < checked {
+				observability.EvidenceIntegrityFailures.Add(float64(checked - ok))
+				log.Error().Int("ok", ok).Int("checked", checked).
+					Msg("EVIDENCE INTEGRITY: sample verify found mismatches")
+			}
+			return nil
+		}},
 		{name: "agent_status_gauge", interval: 30 * time.Second, fn: func(ctx context.Context) error {
 			return refreshAgentStatusGauge(ctx, pool.Pool)
 		}},
@@ -285,13 +321,20 @@ func main() {
 		}},
 	}
 
+	// Wire the integration service onto the in-process event bus so
+	// events emitted by THIS cron-runner's tasks (audit-ship,
+	// scheduled-report runs, DEK rotation, partition maintenance,
+	// etc.) reach configured outbound integrations. Previously the
+	// service was instantiated but never wired, so any event whose
+	// only emitter was the cron-runner silently fan-out failed.
+	intSvc.Wire(bus)
+
 	var wg sync.WaitGroup
 	for _, j := range jobs {
 		wg.Add(1)
 		go runJob(ctx, log, &wg, j, pool.Pool)
 	}
 	log.Info().Int("jobs", len(jobs)).Msg("cron-runner started")
-	_ = intSvc // unused warning silencer; intSvc.Wire would attach bus subscribers in production
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -425,6 +468,55 @@ func refreshDLQDepth(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	observability.IntegrationDeadLetterDepth.Set(n)
+	return nil
+}
+
+// autoRetryDeadLetters picks a bounded batch of retry-eligible
+// dead-letter entries and calls intSvc.Replay on each. Eligibility:
+//   - resolved_at IS NULL                  (still pending)
+//   - attempts < 5                         (under the per-DL replay cap)
+//   - enqueued_at < now() - 5 min          (give the breaker time to close)
+//   - integration is still enabled         (joined)
+// Bounded at 100 per tick so a 10k-deep backlog doesn't synchronously
+// rip through the downstream API.
+func autoRetryDeadLetters(ctx context.Context, pool *pgxpool.Pool, svc *integrations.Service, log zerolog.Logger) error {
+	rows, err := pool.Query(ctx, `
+		SELECT dl.id
+		  FROM integration_dead_letters dl
+		  JOIN integrations i ON i.id = dl.integration_id
+		 WHERE dl.resolved_at IS NULL
+		   AND dl.attempts < 5
+		   AND dl.enqueued_at < now() - interval '5 minutes'
+		   AND i.enabled = true
+		 ORDER BY dl.enqueued_at
+		 LIMIT 100`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var success, fail int
+	for _, id := range ids {
+		// nil actor = system-initiated retry; the integration_replays
+		// row records `requested_by IS NULL` so an audit can tell
+		// system-retries from operator-retries.
+		if err := svc.Replay(ctx, id, nil); err != nil {
+			fail++
+		} else {
+			success++
+		}
+	}
+	log.Info().Int("ok", success).Int("fail", fail).Int("total", len(ids)).
+		Msg("dlq auto-retry sweep")
 	return nil
 }
 
