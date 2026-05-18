@@ -161,8 +161,12 @@ func main() {
 			_, err := reportSvc.RunDue(ctx)
 			return err
 		}},
-		{name: "audit_verify_deep", interval: time.Hour, fn: func(ctx context.Context) error {
-			res, err := auditSvc.VerifyDeep(ctx)
+		{name: "audit_verify_incremental", interval: time.Hour, fn: func(ctx context.Context) error {
+			// VerifyIncremental resumes from the last persisted
+			// checkpoint, so an hourly tick stays bounded even on a
+			// 50M-row chain. A full forensic VerifyDeep (which
+			// re-scans from row 1) is scheduled weekly below.
+			res, err := auditSvc.VerifyIncremental(ctx)
 			if err != nil {
 				return err
 			}
@@ -170,6 +174,22 @@ func main() {
 				observability.AuditChainBreaks.Inc()
 				log.Error().Int64("first_bad_id", res.FirstBadID).Str("detail", res.Detail).
 					Msg("AUDIT CHAIN BROKEN")
+			}
+			return nil
+		}},
+		{name: "audit_verify_deep_weekly", interval: 7 * 24 * time.Hour, fn: func(ctx context.Context) error {
+			// Full chain re-scan from row 1 — does NOT trust the
+			// incremental checkpoint hash. Slow but covers the case
+			// where an attacker with write access tampered with both
+			// the audit row AND the cached checkpoint hash.
+			res, err := auditSvc.VerifyDeep(ctx)
+			if err != nil {
+				return err
+			}
+			if res.FirstBadID != 0 {
+				observability.AuditChainBreaks.Inc()
+				log.Error().Int64("first_bad_id", res.FirstBadID).Str("detail", res.Detail).
+					Msg("AUDIT CHAIN BROKEN (deep)")
 			}
 			return nil
 		}},

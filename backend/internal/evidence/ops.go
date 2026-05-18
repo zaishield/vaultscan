@@ -12,14 +12,26 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog"
 
 	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
+
+// evidenceLogger surfaces the partial-failure cases that the
+// rotation + sweeper loops would otherwise silently swallow. The
+// "log-and-continue" comments in the loops below promise visibility
+// in operator logs — this is what fulfils that promise. Metrics
+// scrapers tagged `component=evidence` and `op=rewrap` count the
+// drops; alerting on a non-zero rate is the recommended cron-health
+// signal.
+var evidenceLogger = zerolog.New(os.Stderr).With().
+	Timestamp().Str("component", "evidence").Logger()
 
 // ---------------- Envelope encryption ---------------------------------------
 //
@@ -111,13 +123,33 @@ func (v *Vault) ReWrapTenantObjects(ctx context.Context, tenantID uuid.UUID, max
 	if more {
 		todo = todo[:maxBatch]
 	}
+	var skipped int
 	for _, ri := range todo {
 		if err := v.rewrapOne(ctx, tenantID, ri.id, ri.ver, currentVer); err != nil {
 			// Log-and-continue: a single broken blob shouldn't pin
 			// the rotation forever. The next sweep will retry.
+			// Emit a structured warn so cron-health scrapers can
+			// alert on a non-zero rate.
+			evidenceLogger.Warn().
+				Err(err).
+				Str("op", "rewrap").
+				Str("tenant_id", tenantID.String()).
+				Str("evidence_id", ri.id.String()).
+				Int("from_version", ri.ver).
+				Int("to_version", currentVer).
+				Msg("evidence rewrap skipped a blob")
+			skipped++
 			continue
 		}
 		rewrapped++
+	}
+	if skipped > 0 {
+		evidenceLogger.Warn().
+			Str("op", "rewrap").
+			Str("tenant_id", tenantID.String()).
+			Int("skipped", skipped).
+			Int("rewrapped", rewrapped).
+			Msg("evidence rewrap completed with partial failures")
 	}
 	return rewrapped, more, nil
 }
@@ -209,7 +241,14 @@ func (v *Vault) RotateStaleTenantKeys(ctx context.Context, maxAge time.Duration)
 	for _, id := range tenantIDs {
 		if _, err := v.RotateTenantKey(ctx, id); err != nil {
 			// Log-and-continue: one tenant's failure shouldn't
-			// block the sweep — next tick retries.
+			// block the sweep — next tick retries. Emit a
+			// structured warn so the operator sees the per-
+			// tenant failure rate, not just the sweep total.
+			evidenceLogger.Warn().
+				Err(err).
+				Str("op", "rotate_stale").
+				Str("tenant_id", id.String()).
+				Msg("tenant DEK rotation skipped")
 			continue
 		}
 		rotated++

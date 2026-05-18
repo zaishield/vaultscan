@@ -68,7 +68,36 @@ func WithStorage(s Storage) Option            { return func(v *Vault) { v.storag
 
 func WithURLTTL(ttl time.Duration) Option     { return func(v *Vault) { v.urlTTL = ttl } }
 
+// knownDevMasterKeys are master-key values that ship in source for
+// local development, test harnesses, and example overlays. None of
+// them MUST EVER reach a production deployment. NewVault refuses to
+// boot when it sees one of these, unless the operator explicitly
+// sets VAULTSCAN_ALLOW_DEV_KEYS=true (dev/test path).
+//
+// To add a new known-bad value: paste its base64 form into the slice
+// and a comment naming where it came from.
+var knownDevMasterKeys = []string{
+	// backend/test/integration/main_test.go harness
+	"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA=",
+	// backend/cmd/api/example_config.yaml (any future placeholder)
+	"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+}
+
+// ErrDevKeyInProduction is returned by NewVault when the supplied
+// master key matches a known dev/test placeholder and the
+// VAULTSCAN_ALLOW_DEV_KEYS escape hatch is not set. Operators see
+// this on container boot and fix their config before the API
+// accepts a single request.
+var ErrDevKeyInProduction = errors.New(
+	"evidence: refusing to boot with a known development master key; " +
+		"set VAULTSCAN_ALLOW_DEV_KEYS=true ONLY for non-production deployments")
+
 func NewVault(pool *pgxpool.Pool, a *audit.Service, b *eventbus.Bus, masterKeyB64 string, opts ...Option) (*Vault, error) {
+	for _, bad := range knownDevMasterKeys {
+		if masterKeyB64 == bad && os.Getenv("VAULTSCAN_ALLOW_DEV_KEYS") != "true" {
+			return nil, ErrDevKeyInProduction
+		}
+	}
 	key, err := base64.StdEncoding.DecodeString(masterKeyB64)
 	if err != nil || len(key) < 32 {
 		return nil, fmt.Errorf("evidence: master key must decode to >=32 bytes")

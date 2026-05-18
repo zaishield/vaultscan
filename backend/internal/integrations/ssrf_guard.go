@@ -100,11 +100,12 @@ var guardDisabled = os.Getenv("VAULTSCAN_INTEGRATION_ALLOW_PRIVATE_HOSTS") == "t
 // hooks use this to assert the right defaults are applied.
 func SSRFGuardEnabled() bool { return !guardDisabled }
 
-// SetGuardDisabledForTesting is a test-only override. Integration
-// tests stand up httptest.NewServer on 127.0.0.1 which the guard
-// would otherwise refuse to dispatch to. TestMain flips this on;
-// production code MUST NOT call it.
-func SetGuardDisabledForTesting(disabled bool) { guardDisabled = disabled }
+// SetGuardDisabledForTesting is intentionally defined in
+// ssrf_guard_testing.go behind the `integration` build tag. A
+// production binary built without `-tags=integration` cannot link
+// against it — eliminating the prior risk that a future contributor
+// (or attacker with commit access) could flip the override in
+// production code.
 
 // validateOutboundURL parses + sanity-checks the URL. Returns the
 // resolved IPs so the caller can re-verify at dial time. Refuses

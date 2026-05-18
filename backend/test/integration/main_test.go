@@ -86,6 +86,10 @@ func TestMain(m *testing.M) {
 	// guard refuses by default. Flip the override for the test
 	// process so integration runs can dispatch to loopback URLs.
 	integrations.SetGuardDisabledForTesting(true)
+	// evidence.NewVault refuses known-dev master keys in production.
+	// The harness uses the documented dev key; opt into the escape
+	// hatch for the test process only.
+	os.Setenv("VAULTSCAN_ALLOW_DEV_KEYS", "true")
 	h, cleanup, err := bootHarness(dsn)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "boot harness:", err)

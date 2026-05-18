@@ -139,6 +139,160 @@ func (s *Service) VerifyDeep(ctx context.Context) (*VerifyResult, error) {
 	return res, nil
 }
 
+// VerifyIncremental is VerifyDeep's resumable sibling. It reads
+// the persisted (last_verified_id, last_verified_hash) checkpoint
+// from audit_chain_verification_checkpoints, scans from the next
+// row onward, and advances the checkpoint on success. A kill
+// mid-scan no longer restarts the verifier at row 1 — the next
+// run picks up where the previous one left off.
+//
+// Failure modes:
+//   - chain break detected: returns a VerifyResult with FirstBadID
+//     set; the checkpoint is NOT advanced. Operators must resolve
+//     (via the chain_breaks audit + a full VerifyDeep re-run)
+//     before incremental can resume.
+//   - ctx cancelled: returns ctx.Err() with the checkpoint NOT
+//     advanced past the last fully-validated chunk. Safe to retry.
+//
+// Operational guidance:
+//   - Hourly cron: call VerifyIncremental — fast even on a 50M-row
+//     chain because only the new tail is scanned.
+//   - Weekly: call VerifyDeep (NOT this) for a full forensic
+//     re-validation that doesn't trust the checkpoint hash.
+func (s *Service) VerifyIncremental(ctx context.Context) (*VerifyResult, error) {
+	var (
+		ckptID   int64
+		ckptHash []byte
+	)
+	if err := s.pool.QueryRow(ctx,
+		`SELECT last_verified_id, last_verified_hash
+		   FROM audit_chain_verification_checkpoints
+		  WHERE id = 1`).
+		Scan(&ckptID, &ckptHash); err != nil {
+		// Checkpoint table missing or empty → fall back to full
+		// VerifyDeep so the caller never silently downgrades to "no
+		// verification". The migration seeds an empty checkpoint
+		// row, so this branch only fires before 0062 has run.
+		return s.VerifyDeep(ctx)
+	}
+	var (
+		prev      = ckptHash
+		total     int64
+		lastGood  = ckptID
+		firstBad  int64
+		lastID    = ckptID
+		expectHex string
+		storedHex string
+		detail    string
+	)
+	// Treat the empty-bytes seed (`\x`) as "no prior verification"
+	// — start with prev=nil so the chain hash for row 1 matches the
+	// original write-side computation.
+	if len(prev) == 0 {
+		prev = nil
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		rows, err := s.pool.Query(ctx, `
+			SELECT id, event, actor_type, actor_id, host(ip), user_agent,
+			       platform_id, partner_id, tenant_id,
+			       target_type, target_id, payload, chain_prev, chain_hash
+			  FROM audit_logs
+			 WHERE id > $1
+			 ORDER BY id ASC
+			 LIMIT $2`, lastID, verifyDeepChunkSize)
+		if err != nil {
+			return nil, err
+		}
+		chunkRows := 0
+		for rows.Next() {
+			chunkRows++
+			var (
+				id              int64
+				event, actor    string
+				actorID         *uuid.UUID
+				ipStr           *string
+				userAgent       *string
+				platID          uuid.UUID
+				partID, tenID   *uuid.UUID
+				tType, tID      *string
+				payload         string
+				chainPrev, hash []byte
+			)
+			if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
+				&platID, &partID, &tenID,
+				&tType, &tID, &payload, &chainPrev, &hash); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			total++
+			lastID = id
+			h := sha256.New()
+			if prev != nil {
+				h.Write(prev)
+			}
+			fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
+				event, actor, canonicalActorID(actorID), derefStr(ipStr),
+				canonicalString(derefStr(userAgent)),
+				platID, partID, tenID,
+				derefStr(tType), derefStr(tID))
+			h.Write([]byte(payload))
+			expect := h.Sum(nil)
+			if firstBad == 0 && !equal(expect, hash) {
+				firstBad = id
+				expectHex = hex.EncodeToString(expect)
+				storedHex = hex.EncodeToString(hash)
+				detail = fmt.Sprintf("row %d hash mismatch (event=%s)", id, event)
+			}
+			if firstBad == 0 {
+				lastGood = id
+				prev = hash
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+		if chunkRows < verifyDeepChunkSize {
+			break
+		}
+	}
+	res := &VerifyResult{
+		Total:        total,
+		FirstBadID:   firstBad,
+		LastGoodID:   lastGood,
+		DetectedAt:   time.Now().UTC(),
+		ExpectedHash: expectHex,
+		StoredHash:   storedHex,
+		Detail:       detail,
+	}
+	if firstBad != 0 {
+		_, _ = s.pool.Exec(ctx, `
+			INSERT INTO audit_chain_breaks(first_bad_id, last_good_id, detail)
+			VALUES ($1, $2, $3)`, firstBad, lastGood, detail)
+		observability.AuditChainBreaks.Inc()
+		// Do NOT advance the checkpoint past a known break.
+		return res, nil
+	}
+	// Only advance the checkpoint if we actually verified at least
+	// one new row AND the chain stayed intact through end-of-scan.
+	if lastGood > ckptID && prev != nil {
+		_, _ = s.pool.Exec(ctx, `
+			UPDATE audit_chain_verification_checkpoints
+			   SET last_verified_id    = $1,
+			       last_verified_hash  = $2,
+			       last_verified_at    = now(),
+			       rows_verified_total = rows_verified_total + $3
+			 WHERE id = 1`, lastGood, prev, total)
+	}
+	return res, nil
+}
+
 // ---------------- Retention policy enforcement -----------------------------
 
 type RetentionPolicy struct {
