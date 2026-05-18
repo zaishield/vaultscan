@@ -10,7 +10,7 @@ paths:
   /api/v1/auth/mfa:
     delete:
       summary: DELETE /api/v1/auth/mfa
-      operationId: deleteAuthMfa
+      operationId: deleteApiV1AuthMfa
       tags:
         - auth
       responses:
@@ -34,7 +34,7 @@ paths:
   /api/v1/cosign/keys/{key_id}:
     delete:
       summary: "DELETE /api/v1/cosign/keys/{key_id}"
-      operationId: deleteCosignKeysKeyId
+      operationId: deleteApiV1CosignKeysKeyId
       tags:
         - cosign
       parameters:
@@ -64,7 +64,7 @@ paths:
   /api/v1/marketplace/installs/{install_id}:
     delete:
       summary: Uninstall (soft-suspend) a marketplace install.
-      operationId: deleteMarketplaceInstallsInstallId
+      operationId: deleteApiV1MarketplaceInstallsInstallId
       tags:
         - marketplace
       parameters:
@@ -93,7 +93,7 @@ paths:
           $ref: "#/components/responses/Internal"
     patch:
       summary: Configure a pending marketplace install.
-      operationId: patchMarketplaceInstallsInstallId
+      operationId: patchApiV1MarketplaceInstallsInstallId
       tags:
         - marketplace
       parameters:
@@ -130,7 +130,7 @@ paths:
   /api/v1/mobile/devices/{device_id}:
     delete:
       summary: Revoke a mobile device.
-      operationId: deleteMobileDevicesDeviceId
+      operationId: deleteApiV1MobileDevicesDeviceId
       tags:
         - mobile
       parameters:
@@ -160,7 +160,7 @@ paths:
   /api/v1/partners/{partner_id}/report-templates/{report_type}:
     delete:
       summary: "DELETE /api/v1/partners/{partner_id}/report-templates/{report_type}"
-      operationId: deletePartnersPartnerIdReporttemplatesReportType
+      operationId: deleteApiV1PartnersPartnerIdReporttemplatesReportType
       tags:
         - partners
       parameters:
@@ -194,7 +194,7 @@ paths:
           $ref: "#/components/responses/Internal"
     put:
       summary: "PUT /api/v1/partners/{partner_id}/report-templates/{report_type}"
-      operationId: putPartnersPartnerIdReporttemplatesReportType
+      operationId: putApiV1PartnersPartnerIdReporttemplatesReportType
       tags:
         - partners
       parameters:
@@ -236,7 +236,7 @@ paths:
   /api/v1/platform/impersonate/{session_id}:
     delete:
       summary: End an open impersonation session.
-      operationId: deletePlatformImpersonateSessionId
+      operationId: deleteApiV1PlatformImpersonateSessionId
       tags:
         - platform-ops
       parameters:
@@ -266,7 +266,7 @@ paths:
   /api/v1/platform/tenants/{tenant_id}/quarantine:
     delete:
       summary: "Cancel a tenant's quarantine and restore access."
-      operationId: deletePlatformTenantsTenantIdQuarantine
+      operationId: deleteApiV1PlatformTenantsTenantIdQuarantine
       tags:
         - platform-ops
       parameters:
@@ -295,7 +295,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: Mark a tenant for hard-delete after the 7-day quarantine window.
-      operationId: postPlatformTenantsTenantIdQuarantine
+      operationId: postApiV1PlatformTenantsTenantIdQuarantine
       tags:
         - platform-ops
       parameters:
@@ -332,7 +332,7 @@ paths:
   /api/v1/tenants/{tenant_id}/branding:
     delete:
       summary: "DELETE /api/v1/tenants/{tenant_id}/branding"
-      operationId: deleteTenantsTenantIdBranding
+      operationId: deleteApiV1TenantsTenantIdBranding
       tags:
         - tenants
       parameters:
@@ -361,7 +361,7 @@ paths:
           $ref: "#/components/responses/Internal"
     get:
       summary: "GET /api/v1/tenants/{tenant_id}/branding"
-      operationId: getTenantsTenantIdBranding
+      operationId: getApiV1TenantsTenantIdBranding
       tags:
         - tenants
       parameters:
@@ -390,7 +390,7 @@ paths:
           $ref: "#/components/responses/Internal"
     put:
       summary: "PUT /api/v1/tenants/{tenant_id}/branding"
-      operationId: putTenantsTenantIdBranding
+      operationId: putApiV1TenantsTenantIdBranding
       tags:
         - tenants
       parameters:
@@ -427,7 +427,7 @@ paths:
   /api/v1/tenants/{tenant_id}/scim/tokens/{token_id}:
     delete:
       summary: Revoke a SCIM provisioning token.
-      operationId: deleteTenantsTenantIdScimTokensTokenId
+      operationId: deleteApiV1TenantsTenantIdScimTokensTokenId
       tags:
         - tenants
       parameters:
@@ -462,7 +462,7 @@ paths:
   /api/v1/users/{user_id}/roles/{role_code}:
     delete:
       summary: "DELETE /api/v1/users/{user_id}/roles/{role_code}"
-      operationId: deleteUsersUserIdRolesRoleCode
+      operationId: deleteApiV1UsersUserIdRolesRoleCode
       tags:
         - users
       parameters:
@@ -504,7 +504,7 @@ paths:
         200:
           description: Success
           content:
-            application/json:
+            application/jwk-set+json:
               schema:
                 type: object
                 additionalProperties: true
@@ -518,17 +518,40 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /.well-known/security.txt:
+    get:
+      summary: GET /.well-known/security.txt
+      operationId: getWellknownSecurityTxt
+      tags:
+        - 
+      responses:
+        200:
+          description: Success
+          content:
+            text/plain:
+              schema:
+                type: string
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/.well-known/jwks.json:
     get:
       summary: JSON Web Key Set for JWT verification.
-      operationId: getWellknownJwksJson
+      operationId: getApiV1WellknownJwksJson
       tags:
         - internal
       responses:
         200:
           description: Success
           content:
-            application/json:
+            application/jwk-set+json:
               schema:
                 type: object
                 additionalProperties: true
@@ -545,7 +568,7 @@ paths:
   /api/v1/agents:
     get:
       summary: GET /api/v1/agents
-      operationId: getAgents
+      operationId: getApiV1Agents
       tags:
         - agents
       responses:
@@ -568,7 +591,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: POST /api/v1/agents
-      operationId: postAgents
+      operationId: postApiV1Agents
       tags:
         - agents
       requestBody:
@@ -599,7 +622,7 @@ paths:
   /api/v1/agents/{agent_id}:
     get:
       summary: "GET /api/v1/agents/{agent_id}"
-      operationId: getAgentsAgentId
+      operationId: getApiV1AgentsAgentId
       tags:
         - agents
       parameters:
@@ -629,7 +652,7 @@ paths:
   /api/v1/agents/{agent_id}/emergency-stop-sla:
     get:
       summary: Time-to-emergency-stop SLA for an agent.
-      operationId: getAgentsAgentIdEmergencystopsla
+      operationId: getApiV1AgentsAgentIdEmergencystopsla
       tags:
         - agents
       parameters:
@@ -659,7 +682,7 @@ paths:
   /api/v1/agents/{agent_id}/policy:
     get:
       summary: "GET /api/v1/agents/{agent_id}/policy"
-      operationId: getAgentsAgentIdPolicy
+      operationId: getApiV1AgentsAgentIdPolicy
       tags:
         - agents
       parameters:
@@ -688,7 +711,7 @@ paths:
           $ref: "#/components/responses/Internal"
     put:
       summary: "PUT /api/v1/agents/{agent_id}/policy"
-      operationId: putAgentsAgentIdPolicy
+      operationId: putApiV1AgentsAgentIdPolicy
       tags:
         - agents
       parameters:
@@ -725,7 +748,7 @@ paths:
   /api/v1/agents/{agent_id}/telemetry:
     get:
       summary: Heartbeat + resource telemetry timeline.
-      operationId: getAgentsAgentIdTelemetry
+      operationId: getApiV1AgentsAgentIdTelemetry
       tags:
         - agents
       parameters:
@@ -755,7 +778,7 @@ paths:
   /api/v1/agents/{agent_id}/update-offer:
     get:
       summary: Available agent-binary update (signed offer).
-      operationId: getAgentsAgentIdUpdateoffer
+      operationId: getApiV1AgentsAgentIdUpdateoffer
       tags:
         - agents
       parameters:
@@ -785,7 +808,7 @@ paths:
   /api/v1/assets:
     get:
       summary: GET /api/v1/assets
-      operationId: getAssets
+      operationId: getApiV1Assets
       tags:
         - assets
       responses:
@@ -808,7 +831,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: POST /api/v1/assets
-      operationId: postAssets
+      operationId: postApiV1Assets
       tags:
         - assets
       requestBody:
@@ -839,7 +862,7 @@ paths:
   /api/v1/assets/{asset_id}/risk-score:
     get:
       summary: "GET /api/v1/assets/{asset_id}/risk-score"
-      operationId: getAssetsAssetIdRiskscore
+      operationId: getApiV1AssetsAssetIdRiskscore
       tags:
         - assets
       parameters:
@@ -869,7 +892,7 @@ paths:
   /api/v1/audit:
     get:
       summary: GET /api/v1/audit
-      operationId: getAudit
+      operationId: getApiV1Audit
       tags:
         - audit
       responses:
@@ -893,17 +916,16 @@ paths:
   /api/v1/audit/export:
     get:
       summary: "Bulk audit-log export (NDJSON default; ?format=csv). Tenant callers must scope by ?from=<rfc3339>."
-      operationId: getAuditExport
+      operationId: getApiV1AuditExport
       tags:
         - audit
       responses:
         200:
           description: Success
           content:
-            application/json:
+            application/x-ndjson:
               schema:
-                type: object
-                additionalProperties: true
+                type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -917,7 +939,7 @@ paths:
   /api/v1/audit/retention-policies:
     get:
       summary: GET /api/v1/audit/retention-policies
-      operationId: getAuditRetentionpolicies
+      operationId: getApiV1AuditRetentionpolicies
       tags:
         - audit
       responses:
@@ -941,7 +963,7 @@ paths:
   /api/v1/audit/timeline:
     get:
       summary: GET /api/v1/audit/timeline
-      operationId: getAuditTimeline
+      operationId: getApiV1AuditTimeline
       tags:
         - audit
       responses:
@@ -965,7 +987,7 @@ paths:
   /api/v1/audit/verify:
     get:
       summary: Verify the most recent audit-chain tail.
-      operationId: getAuditVerify
+      operationId: getApiV1AuditVerify
       tags:
         - audit
       responses:
@@ -989,7 +1011,7 @@ paths:
   /api/v1/audit/verify-deep:
     get:
       summary: "Walk the full audit chain — run as a cron, not interactively."
-      operationId: getAuditVerifydeep
+      operationId: getApiV1AuditVerifydeep
       tags:
         - audit
       responses:
@@ -1013,7 +1035,7 @@ paths:
   /api/v1/auth/ip-lockouts:
     get:
       summary: GET /api/v1/auth/ip-lockouts
-      operationId: getAuthIplockouts
+      operationId: getApiV1AuthIplockouts
       tags:
         - auth
       responses:
@@ -1037,7 +1059,7 @@ paths:
   /api/v1/auth/me:
     get:
       summary: "Return the calling identity, roles, and effective permissions."
-      operationId: getAuthMe
+      operationId: getApiV1AuthMe
       tags:
         - auth
       responses:
@@ -1061,7 +1083,7 @@ paths:
   /api/v1/auth/sso/{tenant_slug}/oidc/callback:
     get:
       summary: "GET /api/v1/auth/sso/{tenant_slug}/oidc/callback"
-      operationId: getAuthSsoTenantSlugOidcCallback
+      operationId: getApiV1AuthSsoTenantSlugOidcCallback
       tags:
         - auth
       parameters:
@@ -1091,7 +1113,7 @@ paths:
   /api/v1/auth/sso/{tenant_slug}/oidc/start:
     get:
       summary: "GET /api/v1/auth/sso/{tenant_slug}/oidc/start"
-      operationId: getAuthSsoTenantSlugOidcStart
+      operationId: getApiV1AuthSsoTenantSlugOidcStart
       tags:
         - auth
       parameters:
@@ -1121,7 +1143,7 @@ paths:
   /api/v1/auth/sso/{tenant_slug}/saml/start:
     get:
       summary: "GET /api/v1/auth/sso/{tenant_slug}/saml/start"
-      operationId: getAuthSsoTenantSlugSamlStart
+      operationId: getApiV1AuthSsoTenantSlugSamlStart
       tags:
         - auth
       parameters:
@@ -1151,7 +1173,7 @@ paths:
   /api/v1/branding:
     get:
       summary: Resolve white-label branding by Host header.
-      operationId: getBranding
+      operationId: getApiV1Branding
       tags:
         - branding
       responses:
@@ -1175,7 +1197,7 @@ paths:
   /api/v1/compliance/tenants/{tenant_id}/rollup:
     get:
       summary: Per-framework compliance coverage rollup for the tenant.
-      operationId: getComplianceTenantsTenantIdRollup
+      operationId: getApiV1ComplianceTenantsTenantIdRollup
       tags:
         - compliance
       parameters:
@@ -1205,7 +1227,7 @@ paths:
   /api/v1/compliance/{framework}/engagements/{engagement_id}:
     get:
       summary: Compliance report for an engagement in a given framework (ISO27001 / SOC2 / PCI / HIPAA).
-      operationId: getComplianceFrameworkEngagementsEngagementId
+      operationId: getApiV1ComplianceFrameworkEngagementsEngagementId
       tags:
         - compliance
       parameters:
@@ -1240,7 +1262,7 @@ paths:
   /api/v1/compliance/{framework}/engagements/{engagement_id}.md:
     get:
       summary: Same report as Markdown.
-      operationId: getComplianceFrameworkEngagementsEngagementIdMd
+      operationId: getApiV1ComplianceFrameworkEngagementsEngagementIdMd
       tags:
         - compliance
       parameters:
@@ -1258,7 +1280,7 @@ paths:
         200:
           description: Success
           content:
-            application/json:
+            text/markdown:
               schema:
                 type: object
                 additionalProperties: true
@@ -1275,7 +1297,7 @@ paths:
   /api/v1/cosign/keys:
     get:
       summary: GET /api/v1/cosign/keys
-      operationId: getCosignKeys
+      operationId: getApiV1CosignKeys
       tags:
         - cosign
       responses:
@@ -1298,7 +1320,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: POST /api/v1/cosign/keys
-      operationId: postCosignKeys
+      operationId: postApiV1CosignKeys
       tags:
         - cosign
       requestBody:
@@ -1329,7 +1351,7 @@ paths:
   /api/v1/cosign/verify/{tool}:
     get:
       summary: "GET /api/v1/cosign/verify/{tool}"
-      operationId: getCosignVerifyTool
+      operationId: getApiV1CosignVerifyTool
       tags:
         - cosign
       parameters:
@@ -1359,7 +1381,7 @@ paths:
   /api/v1/dashboards/compliance:
     get:
       summary: Compliance posture grid (frameworks × coverage).
-      operationId: getDashboardsCompliance
+      operationId: getApiV1DashboardsCompliance
       tags:
         - dashboards
       responses:
@@ -1383,7 +1405,7 @@ paths:
   /api/v1/dashboards/executive:
     get:
       summary: GET /api/v1/dashboards/executive
-      operationId: getDashboardsExecutive
+      operationId: getApiV1DashboardsExecutive
       tags:
         - dashboards
       responses:
@@ -1407,7 +1429,7 @@ paths:
   /api/v1/dashboards/findings/critical:
     get:
       summary: GET /api/v1/dashboards/findings/critical
-      operationId: getDashboardsFindingsCritical
+      operationId: getApiV1DashboardsFindingsCritical
       tags:
         - dashboards
       responses:
@@ -1431,7 +1453,7 @@ paths:
   /api/v1/dashboards/findings/sla-breaches:
     get:
       summary: GET /api/v1/dashboards/findings/sla-breaches
-      operationId: getDashboardsFindingsSlabreaches
+      operationId: getApiV1DashboardsFindingsSlabreaches
       tags:
         - dashboards
       responses:
@@ -1455,7 +1477,7 @@ paths:
   /api/v1/dashboards/geo:
     get:
       summary: Geographic-distribution map for assets and findings.
-      operationId: getDashboardsGeo
+      operationId: getApiV1DashboardsGeo
       tags:
         - dashboards
       responses:
@@ -1479,7 +1501,7 @@ paths:
   /api/v1/dashboards/layouts:
     get:
       summary: List saved per-user dashboard layouts.
-      operationId: getDashboardsLayouts
+      operationId: getApiV1DashboardsLayouts
       tags:
         - dashboards
       responses:
@@ -1502,7 +1524,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: Save a dashboard layout.
-      operationId: postDashboardsLayouts
+      operationId: postApiV1DashboardsLayouts
       tags:
         - dashboards
       requestBody:
@@ -1533,7 +1555,7 @@ paths:
   /api/v1/dashboards/partner:
     get:
       summary: GET /api/v1/dashboards/partner
-      operationId: getDashboardsPartner
+      operationId: getApiV1DashboardsPartner
       tags:
         - dashboards
       responses:
@@ -1557,7 +1579,7 @@ paths:
   /api/v1/dashboards/scans/recent:
     get:
       summary: GET /api/v1/dashboards/scans/recent
-      operationId: getDashboardsScansRecent
+      operationId: getApiV1DashboardsScansRecent
       tags:
         - dashboards
       responses:
@@ -1581,17 +1603,16 @@ paths:
   /api/v1/dashboards/stream:
     get:
       summary: Server-Sent Events stream of live dashboard updates.
-      operationId: getDashboardsStream
+      operationId: getApiV1DashboardsStream
       tags:
         - dashboards
       responses:
         200:
           description: Success
           content:
-            application/json:
+            text/event-stream:
               schema:
-                type: object
-                additionalProperties: true
+                type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -1605,7 +1626,7 @@ paths:
   /api/v1/dashboards/technical:
     get:
       summary: GET /api/v1/dashboards/technical
-      operationId: getDashboardsTechnical
+      operationId: getApiV1DashboardsTechnical
       tags:
         - dashboards
       responses:
@@ -1629,7 +1650,7 @@ paths:
   /api/v1/engagements:
     get:
       summary: GET /api/v1/engagements
-      operationId: getEngagements
+      operationId: getApiV1Engagements
       tags:
         - engagements
       responses:
@@ -1652,7 +1673,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: POST /api/v1/engagements
-      operationId: postEngagements
+      operationId: postApiV1Engagements
       tags:
         - engagements
       requestBody:
@@ -1683,7 +1704,7 @@ paths:
   /api/v1/engagements/{engagement_id}:
     get:
       summary: "GET /api/v1/engagements/{engagement_id}"
-      operationId: getEngagementsEngagementId
+      operationId: getApiV1EngagementsEngagementId
       tags:
         - engagements
       parameters:
@@ -1713,7 +1734,7 @@ paths:
   /api/v1/engagements/{engagement_id}/authorization/{document_id}/view:
     get:
       summary: "GET /api/v1/engagements/{engagement_id}/authorization/{document_id}/view"
-      operationId: getEngagementsEngagementIdAuthorizationDocumentIdView
+      operationId: getApiV1EngagementsEngagementIdAuthorizationDocumentIdView
       tags:
         - engagements
       parameters:
@@ -1748,7 +1769,7 @@ paths:
   /api/v1/engagements/{engagement_id}/roe:
     get:
       summary: "GET /api/v1/engagements/{engagement_id}/roe"
-      operationId: getEngagementsEngagementIdRoe
+      operationId: getApiV1EngagementsEngagementIdRoe
       tags:
         - engagements
       parameters:
@@ -1777,7 +1798,7 @@ paths:
           $ref: "#/components/responses/Internal"
     put:
       summary: "PUT /api/v1/engagements/{engagement_id}/roe"
-      operationId: putEngagementsEngagementIdRoe
+      operationId: putApiV1EngagementsEngagementIdRoe
       tags:
         - engagements
       parameters:
@@ -1814,7 +1835,7 @@ paths:
   /api/v1/evidence/{evidence_id}:
     get:
       summary: "GET /api/v1/evidence/{evidence_id}"
-      operationId: getEvidenceEvidenceId
+      operationId: getApiV1EvidenceEvidenceId
       tags:
         - evidence
       parameters:
@@ -1844,7 +1865,7 @@ paths:
   /api/v1/evidence/{evidence_id}/chain-of-custody:
     get:
       summary: "GET /api/v1/evidence/{evidence_id}/chain-of-custody"
-      operationId: getEvidenceEvidenceIdChainofcustody
+      operationId: getApiV1EvidenceEvidenceIdChainofcustody
       tags:
         - evidence
       parameters:
@@ -1874,7 +1895,7 @@ paths:
   /api/v1/evidence/{evidence_id}/chain-of-custody.md:
     get:
       summary: "GET /api/v1/evidence/{evidence_id}/chain-of-custody.md"
-      operationId: getEvidenceEvidenceIdChainofcustodyMd
+      operationId: getApiV1EvidenceEvidenceIdChainofcustodyMd
       tags:
         - evidence
       parameters:
@@ -1887,7 +1908,7 @@ paths:
         200:
           description: Success
           content:
-            application/json:
+            text/markdown:
               schema:
                 type: object
                 additionalProperties: true
@@ -1904,7 +1925,7 @@ paths:
   /api/v1/evidence/{evidence_id}/download:
     get:
       summary: "GET /api/v1/evidence/{evidence_id}/download"
-      operationId: getEvidenceEvidenceIdDownload
+      operationId: getApiV1EvidenceEvidenceIdDownload
       tags:
         - evidence
       parameters:
@@ -1934,7 +1955,7 @@ paths:
   /api/v1/evidence/{evidence_id}/url:
     get:
       summary: "GET /api/v1/evidence/{evidence_id}/url"
-      operationId: getEvidenceEvidenceIdUrl
+      operationId: getApiV1EvidenceEvidenceIdUrl
       tags:
         - evidence
       parameters:
@@ -1964,7 +1985,7 @@ paths:
   /api/v1/feedback:
     get:
       summary: List feedback items (admin/triage view).
-      operationId: getFeedback
+      operationId: getApiV1Feedback
       tags:
         - feedback
       responses:
@@ -1987,7 +2008,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: Submit user feedback (bug/feature/NPS).
-      operationId: postFeedback
+      operationId: postApiV1Feedback
       tags:
         - feedback
       requestBody:
@@ -2018,7 +2039,7 @@ paths:
   /api/v1/findings:
     get:
       summary: GET /api/v1/findings
-      operationId: getFindings
+      operationId: getApiV1Findings
       tags:
         - findings
       responses:
@@ -2042,7 +2063,7 @@ paths:
   /api/v1/findings/clusters:
     get:
       summary: Group similar findings into clusters (vuln-class deduplication).
-      operationId: getFindingsClusters
+      operationId: getApiV1FindingsClusters
       tags:
         - findings
       responses:
@@ -2066,14 +2087,14 @@ paths:
   /api/v1/findings/export.sarif:
     get:
       summary: Export findings as SARIF v2.1.0 (consumed by GitHub / GitLab code-scanning UIs).
-      operationId: getFindingsExportSarif
+      operationId: getApiV1FindingsExportSarif
       tags:
         - findings
       responses:
         200:
           description: Success
           content:
-            application/json:
+            application/sarif+json:
               schema:
                 type: object
                 additionalProperties: true
@@ -2090,7 +2111,7 @@ paths:
   /api/v1/findings/sla-breaches:
     get:
       summary: GET /api/v1/findings/sla-breaches
-      operationId: getFindingsSlabreaches
+      operationId: getApiV1FindingsSlabreaches
       tags:
         - findings
       responses:
@@ -2114,7 +2135,7 @@ paths:
   /api/v1/findings/{finding_id}:
     get:
       summary: "GET /api/v1/findings/{finding_id}"
-      operationId: getFindingsFindingId
+      operationId: getApiV1FindingsFindingId
       tags:
         - findings
       parameters:
@@ -2143,7 +2164,7 @@ paths:
           $ref: "#/components/responses/Internal"
     patch:
       summary: "PATCH /api/v1/findings/{finding_id}"
-      operationId: patchFindingsFindingId
+      operationId: patchApiV1FindingsFindingId
       tags:
         - findings
       parameters:
@@ -2180,7 +2201,7 @@ paths:
   /api/v1/findings/{finding_id}/comments:
     get:
       summary: "GET /api/v1/findings/{finding_id}/comments"
-      operationId: getFindingsFindingIdComments
+      operationId: getApiV1FindingsFindingIdComments
       tags:
         - findings
       parameters:
@@ -2209,7 +2230,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: "POST /api/v1/findings/{finding_id}/comments"
-      operationId: postFindingsFindingIdComments
+      operationId: postApiV1FindingsFindingIdComments
       tags:
         - findings
       parameters:
@@ -2246,7 +2267,7 @@ paths:
   /api/v1/health:
     get:
       summary: GET /api/v1/health
-      operationId: getHealth
+      operationId: getApiV1Health
       tags:
         - health
       responses:
@@ -2270,7 +2291,7 @@ paths:
   /api/v1/integration-health:
     get:
       summary: Per-integration delivery health rollup.
-      operationId: getIntegrationhealth
+      operationId: getApiV1Integrationhealth
       tags:
         - integrations
       responses:
@@ -2294,7 +2315,7 @@ paths:
   /api/v1/integrations:
     get:
       summary: GET /api/v1/integrations
-      operationId: getIntegrations
+      operationId: getApiV1Integrations
       tags:
         - integrations
       responses:
@@ -2318,7 +2339,7 @@ paths:
   /api/v1/integrations/{integration_id}/dead-letters:
     get:
       summary: List undelivered events for an integration.
-      operationId: getIntegrationsIntegrationIdDeadletters
+      operationId: getApiV1IntegrationsIntegrationIdDeadletters
       tags:
         - integrations
       parameters:
@@ -2348,7 +2369,7 @@ paths:
   /api/v1/marketplace/installs:
     get:
       summary: "List the calling tenant's marketplace installs."
-      operationId: getMarketplaceInstalls
+      operationId: getApiV1MarketplaceInstalls
       tags:
         - marketplace
       responses:
@@ -2371,7 +2392,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: Install a marketplace listing for the calling tenant.
-      operationId: postMarketplaceInstalls
+      operationId: postApiV1MarketplaceInstalls
       tags:
         - marketplace
       requestBody:
@@ -2402,7 +2423,7 @@ paths:
   /api/v1/marketplace/listings:
     get:
       summary: List partner integration marketplace catalog.
-      operationId: getMarketplaceListings
+      operationId: getApiV1MarketplaceListings
       tags:
         - marketplace
       responses:
@@ -2426,7 +2447,7 @@ paths:
   /api/v1/mobile/dashboard:
     get:
       summary: Read the mobile-portal dashboard summary.
-      operationId: getMobileDashboard
+      operationId: getApiV1MobileDashboard
       tags:
         - mobile
       responses:
@@ -2450,17 +2471,16 @@ paths:
   /api/v1/orchestrator/public-key:
     get:
       summary: "Cloud orchestrator's public key (PEM)."
-      operationId: getOrchestratorPublickey
+      operationId: getApiV1OrchestratorPublickey
       tags:
         - internal
       responses:
         200:
           description: Success
           content:
-            application/json:
+            application/x-pem-file:
               schema:
-                type: object
-                additionalProperties: true
+                type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -2474,7 +2494,7 @@ paths:
   /api/v1/partners:
     get:
       summary: GET /api/v1/partners
-      operationId: getPartners
+      operationId: getApiV1Partners
       tags:
         - partners
       responses:
@@ -2497,7 +2517,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: POST /api/v1/partners
-      operationId: postPartners
+      operationId: postApiV1Partners
       tags:
         - partners
       requestBody:
@@ -2528,7 +2548,7 @@ paths:
   /api/v1/partners/{partner_id}:
     get:
       summary: "GET /api/v1/partners/{partner_id}"
-      operationId: getPartnersPartnerId
+      operationId: getApiV1PartnersPartnerId
       tags:
         - partners
       parameters:
@@ -2558,7 +2578,7 @@ paths:
   /api/v1/partners/{partner_id}/billing/blocks:
     get:
       summary: "GET /api/v1/partners/{partner_id}/billing/blocks"
-      operationId: getPartnersPartnerIdBillingBlocks
+      operationId: getApiV1PartnersPartnerIdBillingBlocks
       tags:
         - partners
       parameters:
@@ -2588,7 +2608,7 @@ paths:
   /api/v1/partners/{partner_id}/billing/plan:
     get:
       summary: "GET /api/v1/partners/{partner_id}/billing/plan"
-      operationId: getPartnersPartnerIdBillingPlan
+      operationId: getApiV1PartnersPartnerIdBillingPlan
       tags:
         - partners
       parameters:
@@ -2617,7 +2637,7 @@ paths:
           $ref: "#/components/responses/Internal"
     put:
       summary: "PUT /api/v1/partners/{partner_id}/billing/plan"
-      operationId: putPartnersPartnerIdBillingPlan
+      operationId: putApiV1PartnersPartnerIdBillingPlan
       tags:
         - partners
       parameters:
@@ -2654,7 +2674,7 @@ paths:
   /api/v1/partners/{partner_id}/billing/plan-requests:
     get:
       summary: "List the partner's plan-change requests."
-      operationId: getPartnersPartnerIdBillingPlanrequests
+      operationId: getApiV1PartnersPartnerIdBillingPlanrequests
       tags:
         - partners
       parameters:
@@ -2683,7 +2703,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: File a plan-change request (customer-initiated).
-      operationId: postPartnersPartnerIdBillingPlanrequests
+      operationId: postApiV1PartnersPartnerIdBillingPlanrequests
       tags:
         - partners
       parameters:
@@ -2720,7 +2740,7 @@ paths:
   /api/v1/partners/{partner_id}/billing/usage:
     get:
       summary: "GET /api/v1/partners/{partner_id}/billing/usage"
-      operationId: getPartnersPartnerIdBillingUsage
+      operationId: getApiV1PartnersPartnerIdBillingUsage
       tags:
         - partners
       parameters:
@@ -2750,7 +2770,7 @@ paths:
   /api/v1/partners/{partner_id}/brand-assets:
     get:
       summary: "GET /api/v1/partners/{partner_id}/brand-assets"
-      operationId: getPartnersPartnerIdBrandassets
+      operationId: getApiV1PartnersPartnerIdBrandassets
       tags:
         - partners
       parameters:
@@ -2780,7 +2800,7 @@ paths:
   /api/v1/partners/{partner_id}/email-templates:
     get:
       summary: "GET /api/v1/partners/{partner_id}/email-templates"
-      operationId: getPartnersPartnerIdEmailtemplates
+      operationId: getApiV1PartnersPartnerIdEmailtemplates
       tags:
         - partners
       parameters:
@@ -2810,7 +2830,7 @@ paths:
   /api/v1/partners/{partner_id}/hierarchy/tenant/{tenant_id}:
     get:
       summary: "GET /api/v1/partners/{partner_id}/hierarchy/tenant/{tenant_id}"
-      operationId: getPartnersPartnerIdHierarchyTenantTenantId
+      operationId: getApiV1PartnersPartnerIdHierarchyTenantTenantId
       tags:
         - partners
       parameters:
@@ -2845,7 +2865,7 @@ paths:
   /api/v1/partners/{partner_id}/onboarding:
     get:
       summary: "GET /api/v1/partners/{partner_id}/onboarding"
-      operationId: getPartnersPartnerIdOnboarding
+      operationId: getApiV1PartnersPartnerIdOnboarding
       tags:
         - partners
       parameters:
@@ -2875,7 +2895,7 @@ paths:
   /api/v1/partners/{partner_id}/preview:
     get:
       summary: Render a branded portal preview for the partner.
-      operationId: getPartnersPartnerIdPreview
+      operationId: getApiV1PartnersPartnerIdPreview
       tags:
         - partners
       parameters:
@@ -2905,7 +2925,7 @@ paths:
   /api/v1/partners/{partner_id}/report-templates:
     get:
       summary: "GET /api/v1/partners/{partner_id}/report-templates"
-      operationId: getPartnersPartnerIdReporttemplates
+      operationId: getApiV1PartnersPartnerIdReporttemplates
       tags:
         - partners
       parameters:
@@ -2935,7 +2955,7 @@ paths:
   /api/v1/platform/billing/plan-requests:
     get:
       summary: Operator queue of pending plan-change requests.
-      operationId: getPlatformBillingPlanrequests
+      operationId: getApiV1PlatformBillingPlanrequests
       tags:
         - platform-ops
       responses:
@@ -2959,7 +2979,7 @@ paths:
   /api/v1/platform/impersonate/active:
     get:
       summary: List currently-open impersonation sessions.
-      operationId: getPlatformImpersonateActive
+      operationId: getApiV1PlatformImpersonateActive
       tags:
         - platform-ops
       responses:
@@ -2983,7 +3003,7 @@ paths:
   /api/v1/platform/maintenance:
     get:
       summary: Read platform-wide maintenance window state.
-      operationId: getPlatformMaintenance
+      operationId: getApiV1PlatformMaintenance
       tags:
         - platform-ops
       responses:
@@ -3006,7 +3026,7 @@ paths:
           $ref: "#/components/responses/Internal"
     put:
       summary: PUT /api/v1/platform/maintenance
-      operationId: putPlatformMaintenance
+      operationId: putApiV1PlatformMaintenance
       tags:
         - platform-ops
       requestBody:
@@ -3037,7 +3057,7 @@ paths:
   /api/v1/platform/policy-rules:
     get:
       summary: List platform-wide policy rules in effect.
-      operationId: getPlatformPolicyrules
+      operationId: getApiV1PlatformPolicyrules
       tags:
         - platform-ops
       responses:
@@ -3061,7 +3081,7 @@ paths:
   /api/v1/reports/{report_id}:
     get:
       summary: "GET /api/v1/reports/{report_id}"
-      operationId: getReportsReportId
+      operationId: getApiV1ReportsReportId
       tags:
         - reports
       parameters:
@@ -3091,7 +3111,7 @@ paths:
   /api/v1/retest-batches/{batch_id}:
     get:
       summary: "Read a retest batch's progress."
-      operationId: getRetestbatchesBatchId
+      operationId: getApiV1RetestbatchesBatchId
       tags:
         - retesting
       parameters:
@@ -3121,7 +3141,7 @@ paths:
   /api/v1/retests/findings/{finding_id}:
     get:
       summary: "GET /api/v1/retests/findings/{finding_id}"
-      operationId: getRetestsFindingsFindingId
+      operationId: getApiV1RetestsFindingsFindingId
       tags:
         - retesting
       parameters:
@@ -3151,7 +3171,7 @@ paths:
   /api/v1/retests/queue:
     get:
       summary: GET /api/v1/retests/queue
-      operationId: getRetestsQueue
+      operationId: getApiV1RetestsQueue
       tags:
         - retesting
       responses:
@@ -3175,7 +3195,7 @@ paths:
   /api/v1/retests/{retest_id}/diff:
     get:
       summary: Compare pre vs post-fix scan output for a retest.
-      operationId: getRetestsRetestIdDiff
+      operationId: getApiV1RetestsRetestIdDiff
       tags:
         - retesting
       parameters:
@@ -3205,7 +3225,7 @@ paths:
   /api/v1/scanner/regions/{region}/network-policy.yaml:
     get:
       summary: "GET /api/v1/scanner/regions/{region}/network-policy.yaml"
-      operationId: getScannerRegionsRegionNetworkpolicyYaml
+      operationId: getApiV1ScannerRegionsRegionNetworkpolicyYaml
       tags:
         - scanner-ops
       parameters:
@@ -3235,7 +3255,7 @@ paths:
   /api/v1/scanner/regions/{region}/quota:
     get:
       summary: Per-region scanner quota + utilisation.
-      operationId: getScannerRegionsRegionQuota
+      operationId: getApiV1ScannerRegionsRegionQuota
       tags:
         - scanner-ops
       parameters:
@@ -3264,7 +3284,7 @@ paths:
           $ref: "#/components/responses/Internal"
     put:
       summary: "PUT /api/v1/scanner/regions/{region}/quota"
-      operationId: putScannerRegionsRegionQuota
+      operationId: putApiV1ScannerRegionsRegionQuota
       tags:
         - scanner-ops
       parameters:
@@ -3301,7 +3321,7 @@ paths:
   /api/v1/scans:
     get:
       summary: GET /api/v1/scans
-      operationId: getScans
+      operationId: getApiV1Scans
       tags:
         - scans
       responses:
@@ -3325,7 +3345,7 @@ paths:
   /api/v1/scans/profiles:
     get:
       summary: GET /api/v1/scans/profiles
-      operationId: getScansProfiles
+      operationId: getApiV1ScansProfiles
       tags:
         - scans
       responses:
@@ -3349,7 +3369,7 @@ paths:
   /api/v1/scans/{scan_id}:
     get:
       summary: "GET /api/v1/scans/{scan_id}"
-      operationId: getScansScanId
+      operationId: getApiV1ScansScanId
       tags:
         - scans
       parameters:
@@ -3379,7 +3399,7 @@ paths:
   /api/v1/scope/{engagement_id}:
     get:
       summary: "GET /api/v1/scope/{engagement_id}"
-      operationId: getScopeEngagementId
+      operationId: getApiV1ScopeEngagementId
       tags:
         - scope
       parameters:
@@ -3409,7 +3429,7 @@ paths:
   /api/v1/status:
     get:
       summary: Public health + version + uptime snapshot (status-page friendly).
-      operationId: getStatus
+      operationId: getApiV1Status
       tags:
         - status
       responses:
@@ -3433,7 +3453,7 @@ paths:
   /api/v1/tenants:
     get:
       summary: List tenants visible to the caller.
-      operationId: getTenants
+      operationId: getApiV1Tenants
       tags:
         - tenants
       responses:
@@ -3456,7 +3476,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: POST /api/v1/tenants
-      operationId: postTenants
+      operationId: postApiV1Tenants
       tags:
         - tenants
       requestBody:
@@ -3487,7 +3507,7 @@ paths:
   /api/v1/tenants/{tenant_id}:
     get:
       summary: "GET /api/v1/tenants/{tenant_id}"
-      operationId: getTenantsTenantId
+      operationId: getApiV1TenantsTenantId
       tags:
         - tenants
       parameters:
@@ -3517,7 +3537,7 @@ paths:
   /api/v1/tenants/{tenant_id}/scim/tokens:
     get:
       summary: List SCIM provisioning tokens (metadata; no plaintext).
-      operationId: getTenantsTenantIdScimTokens
+      operationId: getApiV1TenantsTenantIdScimTokens
       tags:
         - tenants
       parameters:
@@ -3546,7 +3566,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: Mint a SCIM provisioning token. Plaintext returned ONCE.
-      operationId: postTenantsTenantIdScimTokens
+      operationId: postApiV1TenantsTenantIdScimTokens
       tags:
         - tenants
       parameters:
@@ -3583,7 +3603,7 @@ paths:
   /api/v1/tenants/{tenant_id}/sso:
     get:
       summary: "Read the tenant's SAML/OIDC IdP federation config."
-      operationId: getTenantsTenantIdSso
+      operationId: getApiV1TenantsTenantIdSso
       tags:
         - tenants
       parameters:
@@ -3612,7 +3632,7 @@ paths:
           $ref: "#/components/responses/Internal"
     put:
       summary: "Upsert the tenant's SAML/OIDC IdP federation config. Customer self-serve."
-      operationId: putTenantsTenantIdSso
+      operationId: putApiV1TenantsTenantIdSso
       tags:
         - tenants
       parameters:
@@ -3649,7 +3669,7 @@ paths:
   /api/v1/usage:
     get:
       summary: "Self-service usage, plan, and rate-limit visibility for the caller."
-      operationId: getUsage
+      operationId: getApiV1Usage
       tags:
         - usage
       responses:
@@ -3673,7 +3693,7 @@ paths:
   /api/v1/users:
     get:
       summary: GET /api/v1/users
-      operationId: getUsers
+      operationId: getApiV1Users
       tags:
         - users
       responses:
@@ -3696,7 +3716,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: POST /api/v1/users
-      operationId: postUsers
+      operationId: postApiV1Users
       tags:
         - users
       requestBody:
@@ -3727,7 +3747,7 @@ paths:
   /api/v1/users/{user_id}:
     get:
       summary: "GET /api/v1/users/{user_id}"
-      operationId: getUsersUserId
+      operationId: getApiV1UsersUserId
       tags:
         - users
       parameters:
@@ -3757,7 +3777,7 @@ paths:
   /api/v1/users/{user_id}/roles:
     get:
       summary: "GET /api/v1/users/{user_id}/roles"
-      operationId: getUsersUserIdRoles
+      operationId: getApiV1UsersUserIdRoles
       tags:
         - users
       parameters:
@@ -3786,7 +3806,7 @@ paths:
           $ref: "#/components/responses/Internal"
     post:
       summary: "POST /api/v1/users/{user_id}/roles"
-      operationId: postUsersUserIdRoles
+      operationId: postApiV1UsersUserIdRoles
       tags:
         - users
       parameters:
@@ -3868,6 +3888,29 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /metrics:
+    get:
+      summary: GET /metrics
+      operationId: getMetrics
+      tags:
+        - 
+      responses:
+        200:
+          description: Success
+          content:
+            text/plain; version=0.0.4; charset=utf-8; escaping=underscores:
+              schema:
+                type: string
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /readyz:
     get:
       summary: Readiness probe — DB + audit-chain checks. Strips internal hostnames.
@@ -3892,10 +3935,33 @@ paths:
           $ref: "#/components/responses/NotFound"
         500:
           $ref: "#/components/responses/Internal"
+  /security.txt:
+    get:
+      summary: GET /security.txt
+      operationId: getSecurityTxt
+      tags:
+        - 
+      responses:
+        200:
+          description: Success
+          content:
+            text/plain:
+              schema:
+                type: string
+        400:
+          $ref: "#/components/responses/BadRequest"
+        401:
+          $ref: "#/components/responses/Unauthorized"
+        403:
+          $ref: "#/components/responses/Forbidden"
+        404:
+          $ref: "#/components/responses/NotFound"
+        500:
+          $ref: "#/components/responses/Internal"
   /api/v1/feedback/{feedback_id}:
     patch:
       summary: Triage a feedback item.
-      operationId: patchFeedbackFeedbackId
+      operationId: patchApiV1FeedbackFeedbackId
       tags:
         - feedback
       parameters:
@@ -3932,7 +3998,7 @@ paths:
   /api/v1/retest-batches/{batch_id}/items/{retest_id}:
     patch:
       summary: "PATCH /api/v1/retest-batches/{batch_id}/items/{retest_id}"
-      operationId: patchRetestbatchesBatchIdItemsRetestId
+      operationId: patchApiV1RetestbatchesBatchIdItemsRetestId
       tags:
         - retesting
       parameters:
@@ -3974,7 +4040,7 @@ paths:
   /api/v1/agent-updates:
     post:
       summary: POST /api/v1/agent-updates
-      operationId: postAgentupdates
+      operationId: postApiV1Agentupdates
       tags:
         - agents
       requestBody:
@@ -4005,7 +4071,7 @@ paths:
   /api/v1/agents/{agent_id}/csr:
     post:
       summary: "POST /api/v1/agents/{agent_id}/csr"
-      operationId: postAgentsAgentIdCsr
+      operationId: postApiV1AgentsAgentIdCsr
       tags:
         - agents
       parameters:
@@ -4042,7 +4108,7 @@ paths:
   /api/v1/agents/{agent_id}/emergency-stop:
     post:
       summary: "POST /api/v1/agents/{agent_id}/emergency-stop"
-      operationId: postAgentsAgentIdEmergencystop
+      operationId: postApiV1AgentsAgentIdEmergencystop
       tags:
         - agents
       parameters:
@@ -4079,7 +4145,7 @@ paths:
   /api/v1/agents/{agent_id}/rotate-cert:
     post:
       summary: "POST /api/v1/agents/{agent_id}/rotate-cert"
-      operationId: postAgentsAgentIdRotatecert
+      operationId: postApiV1AgentsAgentIdRotatecert
       tags:
         - agents
       parameters:
@@ -4116,7 +4182,7 @@ paths:
   /api/v1/agents/{agent_id}/telemetry/rollup:
     post:
       summary: "POST /api/v1/agents/{agent_id}/telemetry/rollup"
-      operationId: postAgentsAgentIdTelemetryRollup
+      operationId: postApiV1AgentsAgentIdTelemetryRollup
       tags:
         - agents
       parameters:
@@ -4153,7 +4219,7 @@ paths:
   /api/v1/assets/bulk:
     post:
       summary: POST /api/v1/assets/bulk
-      operationId: postAssetsBulk
+      operationId: postApiV1AssetsBulk
       tags:
         - assets
       requestBody:
@@ -4184,7 +4250,7 @@ paths:
   /api/v1/assets/import-csv:
     post:
       summary: POST /api/v1/assets/import-csv
-      operationId: postAssetsImportcsv
+      operationId: postApiV1AssetsImportcsv
       tags:
         - assets
       requestBody:
@@ -4215,7 +4281,7 @@ paths:
   /api/v1/audit/ship/{integration_id}:
     post:
       summary: "POST /api/v1/audit/ship/{integration_id}"
-      operationId: postAuditShipIntegrationId
+      operationId: postApiV1AuditShipIntegrationId
       tags:
         - audit
       parameters:
@@ -4252,7 +4318,7 @@ paths:
   /api/v1/auth/compromised-passwords/{prefix}:
     post:
       summary: "POST /api/v1/auth/compromised-passwords/{prefix}"
-      operationId: postAuthCompromisedpasswordsPrefix
+      operationId: postApiV1AuthCompromisedpasswordsPrefix
       tags:
         - auth
       parameters:
@@ -4289,7 +4355,7 @@ paths:
   /api/v1/auth/dev-token:
     post:
       summary: Mint a dev-only HS256 JWT. Disabled in production.
-      operationId: postAuthDevtoken
+      operationId: postApiV1AuthDevtoken
       tags:
         - auth
       requestBody:
@@ -4320,7 +4386,7 @@ paths:
   /api/v1/auth/ip-lockouts/{ip}/unlock:
     post:
       summary: "POST /api/v1/auth/ip-lockouts/{ip}/unlock"
-      operationId: postAuthIplockoutsIpUnlock
+      operationId: postApiV1AuthIplockoutsIpUnlock
       tags:
         - auth
       parameters:
@@ -4357,7 +4423,7 @@ paths:
   /api/v1/auth/jwt-keys/rotate:
     post:
       summary: Rotate the active JWT signing key. ZAISHIELD super-admin only.
-      operationId: postAuthJwtkeysRotate
+      operationId: postApiV1AuthJwtkeysRotate
       tags:
         - auth
       requestBody:
@@ -4388,7 +4454,7 @@ paths:
   /api/v1/auth/logout:
     post:
       summary: "Revoke every active JWT for the caller's user."
-      operationId: postAuthLogout
+      operationId: postApiV1AuthLogout
       tags:
         - auth
       requestBody:
@@ -4419,7 +4485,7 @@ paths:
   /api/v1/auth/mfa/enroll/confirm:
     post:
       summary: Finish TOTP enrolment after the user types the first code.
-      operationId: postAuthMfaEnrollConfirm
+      operationId: postApiV1AuthMfaEnrollConfirm
       tags:
         - auth
       requestBody:
@@ -4450,7 +4516,7 @@ paths:
   /api/v1/auth/mfa/enroll/start:
     post:
       summary: Begin TOTP enrolment; returns the secret + QR.
-      operationId: postAuthMfaEnrollStart
+      operationId: postApiV1AuthMfaEnrollStart
       tags:
         - auth
       requestBody:
@@ -4481,7 +4547,7 @@ paths:
   /api/v1/auth/mfa/verify:
     post:
       summary: Complete a partial login with a TOTP code.
-      operationId: postAuthMfaVerify
+      operationId: postApiV1AuthMfaVerify
       tags:
         - auth
       requestBody:
@@ -4512,7 +4578,7 @@ paths:
   /api/v1/auth/sso/{tenant_slug}/saml/acs:
     post:
       summary: "POST /api/v1/auth/sso/{tenant_slug}/saml/acs"
-      operationId: postAuthSsoTenantSlugSamlAcs
+      operationId: postApiV1AuthSsoTenantSlugSamlAcs
       tags:
         - auth
       parameters:
@@ -4549,7 +4615,7 @@ paths:
   /api/v1/authorization/{engagement_id}:
     post:
       summary: "POST /api/v1/authorization/{engagement_id}"
-      operationId: postAuthorizationEngagementId
+      operationId: postApiV1AuthorizationEngagementId
       tags:
         - authorization
       parameters:
@@ -4586,7 +4652,7 @@ paths:
   /api/v1/compliance/tenants/{tenant_id}/snapshot:
     post:
       summary: "Persist a frozen 'as-of' snapshot of the tenant's compliance rollup."
-      operationId: postComplianceTenantsTenantIdSnapshot
+      operationId: postApiV1ComplianceTenantsTenantIdSnapshot
       tags:
         - compliance
       parameters:
@@ -4623,7 +4689,7 @@ paths:
   /api/v1/emergency-stops/{stop_id}/ack:
     post:
       summary: Acknowledge an emergency-stop notification.
-      operationId: postEmergencystopsStopIdAck
+      operationId: postApiV1EmergencystopsStopIdAck
       tags:
         - emergency-stops
       parameters:
@@ -4660,7 +4726,7 @@ paths:
   /api/v1/engagements/{engagement_id}/activate:
     post:
       summary: "POST /api/v1/engagements/{engagement_id}/activate"
-      operationId: postEngagementsEngagementIdActivate
+      operationId: postApiV1EngagementsEngagementIdActivate
       tags:
         - engagements
       parameters:
@@ -4697,7 +4763,7 @@ paths:
   /api/v1/engagements/{engagement_id}/pause:
     post:
       summary: "POST /api/v1/engagements/{engagement_id}/pause"
-      operationId: postEngagementsEngagementIdPause
+      operationId: postApiV1EngagementsEngagementIdPause
       tags:
         - engagements
       parameters:
@@ -4734,7 +4800,7 @@ paths:
   /api/v1/engagements/{engagement_id}/rate-limit:
     post:
       summary: "POST /api/v1/engagements/{engagement_id}/rate-limit"
-      operationId: postEngagementsEngagementIdRatelimit
+      operationId: postApiV1EngagementsEngagementIdRatelimit
       tags:
         - engagements
       parameters:
@@ -4771,7 +4837,7 @@ paths:
   /api/v1/engagements/{engagement_id}/resume:
     post:
       summary: "POST /api/v1/engagements/{engagement_id}/resume"
-      operationId: postEngagementsEngagementIdResume
+      operationId: postApiV1EngagementsEngagementIdResume
       tags:
         - engagements
       parameters:
@@ -4808,7 +4874,7 @@ paths:
   /api/v1/evidence/manual:
     post:
       summary: POST /api/v1/evidence/manual
-      operationId: postEvidenceManual
+      operationId: postApiV1EvidenceManual
       tags:
         - evidence
       requestBody:
@@ -4839,7 +4905,7 @@ paths:
   /api/v1/evidence/upload-dek:
     post:
       summary: POST /api/v1/evidence/upload-dek
-      operationId: postEvidenceUploaddek
+      operationId: postApiV1EvidenceUploaddek
       tags:
         - evidence
       requestBody:
@@ -4870,7 +4936,7 @@ paths:
   /api/v1/evidence/{evidence_id}/integrity:
     post:
       summary: "POST /api/v1/evidence/{evidence_id}/integrity"
-      operationId: postEvidenceEvidenceIdIntegrity
+      operationId: postApiV1EvidenceEvidenceIdIntegrity
       tags:
         - evidence
       parameters:
@@ -4907,7 +4973,7 @@ paths:
   /api/v1/evidence/{evidence_id}/worm:
     post:
       summary: "POST /api/v1/evidence/{evidence_id}/worm"
-      operationId: postEvidenceEvidenceIdWorm
+      operationId: postApiV1EvidenceEvidenceIdWorm
       tags:
         - evidence
       parameters:
@@ -4944,7 +5010,7 @@ paths:
   /api/v1/feedback/dismiss-nps:
     post:
       summary: Hide the NPS prompt for the current session.
-      operationId: postFeedbackDismissnps
+      operationId: postApiV1FeedbackDismissnps
       tags:
         - feedback
       requestBody:
@@ -4975,7 +5041,7 @@ paths:
   /api/v1/findings/bulk:
     post:
       summary: POST /api/v1/findings/bulk
-      operationId: postFindingsBulk
+      operationId: postApiV1FindingsBulk
       tags:
         - findings
       requestBody:
@@ -5006,7 +5072,7 @@ paths:
   /api/v1/findings/severity-overrides:
     post:
       summary: POST /api/v1/findings/severity-overrides
-      operationId: postFindingsSeverityoverrides
+      operationId: postApiV1FindingsSeverityoverrides
       tags:
         - findings
       requestBody:
@@ -5037,7 +5103,7 @@ paths:
   /api/v1/findings/suppression-rules:
     post:
       summary: POST /api/v1/findings/suppression-rules
-      operationId: postFindingsSuppressionrules
+      operationId: postApiV1FindingsSuppressionrules
       tags:
         - findings
       requestBody:
@@ -5068,7 +5134,7 @@ paths:
   /api/v1/findings/{finding_id}/auto-retest:
     post:
       summary: "POST /api/v1/findings/{finding_id}/auto-retest"
-      operationId: postFindingsFindingIdAutoretest
+      operationId: postApiV1FindingsFindingIdAutoretest
       tags:
         - findings
       parameters:
@@ -5105,7 +5171,7 @@ paths:
   /api/v1/integrations/dead-letters/{dlq_id}/replay:
     post:
       summary: "POST /api/v1/integrations/dead-letters/{dlq_id}/replay"
-      operationId: postIntegrationsDeadlettersDlqIdReplay
+      operationId: postApiV1IntegrationsDeadlettersDlqIdReplay
       tags:
         - integrations
       parameters:
@@ -5142,7 +5208,7 @@ paths:
   /api/v1/integrations/dead-letters/{dlq_id}/resolve:
     post:
       summary: "POST /api/v1/integrations/dead-letters/{dlq_id}/resolve"
-      operationId: postIntegrationsDeadlettersDlqIdResolve
+      operationId: postApiV1IntegrationsDeadlettersDlqIdResolve
       tags:
         - integrations
       parameters:
@@ -5179,7 +5245,7 @@ paths:
   /api/v1/integrations/{integration_id}/inbound:
     post:
       summary: "Partner-side inbound webhook callback (authenticated by HMAC, not bearer)."
-      operationId: postIntegrationsIntegrationIdInbound
+      operationId: postApiV1IntegrationsIntegrationIdInbound
       tags:
         - integrations
       parameters:
@@ -5216,7 +5282,7 @@ paths:
   /api/v1/integrations/{integration_id}/test:
     post:
       summary: "POST /api/v1/integrations/{integration_id}/test"
-      operationId: postIntegrationsIntegrationIdTest
+      operationId: postApiV1IntegrationsIntegrationIdTest
       tags:
         - integrations
       parameters:
@@ -5253,7 +5319,7 @@ paths:
   /api/v1/integrations/{type}:
     post:
       summary: "POST /api/v1/integrations/{type}"
-      operationId: postIntegrationsType
+      operationId: postApiV1IntegrationsType
       tags:
         - integrations
       parameters:
@@ -5290,7 +5356,7 @@ paths:
   /api/v1/mobile/alerts/ack:
     post:
       summary: Acknowledge a push-notification alert.
-      operationId: postMobileAlertsAck
+      operationId: postApiV1MobileAlertsAck
       tags:
         - mobile
       requestBody:
@@ -5321,7 +5387,7 @@ paths:
   /api/v1/mobile/devices:
     post:
       summary: Enroll a mobile device with a push token.
-      operationId: postMobileDevices
+      operationId: postApiV1MobileDevices
       tags:
         - mobile
       requestBody:
@@ -5352,7 +5418,7 @@ paths:
   /api/v1/mobile/emergency-stop:
     post:
       summary: Mobile-initiated emergency stop.
-      operationId: postMobileEmergencystop
+      operationId: postApiV1MobileEmergencystop
       tags:
         - mobile
       requestBody:
@@ -5383,7 +5449,7 @@ paths:
   /api/v1/partners/{partner_id}/brand-assets/{asset_type}:
     post:
       summary: "POST /api/v1/partners/{partner_id}/brand-assets/{asset_type}"
-      operationId: postPartnersPartnerIdBrandassetsAssetType
+      operationId: postApiV1PartnersPartnerIdBrandassetsAssetType
       tags:
         - partners
       parameters:
@@ -5425,7 +5491,7 @@ paths:
   /api/v1/partners/{partner_id}/domains:
     post:
       summary: "POST /api/v1/partners/{partner_id}/domains"
-      operationId: postPartnersPartnerIdDomains
+      operationId: postApiV1PartnersPartnerIdDomains
       tags:
         - partners
       parameters:
@@ -5462,7 +5528,7 @@ paths:
   /api/v1/partners/{partner_id}/email-templates/{code}/send-test:
     post:
       summary: "POST /api/v1/partners/{partner_id}/email-templates/{code}/send-test"
-      operationId: postPartnersPartnerIdEmailtemplatesCodeSendtest
+      operationId: postApiV1PartnersPartnerIdEmailtemplatesCodeSendtest
       tags:
         - partners
       parameters:
@@ -5504,7 +5570,7 @@ paths:
   /api/v1/partners/{partner_id}/sender-dns/check:
     post:
       summary: "POST /api/v1/partners/{partner_id}/sender-dns/check"
-      operationId: postPartnersPartnerIdSenderdnsCheck
+      operationId: postApiV1PartnersPartnerIdSenderdnsCheck
       tags:
         - partners
       parameters:
@@ -5541,7 +5607,7 @@ paths:
   /api/v1/platform/billing/plan-requests/{id}/decide:
     post:
       summary: Approve / reject / cancel a customer plan-change request.
-      operationId: postPlatformBillingPlanrequestsIdDecide
+      operationId: postApiV1PlatformBillingPlanrequestsIdDecide
       tags:
         - platform-ops
       parameters:
@@ -5578,7 +5644,7 @@ paths:
   /api/v1/platform/billing/usage-adjustments:
     post:
       summary: "Operator credit / surcharge for a partner's monthly usage."
-      operationId: postPlatformBillingUsageadjustments
+      operationId: postApiV1PlatformBillingUsageadjustments
       tags:
         - platform-ops
       requestBody:
@@ -5609,7 +5675,7 @@ paths:
   /api/v1/platform/break-glass:
     post:
       summary: POST /api/v1/platform/break-glass
-      operationId: postPlatformBreakglass
+      operationId: postApiV1PlatformBreakglass
       tags:
         - platform-ops
       requestBody:
@@ -5640,7 +5706,7 @@ paths:
   /api/v1/platform/break-glass/redeem:
     post:
       summary: Redeem a break-glass admin token (audited).
-      operationId: postPlatformBreakglassRedeem
+      operationId: postApiV1PlatformBreakglassRedeem
       tags:
         - platform-ops
       requestBody:
@@ -5671,7 +5737,7 @@ paths:
   /api/v1/platform/impersonate:
     post:
       summary: "Open a support-engineer impersonation session (ticket-tagged, dual-audited)."
-      operationId: postPlatformImpersonate
+      operationId: postApiV1PlatformImpersonate
       tags:
         - platform-ops
       requestBody:
@@ -5702,7 +5768,7 @@ paths:
   /api/v1/platform/tenants/{tenant_id}/migrate:
     post:
       summary: Move a tenant from one partner to another (full audit trail).
-      operationId: postPlatformTenantsTenantIdMigrate
+      operationId: postApiV1PlatformTenantsTenantIdMigrate
       tags:
         - platform-ops
       parameters:
@@ -5739,7 +5805,7 @@ paths:
   /api/v1/report-schedules:
     post:
       summary: POST /api/v1/report-schedules
-      operationId: postReportschedules
+      operationId: postApiV1Reportschedules
       tags:
         - reports
       requestBody:
@@ -5770,7 +5836,7 @@ paths:
   /api/v1/report-schedules/run-due:
     post:
       summary: POST /api/v1/report-schedules/run-due
-      operationId: postReportschedulesRundue
+      operationId: postApiV1ReportschedulesRundue
       tags:
         - reports
       requestBody:
@@ -5801,7 +5867,7 @@ paths:
   /api/v1/reports:
     post:
       summary: POST /api/v1/reports
-      operationId: postReports
+      operationId: postApiV1Reports
       tags:
         - reports
       requestBody:
@@ -5832,7 +5898,7 @@ paths:
   /api/v1/reports/{report_id}/approve:
     post:
       summary: "POST /api/v1/reports/{report_id}/approve"
-      operationId: postReportsReportIdApprove
+      operationId: postApiV1ReportsReportIdApprove
       tags:
         - reports
       parameters:
@@ -5869,7 +5935,7 @@ paths:
   /api/v1/retest-batches:
     post:
       summary: POST /api/v1/retest-batches
-      operationId: postRetestbatches
+      operationId: postApiV1Retestbatches
       tags:
         - retesting
       requestBody:
@@ -5900,7 +5966,7 @@ paths:
   /api/v1/retests:
     post:
       summary: POST /api/v1/retests
-      operationId: postRetests
+      operationId: postApiV1Retests
       tags:
         - retesting
       requestBody:
@@ -5931,7 +5997,7 @@ paths:
   /api/v1/retests/{retest_id}/launch:
     post:
       summary: "POST /api/v1/retests/{retest_id}/launch"
-      operationId: postRetestsRetestIdLaunch
+      operationId: postApiV1RetestsRetestIdLaunch
       tags:
         - retesting
       parameters:
@@ -5968,7 +6034,7 @@ paths:
   /api/v1/retests/{retest_id}/result:
     post:
       summary: "POST /api/v1/retests/{retest_id}/result"
-      operationId: postRetestsRetestIdResult
+      operationId: postApiV1RetestsRetestIdResult
       tags:
         - retesting
       parameters:
@@ -6005,7 +6071,7 @@ paths:
   /api/v1/scanner/nodes/failover-sweep:
     post:
       summary: POST /api/v1/scanner/nodes/failover-sweep
-      operationId: postScannerNodesFailoversweep
+      operationId: postApiV1ScannerNodesFailoversweep
       tags:
         - scanner-ops
       requestBody:
@@ -6036,7 +6102,7 @@ paths:
   /api/v1/scanner/nodes/{node_id}/heartbeat:
     post:
       summary: "POST /api/v1/scanner/nodes/{node_id}/heartbeat"
-      operationId: postScannerNodesNodeIdHeartbeat
+      operationId: postApiV1ScannerNodesNodeIdHeartbeat
       tags:
         - scanner-ops
       parameters:
@@ -6073,7 +6139,7 @@ paths:
   /api/v1/scanner/regions/{region}/pull-credentials:
     post:
       summary: "POST /api/v1/scanner/regions/{region}/pull-credentials"
-      operationId: postScannerRegionsRegionPullcredentials
+      operationId: postApiV1ScannerRegionsRegionPullcredentials
       tags:
         - scanner-ops
       parameters:
@@ -6110,7 +6176,7 @@ paths:
   /api/v1/scans/emergency-stop:
     post:
       summary: POST /api/v1/scans/emergency-stop
-      operationId: postScansEmergencystop
+      operationId: postApiV1ScansEmergencystop
       tags:
         - scans
       requestBody:
@@ -6141,7 +6207,7 @@ paths:
   /api/v1/scans/external:
     post:
       summary: POST /api/v1/scans/external
-      operationId: postScansExternal
+      operationId: postApiV1ScansExternal
       tags:
         - scans
       requestBody:
@@ -6172,7 +6238,7 @@ paths:
   /api/v1/scans/internal:
     post:
       summary: POST /api/v1/scans/internal
-      operationId: postScansInternal
+      operationId: postApiV1ScansInternal
       tags:
         - scans
       requestBody:
@@ -6203,7 +6269,7 @@ paths:
   /api/v1/scans/{scan_id}/approve:
     post:
       summary: "POST /api/v1/scans/{scan_id}/approve"
-      operationId: postScansScanIdApprove
+      operationId: postApiV1ScansScanIdApprove
       tags:
         - scans
       parameters:
@@ -6240,7 +6306,7 @@ paths:
   /api/v1/scope:
     post:
       summary: POST /api/v1/scope
-      operationId: postScope
+      operationId: postApiV1Scope
       tags:
         - scope
       requestBody:
@@ -6271,7 +6337,7 @@ paths:
   /api/v1/scope/import-csv:
     post:
       summary: POST /api/v1/scope/import-csv
-      operationId: postScopeImportcsv
+      operationId: postApiV1ScopeImportcsv
       tags:
         - scope
       requestBody:
@@ -6302,7 +6368,7 @@ paths:
   /api/v1/scope/{scope_id}/approve:
     post:
       summary: "POST /api/v1/scope/{scope_id}/approve"
-      operationId: postScopeScopeIdApprove
+      operationId: postApiV1ScopeScopeIdApprove
       tags:
         - scope
       parameters:
@@ -6339,7 +6405,7 @@ paths:
   /api/v1/tenants/{tenant_id}/data-key/rotate:
     post:
       summary: "POST /api/v1/tenants/{tenant_id}/data-key/rotate"
-      operationId: postTenantsTenantIdDatakeyRotate
+      operationId: postApiV1TenantsTenantIdDatakeyRotate
       tags:
         - tenants
       parameters:
@@ -6376,7 +6442,7 @@ paths:
   /api/v1/tenants/{tenant_id}/promote-isolation:
     post:
       summary: "POST /api/v1/tenants/{tenant_id}/promote-isolation"
-      operationId: postTenantsTenantIdPromoteisolation
+      operationId: postApiV1TenantsTenantIdPromoteisolation
       tags:
         - tenants
       parameters:
@@ -6413,7 +6479,7 @@ paths:
   /api/v1/tenants/{tenant_id}/reactivate:
     post:
       summary: "POST /api/v1/tenants/{tenant_id}/reactivate"
-      operationId: postTenantsTenantIdReactivate
+      operationId: postApiV1TenantsTenantIdReactivate
       tags:
         - tenants
       parameters:
@@ -6450,7 +6516,7 @@ paths:
   /api/v1/tenants/{tenant_id}/suspend:
     post:
       summary: "POST /api/v1/tenants/{tenant_id}/suspend"
-      operationId: postTenantsTenantIdSuspend
+      operationId: postApiV1TenantsTenantIdSuspend
       tags:
         - tenants
       parameters:
@@ -6487,7 +6553,7 @@ paths:
   /api/v1/users/{user_id}/erase:
     post:
       summary: "GDPR Article 17 erasure — pseudonymises PII across users, login_events, token_revocations."
-      operationId: postUsersUserIdErase
+      operationId: postApiV1UsersUserIdErase
       tags:
         - users
       parameters:
@@ -6524,7 +6590,7 @@ paths:
   /api/v1/users/{user_id}/revoke-tokens:
     post:
       summary: "POST /api/v1/users/{user_id}/revoke-tokens"
-      operationId: postUsersUserIdRevoketokens
+      operationId: postApiV1UsersUserIdRevoketokens
       tags:
         - users
       parameters:
@@ -6561,7 +6627,7 @@ paths:
   /api/v1/users/{user_id}/unlock:
     post:
       summary: "POST /api/v1/users/{user_id}/unlock"
-      operationId: postUsersUserIdUnlock
+      operationId: postApiV1UsersUserIdUnlock
       tags:
         - users
       parameters:
@@ -6598,7 +6664,7 @@ paths:
   /api/v1/integrations/{integration_id}/signing-secret:
     put:
       summary: Rotate the inbound webhook signing secret.
-      operationId: putIntegrationsIntegrationIdSigningsecret
+      operationId: putApiV1IntegrationsIntegrationIdSigningsecret
       tags:
         - integrations
       parameters:
@@ -6635,7 +6701,7 @@ paths:
   /api/v1/partners/{partner_id}/branding:
     put:
       summary: "PUT /api/v1/partners/{partner_id}/branding"
-      operationId: putPartnersPartnerIdBranding
+      operationId: putApiV1PartnersPartnerIdBranding
       tags:
         - partners
       parameters:
@@ -6672,7 +6738,7 @@ paths:
   /api/v1/partners/{partner_id}/email-templates/{code}:
     put:
       summary: "PUT /api/v1/partners/{partner_id}/email-templates/{code}"
-      operationId: putPartnersPartnerIdEmailtemplatesCode
+      operationId: putApiV1PartnersPartnerIdEmailtemplatesCode
       tags:
         - partners
       parameters:
@@ -6714,7 +6780,7 @@ paths:
   /api/v1/partners/{partner_id}/support:
     put:
       summary: "PUT /api/v1/partners/{partner_id}/support"
-      operationId: putPartnersPartnerIdSupport
+      operationId: putApiV1PartnersPartnerIdSupport
       tags:
         - partners
       parameters:
@@ -6751,7 +6817,7 @@ paths:
   /api/v1/settings/auto-retest:
     put:
       summary: PUT /api/v1/settings/auto-retest
-      operationId: putSettingsAutoretest
+      operationId: putApiV1SettingsAutoretest
       tags:
         - settings
       requestBody:
@@ -6782,7 +6848,7 @@ paths:
   /api/v1/tenants/{tenant_id}/residency:
     put:
       summary: "Pin or clear the tenant's data-residency commitment."
-      operationId: putTenantsTenantIdResidency
+      operationId: putApiV1TenantsTenantIdResidency
       tags:
         - tenants
       parameters:
@@ -6870,4 +6936,4 @@ components:
       required:
         - error
 security:
-  - bearerAuth: "[]"
+  - bearerAuth: []

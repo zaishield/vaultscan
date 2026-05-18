@@ -82,6 +82,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "VAULTSCAN_TEST_DATABASE_URL not set; skipping integration suite")
 		os.Exit(0)
 	}
+	// httptest.NewServer always binds 127.0.0.1, which the SSRF
+	// guard refuses by default. Flip the override for the test
+	// process so integration runs can dispatch to loopback URLs.
+	integrations.SetGuardDisabledForTesting(true)
 	h, cleanup, err := bootHarness(dsn)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "boot harness:", err)

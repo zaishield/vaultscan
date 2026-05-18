@@ -638,7 +638,18 @@ func Mount(s *Services) http.Handler {
 		// Integrations
 		r.Route("/api/v1/integrations", func(r chi.Router) {
 			r.Get("/", listIntegrations(s))
-			r.Post("/{type}", createIntegration(s))
+			// chi can't mix a wildcard leaf (POST /{type}) with a
+			// wildcard subtree (Route /{integration_id}/...) at the
+			// same depth — the trie collapses them and the leaf 404s.
+			// Mount BOTH under the same Route("/{integration_id}")
+			// subtree; the create handler reads the slot via the
+			// integration_id name.
+			r.Route("/{integration_id}", func(r chi.Router) {
+				r.Post("/", createIntegration(s))
+				r.Post("/test", testIntegration(s))
+				r.With(middleware.RequirePermission("manage_integrations")).
+					Put("/signing-secret", putIntegrationSigningSecret(s))
+			})
 		})
 
 		// Dashboards (with time-range + drill-down)
@@ -738,13 +749,9 @@ func Mount(s *Services) http.Handler {
 		r.With(middleware.RequirePermission("generate_report")).
 			Post("/api/v1/reports/{report_id}/approve", approveReport(s))
 
-		// Integration test + health (VS-11)
-		r.Route("/api/v1/integrations/{integration_id}", func(r chi.Router) {
-			r.Post("/test", testIntegration(s))
-			// Operator-rotates the per-integration inbound HMAC secret.
-			r.With(middleware.RequirePermission("manage_integrations")).
-				Put("/signing-secret", putIntegrationSigningSecret(s))
-		})
+		// Integration test + health (VS-11) — the per-integration
+		// /test and /signing-secret subroutes are mounted inside the
+		// shared /api/v1/integrations Route block above.
 		r.Get("/api/v1/integration-health", integrationHealth(s))
 
 		// Audit

@@ -335,12 +335,14 @@ func TestImpersonation_FullFlow(t *testing.T) {
 	}
 	// Audit rows recorded (both dual-audit events).
 	var auditCount int
+	// audit_logs.payload was coerced to TEXT (see migration 0012) so
+	// JSONB operators don't apply directly. Cast at query time.
 	if err := h.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM audit_logs
 		 WHERE event IN ('support.impersonation_started',
 		                 'user.impersonated_by_support',
 		                 'support.impersonation_ended')
-		   AND payload->>'session_id' = $1`, sess.ID.String()).Scan(&auditCount); err != nil {
+		   AND payload::jsonb->>'session_id' = $1`, sess.ID.String()).Scan(&auditCount); err != nil {
 		t.Fatalf("audit query: %v", err)
 	}
 	if auditCount < 3 {

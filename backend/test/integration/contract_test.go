@@ -38,10 +38,16 @@ import (
 
 	"github.com/zaishield/vaultscan/backend/internal/api"
 	"github.com/zaishield/vaultscan/backend/internal/auth"
+	"github.com/zaishield/vaultscan/backend/internal/billing"
+	"github.com/zaishield/vaultscan/backend/internal/compliance"
 	"github.com/zaishield/vaultscan/backend/internal/config"
 	"github.com/zaishield/vaultscan/backend/internal/dashboards"
 	"github.com/zaishield/vaultscan/backend/internal/guardrails"
+	"github.com/zaishield/vaultscan/backend/internal/impersonation"
 	"github.com/zaishield/vaultscan/backend/internal/integrations"
+	"github.com/zaishield/vaultscan/backend/internal/planrequests"
+	"github.com/zaishield/vaultscan/backend/internal/scimtokens"
+	"github.com/zaishield/vaultscan/backend/internal/ssoconfig"
 )
 
 // Register decoders for content types kin-openapi doesn't know about
@@ -152,6 +158,14 @@ func mountFullAPI(t *testing.T, h *harness) *httptest.Server {
 	verifier = verifier.WithKeyManager(keyMgr)
 	cfg := &config.Config{CORSAllowedOrigins: []string{"*"}, RateLimitRPS: 10000}
 	intSvc := integrations.New(h.pool, h.bus, h.audit)
+	// GA-era services. Without these the contract test panics with
+	// nil derefs in /usage, /audit/export, /users/{id}/erase, etc.
+	billSvc := billing.New(h.pool, h.bus)
+	ssoSvc := ssoconfig.New(h.pool, h.audit)
+	scimSvc := scimtokens.New(h.pool, h.audit)
+	planSvc := planrequests.New(h.pool, h.audit)
+	impSvc := impersonation.New(h.pool, h.audit)
+	complEval := compliance.NewEvaluator(h.pool)
 	router := api.Mount(&api.Services{
 		Pool: h.pool, Cfg: cfg, Verifier: verifier,
 		Audit: h.audit, Bus: h.bus, Branding: h.branding,
@@ -162,7 +176,9 @@ func mountFullAPI(t *testing.T, h *harness) *httptest.Server {
 		Dashboards: dashboards.New(h.pool),
 		Nodes: h.nodes, LiveStream: ls, Guardrails: guardrailSvc,
 		Bruteforce: bruteforce, MFA: mfaSvc, Keys: keyMgr,
-		Integrations: intSvc,
+		Integrations: intSvc, Users: h.users, Billing: billSvc,
+		SSOConfig: ssoSvc, SCIMTokens: scimSvc, PlanRequests: planSvc,
+		Impersonation: impSvc, ComplianceEval: complEval,
 	})
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)

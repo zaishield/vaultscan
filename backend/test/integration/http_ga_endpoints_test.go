@@ -176,11 +176,11 @@ func TestHandlers_IntegrationsSigningSecretEndpoint(t *testing.T) {
 	tok := mintToken(t, tenantID)
 
 	// Create an integration first; we need a real ID to PUT against.
-	resp := doReq(t, "POST", srv.URL+"/api/v1/integrations",
+	// Route is POST /api/v1/integrations/{type}.
+	resp := doReq(t, "POST", srv.URL+"/api/v1/integrations/webhook",
 		tok, tenantID.String(),
-		bytes.NewReader([]byte(`{"type":"webhook","name":"ss-test","config":{"url":"https://example.com/in"}}`)))
-	_ = requireStatus(t, resp, http.StatusOK)
-	body := requireStatus(t, resp, http.StatusOK)
+		bytes.NewReader([]byte(`{"name":"ss-test","config":{"url":"https://example.com/in"}}`)))
+	body := requireStatus(t, resp, http.StatusCreated)
 	resp.Body.Close()
 	// Body is JSON; extract id via string-search (avoids importing a
 	// JSON struct for one field).

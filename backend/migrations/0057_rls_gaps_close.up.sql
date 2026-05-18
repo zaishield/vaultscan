@@ -15,17 +15,27 @@
 -- middleware.TenantBinding sets per request; no application-code
 -- change needed.
 
--- compliance_evidence ----------------------------------------------
-ALTER TABLE compliance_evidence ENABLE ROW LEVEL SECURITY;
-ALTER TABLE compliance_evidence FORCE ROW LEVEL SECURITY;
-
-CREATE POLICY compliance_evidence_tenant_isolation
-  ON compliance_evidence
-  USING (
-    tenant_id::text = current_setting('vaultscan.tenant_id', true)
-    OR current_setting('vaultscan.tenant_id', true) = ''
-    OR current_setting('vaultscan.tenant_id', true) IS NULL
-  );
+-- compliance_evidence: already enrolled in RLS by 0045; the
+-- guarded block keeps the migration idempotent.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+     WHERE schemaname = current_schema()
+       AND tablename = 'compliance_evidence'
+       AND policyname = 'compliance_evidence_tenant_isolation'
+  ) THEN
+    ALTER TABLE compliance_evidence ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE compliance_evidence FORCE ROW LEVEL SECURITY;
+    CREATE POLICY compliance_evidence_tenant_isolation
+      ON compliance_evidence
+      USING (
+        tenant_id::text = current_setting('vaultscan.tenant_id', true)
+        OR current_setting('vaultscan.tenant_id', true) = ''
+        OR current_setting('vaultscan.tenant_id', true) IS NULL
+      );
+  END IF;
+END $$;
 
 -- dashboard_sse_subscriptions --------------------------------------
 ALTER TABLE dashboard_sse_subscriptions ENABLE ROW LEVEL SECURITY;
@@ -47,6 +57,28 @@ CREATE POLICY idempotency_keys_tenant_isolation
   ON idempotency_keys
   USING (
     tenant_id::text = current_setting('vaultscan.tenant_id', true)
+    OR current_setting('vaultscan.tenant_id', true) = ''
+    OR current_setting('vaultscan.tenant_id', true) IS NULL
+  );
+
+-- audit_logs --------------------------------------------------------
+-- The original 0040 sweep deliberately excluded audit_logs on the
+-- assumption that platform admin tooling reads the table without a
+-- tenant GUC. That assumption is preserved here: the policy's
+-- NULL-tenant escape (current_setting IS NULL OR '') lets platform
+-- callers pass through unfiltered. But the moment a tenant-scoped
+-- session DOES set the GUC (every request that goes through
+-- middleware.TenantBinding), RLS pins the read to that tenant.
+-- That closes the SOC2-grade cross-tenant-leak hole that
+-- TestRLS_TenantCannotReadOtherTenant_AuditLogs surfaced.
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY audit_logs_tenant_isolation
+  ON audit_logs
+  USING (
+    tenant_id IS NULL
+    OR tenant_id::text = current_setting('vaultscan.tenant_id', true)
     OR current_setting('vaultscan.tenant_id', true) = ''
     OR current_setting('vaultscan.tenant_id', true) IS NULL
   );

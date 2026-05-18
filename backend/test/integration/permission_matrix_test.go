@@ -18,7 +18,38 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
+
+// mintLimitedToken issues a JWT with a tenant-scoped operator role
+// that carries NO gated permissions (no manage_*, no admin, no
+// platform_admin). The permission-matrix test uses this token to
+// verify each gated endpoint returns 403/412/etc. mintToken (used
+// elsewhere) issues a zaishield_super_admin token, which Identity.Has
+// short-circuits to true for every permission — useless for this
+// test.
+func mintLimitedToken(t *testing.T, tenantID uuid.UUID) string {
+	t.Helper()
+	claims := jwt.MapClaims{
+		"sub":         adminID.String(),
+		"tenant_id":   tenantID.String(),
+		"partner_id":  directID.String(),
+		"platform_id": platformID.String(),
+		"roles":       []string{"viewer"},
+		"mfa":         false,
+		"exp":         time.Now().Add(time.Hour).Unix(),
+		"iat":         time.Now().Unix(),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := tok.SignedString([]byte(testJWTSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signed
+}
 
 // permissionCase = "what happens when a JWT WITHOUT this permission
 // hits this endpoint." Each case is independently scoped — no shared
@@ -111,13 +142,18 @@ var permissionCases = []permissionCase{
 func TestPermissions_403WhenPermissionMissing(t *testing.T) {
 	h := newHarness(t)
 	srv := mountFullAPI(t, h)
-	defer srv.Close()
+	// NOTE: don't `defer srv.Close()` here — subtests below call
+	// t.Parallel(), which pauses them until THIS function returns.
+	// An explicit defer would close the server before those parallel
+	// subtests start, giving "connection refused". mountFullAPI
+	// already registers t.Cleanup(srv.Close), which fires AFTER
+	// all subtests (parallel included) complete.
 
 	tenantID, _ := h.makeTenant(t, "perm-matrix")
-	// mintToken default-issues a token with the basic operator role
-	// (no admin / no manage_* / no platform_admin); each case above
-	// requires one of the gated permissions.
-	tok := mintToken(t, tenantID)
+	// Issue a limited (viewer-role) token so the per-endpoint
+	// permission gates actually fire. mintToken issues a
+	// zaishield_super_admin token which would bypass every gate.
+	tok := mintLimitedToken(t, tenantID)
 
 	for _, c := range permissionCases {
 		c := c

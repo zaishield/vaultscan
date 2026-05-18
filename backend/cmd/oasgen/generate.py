@@ -40,7 +40,7 @@ from pathlib import Path
 # `\.\s*Method` allows the chained `.With(mid).\n\t\tPost("/", ...)`
 # multi-line form — the `.` lives on the preceding line and the
 # method name on the next, separated only by whitespace.
-ROUTE_RX = re.compile(r'\.\s*(Get|Post|Put|Delete|Patch)\s*\(\s*"([^"]+)"')
+ROUTE_RX = re.compile(r'\.\s*(Get|Post|Put|Delete|Patch|Handle)\s*\(\s*"([^"]+)"')
 
 # r.Route("/prefix", func(r chi.Router) { ... }) blocks. The inner
 # methods only carry the SUBPATH; we need to recover the parent.
@@ -59,6 +59,8 @@ def collect_routes(repo_root: Path):
         # 1. Direct .Method("/abs/path", …) calls — original path.
         for m in ROUTE_RX.finditer(text):
             method, path = m.group(1).upper(), m.group(2)
+            if method == "HANDLE":
+                method = "GET"  # chi.Handle is method-any; document as GET
             if _kept_path(path):
                 routes.add((method, path))
 
@@ -99,7 +101,9 @@ def _kept_path(path: str) -> bool:
     """Filter out non-API routes the spec doesn't document."""
     if path.startswith("/api/v1"):
         return True
-    if path in ("/healthz", "/readyz", "/livez", "/.well-known/jwks.json"):
+    if path in ("/healthz", "/readyz", "/livez",
+                "/.well-known/jwks.json", "/.well-known/security.txt",
+                "/security.txt", "/metrics"):
         return True
     return False
 
@@ -128,8 +132,22 @@ def tag_for(path: str) -> str:
 
 
 def operation_id(method: str, path: str) -> str:
-    """method_segments_from_path → camelCase operationId."""
-    p = path.removeprefix("/api/v1/")
+    """method_segments_from_path → camelCase operationId.
+
+    Prefix-stripping uses the LONGEST matching common prefix so two
+    paths that differ only by a leading mount point produce DIFFERENT
+    operationIds (e.g. /.well-known/jwks.json vs /api/v1/.well-known/
+    jwks.json must NOT collide; OpenAPI requires globally-unique
+    operationIds).
+    """
+    # Don't strip — operate on the full path so /api/v1/foo and
+    # /foo are distinct. Prefix only the `api_v1_` for the common case
+    # so the camelCase reads cleanly.
+    p = path
+    if p.startswith("/api/v1/"):
+        p = "api_v1_" + p.removeprefix("/api/v1/")
+    elif p.startswith("/"):
+        p = p[1:]
     parts = re.findall(r'[a-zA-Z][a-zA-Z0-9-]*', p)
     parts = [pp.replace('-', '') for pp in parts if pp]
     if not parts:
@@ -289,14 +307,45 @@ def emit_yaml(routes, out_path: Path):
                     },
                 },
             }
+        # Per-path Content-Type overrides for endpoints that don't
+        # return JSON. The contract test validates response headers
+        # against the spec — JWKS returns application/jwk-set+json,
+        # /orchestrator/public-key returns application/x-pem-file,
+        # the SARIF export returns application/sarif+json, etc.
+        ct = "application/json"
+        schema_200 = {"type": "object", "additionalProperties": True}
+        if path.endswith("/jwks.json"):
+            ct = "application/jwk-set+json"
+        elif path.endswith("/orchestrator/public-key"):
+            ct = "application/x-pem-file"
+            schema_200 = {"type": "string"}
+        elif path.endswith(".sarif"):
+            ct = "application/sarif+json"
+        elif path.endswith(".md"):
+            ct = "text/markdown"
+        elif path.endswith("security.txt"):
+            ct = "text/plain"
+            schema_200 = {"type": "string"}
+        elif path == "/healthz" or path == "/readyz" or path == "/livez":
+            # Liveness/readiness probes emit JSON ({"status":"ok"}).
+            ct = "application/json"
+        elif path == "/metrics":
+            # Prometheus library negotiates a content-type whose
+            # parameter set varies across client versions
+            # (charset=utf-8, escaping=underscores). Match the
+            # current expanded form so the contract test stays green.
+            ct = "text/plain; version=0.0.4; charset=utf-8; escaping=underscores"
+            schema_200 = {"type": "string"}
+        elif path.endswith("/audit/export"):
+            ct = "application/x-ndjson"
+            schema_200 = {"type": "string"}
+        elif "/dashboards/stream" in path:
+            ct = "text/event-stream"
+            schema_200 = {"type": "string"}
         op["responses"] = {
             "200": {
                 "description": "Success",
-                "content": {
-                    "application/json": {
-                        "schema": {"type": "object", "additionalProperties": True},
-                    },
-                },
+                "content": {ct: {"schema": schema_200}},
             },
             "400": {"$ref": "#/components/responses/BadRequest"},
             "401": {"$ref": "#/components/responses/Unauthorized"},
@@ -396,6 +445,12 @@ def emit_yaml(routes, out_path: Path):
             return "true" if v else "false"
         if isinstance(v, (int, float)):
             return str(v)
+        # Empty list / dict are valid YAML scalars; emit as
+        # `[]` / `{}` literally rather than quoting their str().
+        if isinstance(v, list) and len(v) == 0:
+            return "[]"
+        if isinstance(v, dict) and len(v) == 0:
+            return "{}"
         s = str(v)
         if any(c in s for c in ":#{}[],&*!|>'\"%@`") or s.lstrip() != s:
             return '"' + s.replace('"', '\\"') + '"'

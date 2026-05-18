@@ -123,8 +123,20 @@ func (v *Vault) ReWrapTenantObjects(ctx context.Context, tenantID uuid.UUID, max
 }
 
 func (v *Vault) rewrapOne(ctx context.Context, tenantID, evidenceID uuid.UUID, oldVer, newVer int) error {
-	// Fetch ciphertext.
-	raw, err := v.storage.Get(ctx, tenantID, evidenceID)
+	// The storage object UUID is distinct from the evidence row id
+	// (PutWithDEK mints a fresh UUID for the blob path). Resolve it
+	// via the row's storage_url so Get / Put hit the right file.
+	var storageURL string
+	if err := v.pool.QueryRow(ctx,
+		`SELECT storage_url FROM finding_evidence WHERE id = $1`, evidenceID).
+		Scan(&storageURL); err != nil {
+		return fmt.Errorf("rewrap: lookup storage_url: %w", err)
+	}
+	stTenant, stObject, ok := parseObjectURL(storageURL)
+	if !ok || stTenant != tenantID {
+		return errors.New("rewrap: bad storage_url")
+	}
+	raw, err := v.storage.Get(ctx, stTenant, stObject)
 	if err != nil {
 		return fmt.Errorf("rewrap: get: %w", err)
 	}
@@ -149,7 +161,7 @@ func (v *Vault) rewrapOne(ctx context.Context, tenantID, evidenceID uuid.UUID, o
 	if err != nil {
 		return fmt.Errorf("rewrap: encrypt: %w", err)
 	}
-	if err := v.storage.Put(ctx, tenantID, evidenceID, append(nonce, ct...)); err != nil {
+	if err := v.storage.Put(ctx, stTenant, stObject, append(nonce, ct...)); err != nil {
 		return fmt.Errorf("rewrap: put: %w", err)
 	}
 	if _, err := v.pool.Exec(ctx,

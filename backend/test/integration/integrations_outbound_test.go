@@ -99,7 +99,10 @@ func TestOutbound_TestEndpoint_HappyPath(t *testing.T) {
 		t.Errorf("test result not OK: %+v", res)
 	}
 	if st.hits.Load() != 1 {
-		t.Errorf("receiver hits=%d want 1", st.hits.Load())
+		t.Fatalf("receiver hits=%d want 1", st.hits.Load())
+	}
+	if len(st.requests) == 0 {
+		t.Fatal("no requests captured (guard rejected before dispatch?)")
 	}
 	got := st.requests[0]
 	if got.Method != "POST" || got.Path != "/inbound" {

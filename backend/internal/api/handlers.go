@@ -1455,7 +1455,12 @@ func listIntegrations(s *Services) http.HandlerFunc {
 
 func createIntegration(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		itype := chi.URLParam(r, "type")
+		// Route is /api/v1/integrations/{integration_id} — the slot
+		// holds the integration type (webhook / slack / teams / …)
+		// at create time. Named `integration_id` for chi-trie reasons
+		// (see server.go: same wildcard cannot be both a leaf and a
+		// subtree, so the create and per-id ops share the slot).
+		itype := chi.URLParam(r, "integration_id")
 		var req struct {
 			TenantID    string         `json:"tenant_id"`
 			PartnerID   string         `json:"partner_id"`
@@ -1686,6 +1691,13 @@ func exportAudit(s *Services) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		identity, _ := auth.FromContext(r.Context())
 		requested := r.URL.Query().Get("tenant_id")
+		// Fall back to the request's X-Tenant-Id header (the
+		// standard tenant scope mechanism). Without this, a tenant-
+		// level caller who scopes via header instead of ?tenant_id=
+		// would skip the from-required bounds check.
+		if requested == "" && identity != nil && identity.TenantID != nil {
+			requested = identity.TenantID.String()
+		}
 		var pinnedTenant *uuid.UUID
 		tenantPinned := false
 		for _, role := range identity.Roles {
@@ -1716,11 +1728,13 @@ func exportAudit(s *Services) http.HandlerFunc {
 				haveTo = true
 			}
 		}
-		// Tenant-level callers MUST scope by time so a single 1M-row
-		// chain pull can't run unbounded. Platform admins may omit
-		// (their pull is the operator-grade backup path).
-		if tenantPinned && !haveFrom {
-			badRequest(w, "tenant-level exports require ?from=<rfc3339>")
+		// Tenant-scoped callers MUST scope by time so a single 1M-row
+		// chain pull can't run unbounded. Platform admins doing an
+		// unscoped pull may omit `from` (the operator-grade backup
+		// path); the moment they pin to a specific tenant the bounds
+		// check applies again.
+		if (tenantPinned || requested != "") && !haveFrom {
+			badRequest(w, "tenant-scoped exports require ?from=<rfc3339>")
 			return
 		}
 
@@ -2944,6 +2958,13 @@ func eraseUser(s *Services) http.HandlerFunc {
 		}
 		report, err := s.Users.Erase(r.Context(), id, &identity.UserID, req.Reason)
 		if err != nil {
+			// Unknown user → 404 (don't 500). The service wraps
+			// pgx.ErrNoRows in a "users.Erase: lookup" message.
+			if strings.Contains(err.Error(), "no rows") ||
+				strings.Contains(err.Error(), "lookup") {
+				http.Error(w, `{"error":{"code":"not_found","message":"user not found"}}`, http.StatusNotFound)
+				return
+			}
 			internalErr(w, err)
 			return
 		}

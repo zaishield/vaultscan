@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // TestRLS_TenantCannotReadOtherTenant_Findings asserts that with
@@ -21,14 +23,16 @@ import (
 func TestRLS_TenantCannotReadOtherTenant_Findings(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
+	ensureRLSTestRole(t, h)
 
-	tA, _ := h.makeTenant(t, "rls-a")
-	tB, _ := h.makeTenant(t, "rls-b")
+	suffix := uuid.NewString()[:6]
+	tA, engA := h.makeTenant(t, "rls-a-"+suffix)
+	tB, engB := h.makeTenant(t, "rls-b-"+suffix)
 
 	// Seed one finding per tenant via the service so the row passes
 	// every NOT NULL / RBAC check the production path enforces.
-	_ = seedFinding(t, h, tA, "tenant-A-only-secret")
-	_ = seedFinding(t, h, tB, "tenant-B-only-secret")
+	_ = seedFinding(t, h, tA, engA, "tenant-A-only-secret")
+	_ = seedFinding(t, h, tB, engB, "tenant-B-only-secret")
 
 	// Open a session-scoped connection so SET LOCAL persists for
 	// the lifetime of the query.
@@ -36,7 +40,14 @@ func TestRLS_TenantCannotReadOtherTenant_Findings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	defer cn.Release()
+	// RESET state before returning the conn so the pool doesn't
+	// hand the next test a connection pinned to vaultscan_tenant
+	// with set_config still in place.
+	defer func() {
+		_, _ = cn.Exec(ctx, "RESET ROLE")
+		_, _ = cn.Exec(ctx, "RESET ALL")
+		cn.Release()
+	}()
 
 	// Sanity: with no GUC, every row visible (we have an
 	// application-level superuser role; RLS isn't applied to it).
@@ -48,8 +59,12 @@ func TestRLS_TenantCannotReadOtherTenant_Findings(t *testing.T) {
 		}
 	}
 	// Pin the session to tenant A.
+	// is_local=false → setting persists for the session, not just
+	// one autocommit transaction. pgx fires each Exec/Query in its
+	// own implicit transaction; with is_local=true the setting was
+	// gone before the next query ran, defeating the RLS check.
 	if _, err := cn.Exec(ctx,
-		`SELECT set_config('vaultscan.tenant_id', $1, true)`, tA.String()); err != nil {
+		`SELECT set_config('vaultscan.tenant_id', $1, false)`, tA.String()); err != nil {
 		t.Fatalf("set_config: %v", err)
 	}
 
@@ -78,14 +93,52 @@ func TestRLS_TenantCannotReadOtherTenant_Findings(t *testing.T) {
 	}
 }
 
+// ensureRLSTestRole creates a non-superuser role for RLS tests.
+// PostgreSQL superusers (including the default `vaultscan` user
+// docker installs) bypass RLS even when the table is FORCE'd —
+// so the test connection must SET ROLE to a non-superuser before
+// the RLS policy can apply.
+func ensureRLSTestRole(t *testing.T, h *harness) {
+	t.Helper()
+	ctx := context.Background()
+	// Use DO block so re-creating is idempotent and granting to the
+	// current schema works regardless of which test ran first.
+	if _, err := h.pool.Exec(ctx, `
+		DO $$
+		BEGIN
+		  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vaultscan_tenant') THEN
+		    CREATE ROLE vaultscan_tenant NOLOGIN NOSUPERUSER NOBYPASSRLS;
+		  END IF;
+		END $$;
+		GRANT USAGE ON SCHEMA `+currentSchemaSafe(t, h)+` TO vaultscan_tenant;
+		GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA `+currentSchemaSafe(t, h)+` TO vaultscan_tenant;`); err != nil {
+		t.Fatalf("ensure rls role: %v", err)
+	}
+}
+
+// currentSchemaSafe returns the schema name the harness pinned via
+// search_path, quoted for safe interpolation into a GRANT statement.
+func currentSchemaSafe(t *testing.T, h *harness) string {
+	t.Helper()
+	var s string
+	if err := h.pool.QueryRow(context.Background(),
+		`SELECT current_schema()`).Scan(&s); err != nil {
+		t.Fatalf("current_schema: %v", err)
+	}
+	// schema names from the harness are it_<hex>; safe — but quote anyway.
+	return `"` + s + `"`
+}
+
 // TestRLS_TenantCannotReadOtherTenant_AuditLogs — same shape, for
 // audit_logs. Different table, separate RLS policy.
 func TestRLS_TenantCannotReadOtherTenant_AuditLogs(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
+	ensureRLSTestRole(t, h)
 
-	tA, _ := h.makeTenant(t, "rls-audit-a")
-	tB, _ := h.makeTenant(t, "rls-audit-b")
+	suffix := uuid.NewString()[:6]
+	tA, _ := h.makeTenant(t, "rls-audit-a-"+suffix)
+	tB, _ := h.makeTenant(t, "rls-audit-b-"+suffix)
 
 	// makeTenant() emits tenant.created audit rows for both, so
 	// audit_logs already has rows tagged for each tenant.
@@ -94,14 +147,22 @@ func TestRLS_TenantCannotReadOtherTenant_AuditLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	defer cn.Release()
+	defer func() {
+		_, _ = cn.Exec(ctx, "RESET ROLE")
+		_, _ = cn.Exec(ctx, "RESET ALL")
+		cn.Release()
+	}()
 	for _, role := range []string{"vaultscan_tenant", "vaultscan_app"} {
 		if _, err := cn.Exec(ctx, "SET ROLE "+role); err == nil {
 			break
 		}
 	}
+	// is_local=false → setting persists for the session, not just
+	// one autocommit transaction. pgx fires each Exec/Query in its
+	// own implicit transaction; with is_local=true the setting was
+	// gone before the next query ran, defeating the RLS check.
 	if _, err := cn.Exec(ctx,
-		`SELECT set_config('vaultscan.tenant_id', $1, true)`, tA.String()); err != nil {
+		`SELECT set_config('vaultscan.tenant_id', $1, false)`, tA.String()); err != nil {
 		t.Fatalf("set_config: %v", err)
 	}
 	var leaked int
@@ -118,17 +179,19 @@ func TestRLS_TenantCannotReadOtherTenant_AuditLogs(t *testing.T) {
 // testing. The full service.Upsert flow requires an asset which
 // requires an engagement scope target which all of make a big test
 // — for RLS verification we just need a row tagged with tenant_id.
-func seedFinding(t *testing.T, h *harness, tenant interface{ String() string }, title string) string {
+func seedFinding(t *testing.T, h *harness, tenant interface{ String() string }, engagement interface{ String() string }, title string) string {
 	t.Helper()
 	ctx := context.Background()
 	var id string
 	if err := h.pool.QueryRow(ctx, `
-		INSERT INTO findings(id, tenant_id, partner_id, title, severity, status,
-		    scanner, scan_type, last_seen)
-		VALUES (gen_random_uuid(), $1, $2, $3, 'low', 'open',
-		    'integration-test', 'network', now())
+		INSERT INTO findings(id, platform_id, tenant_id, partner_id, engagement_id,
+		    title, severity, status, scanner, scan_type, last_seen,
+		    dedup_fingerprint)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'low', 'open',
+		    'integration-test', 'network', now(),
+		    md5(gen_random_uuid()::text))
 		RETURNING id::text`,
-		tenant, directID, title).Scan(&id); err != nil {
+		platformID, tenant, directID, engagement, title).Scan(&id); err != nil {
 		t.Fatalf("seed finding: %v", err)
 	}
 	return id
@@ -144,8 +207,10 @@ func seedFinding(t *testing.T, h *harness, tenant interface{ String() string }, 
 func TestRLS_AllTenantScopedTables(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	tA, _ := h.makeTenant(t, "rls-sweep-a")
-	tB, _ := h.makeTenant(t, "rls-sweep-b")
+	ensureRLSTestRole(t, h)
+	suffix := uuid.NewString()[:6]
+	tA, _ := h.makeTenant(t, "rls-sweep-a-"+suffix)
+	tB, _ := h.makeTenant(t, "rls-sweep-b-"+suffix)
 
 	// Seed one row per tenant in each table under test. The schema
 	// signatures vary per table; keep the rows minimal but valid.
@@ -191,13 +256,17 @@ func TestRLS_AllTenantScopedTables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	defer cn.Release()
+	defer func() {
+		_, _ = cn.Exec(ctx, "RESET ROLE")
+		_, _ = cn.Exec(ctx, "RESET ALL")
+		cn.Release()
+	}()
 	for _, role := range []string{"vaultscan_tenant", "vaultscan_app"} {
 		if _, err := cn.Exec(ctx, "SET ROLE "+role); err == nil {
 			break
 		}
 	}
-	if _, err := cn.Exec(ctx, `SELECT set_config('vaultscan.tenant_id', $1, true)`, tA.String()); err != nil {
+	if _, err := cn.Exec(ctx, `SELECT set_config('vaultscan.tenant_id', $1, false)`, tA.String()); err != nil {
 		t.Fatalf("set_config: %v", err)
 	}
 

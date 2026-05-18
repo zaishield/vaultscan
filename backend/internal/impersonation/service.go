@@ -100,17 +100,18 @@ func (s *Service) Start(ctx context.Context, operator uuid.UUID, in StartInput) 
 
 	// Resolve target's metadata + check they're not a platform admin.
 	var (
-		targetEmail string
-		targetTenant *uuid.UUID
+		targetEmail     string
+		targetTenant    *uuid.UUID
+		targetPlatform  uuid.UUID
 		isPlatformAdmin bool
 	)
 	err := s.pool.QueryRow(ctx, `
-		SELECT u.email::text, u.tenant_id,
+		SELECT u.email::text, u.tenant_id, u.platform_id,
 		       EXISTS(SELECT 1 FROM user_roles ur
 		                JOIN roles r ON r.id = ur.role_id
 		               WHERE ur.user_id = u.id AND r.code = 'zaishield_super_admin') AS is_super
 		  FROM users u WHERE u.id = $1`, in.TargetUserID).
-		Scan(&targetEmail, &targetTenant, &isPlatformAdmin)
+		Scan(&targetEmail, &targetTenant, &targetPlatform, &isPlatformAdmin)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrUnknownTarget
 	}
@@ -142,9 +143,10 @@ func (s *Service) Start(ctx context.Context, operator uuid.UUID, in StartInput) 
 	// oversight sees who started this), one under the TARGET (so the
 	// customer's audit log shows their user was impersonated).
 	_ = s.audit.Record(ctx, audit.Entry{
-		Event:    "support.impersonation_started",
-		ActorID:  &operator,
-		TenantID: targetTenant,
+		Event:      "support.impersonation_started",
+		PlatformID: targetPlatform,
+		ActorID:    &operator,
+		TenantID:   targetTenant,
 		Payload: map[string]any{
 			"session_id":   id,
 			"target_user":  in.TargetUserID,
@@ -156,6 +158,7 @@ func (s *Service) Start(ctx context.Context, operator uuid.UUID, in StartInput) 
 	})
 	_ = s.audit.Record(ctx, audit.Entry{
 		Event:      "user.impersonated_by_support",
+		PlatformID: targetPlatform,
 		ActorID:    &operator,
 		TargetType: "user",
 		TargetID:   in.TargetUserID.String(),
@@ -190,10 +193,18 @@ func (s *Service) End(ctx context.Context, sessionID, endedBy uuid.UUID) error {
 		// Already ended; not an error.
 		return nil
 	}
+	// Look up the target's platform so the close-event has the same
+	// platform_id as the start-event (audit chain consistency).
+	var endPlatform uuid.UUID
+	_ = s.pool.QueryRow(ctx,
+		`SELECT u.platform_id FROM users u
+		   JOIN support_impersonation_sessions sis ON sis.target_user_id = u.id
+		  WHERE sis.id = $1`, sessionID).Scan(&endPlatform)
 	_ = s.audit.Record(ctx, audit.Entry{
-		Event:   "support.impersonation_ended",
-		ActorID: &endedBy,
-		Payload: map[string]any{"session_id": sessionID},
+		Event:      "support.impersonation_ended",
+		PlatformID: endPlatform,
+		ActorID:    &endedBy,
+		Payload:    map[string]any{"session_id": sessionID},
 	})
 	return nil
 }

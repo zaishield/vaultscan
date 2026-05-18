@@ -321,6 +321,15 @@ func (s *Service) Erase(ctx context.Context, userID uuid.UUID, actor *uuid.UUID,
 	if err := s.RevokeAllTokens(ctx, userID, actor, "erasure-request"); err != nil {
 		return report, fmt.Errorf("users.Erase: revoke tokens: %w", err)
 	}
+	// RevokeAllTokens inserts a fresh token_revocations row with a
+	// reason string. Re-sweep so the post-erase state has NO free
+	// text on rows tied to this user — that's the GDPR contract the
+	// caller signed up for. Audit log keeps the why; the operational
+	// table doesn't need it.
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE token_revocations SET reason = NULL WHERE user_id = $1`, userID); err != nil {
+		return report, fmt.Errorf("users.Erase: re-sweep token_revocations: %w", err)
+	}
 
 	if err := s.audit.Record(ctx, audit.Entry{
 		PlatformID: platID, ActorID: actor, Event: "user.erased",
