@@ -392,6 +392,105 @@ func (s *Service) Replay(ctx context.Context, dlqID uuid.UUID, actor *uuid.UUID)
 	return nil
 }
 
+// RetryDeadLetters is the operator-free DLQ drain. The cron-runner
+// calls it on a short interval (default 30s). For every DLQ row
+// that is:
+//   * not resolved (resolved_at IS NULL)
+//   * not given up (give_up_at IS NULL)
+//   * old enough per its exponential backoff schedule
+//     (last_retry_at IS NULL, OR retry_count^2 minutes have elapsed
+//     since the last attempt)
+//
+// it re-fires the original event through s.deliver. On success
+// MarkDeadLetterResolved sets resolution='replayed'. On failure
+// retry_count is incremented; once it exceeds maxRetries the row's
+// give_up_at is set and the sweeper ignores it from then on
+// (operator must manually replay or drop).
+//
+// Bounded per-tick by `batch` so a 100k-row DLQ can't pin the
+// sweeper for an hour.
+//
+// Returns (retried, succeeded, gaveUp, err). Caller logs the
+// counts.
+func (s *Service) RetryDeadLetters(ctx context.Context, batch, maxRetries int) (retried, succeeded, gaveUp int, err error) {
+	if batch <= 0 {
+		batch = 50
+	}
+	if maxRetries <= 0 {
+		maxRetries = 8 // ~2^8 = 256 min ≈ 4 hours from enqueue to give-up
+	}
+	// Select rows due for retry. Backoff: 2^retry_count minutes
+	// since last_retry_at. First retry fires immediately
+	// (last_retry_at IS NULL).
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, integration_id, retry_count
+		  FROM integration_dead_letters
+		 WHERE resolved_at IS NULL
+		   AND give_up_at  IS NULL
+		   AND (
+		       last_retry_at IS NULL
+		       OR last_retry_at < now() - (POWER(2, retry_count)::text || ' minutes')::interval
+		   )
+		 ORDER BY last_retry_at NULLS FIRST, enqueued_at ASC
+		 LIMIT $1`, batch)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("integrations: dlq sweep query: %w", err)
+	}
+	type pending struct {
+		id, integrationID uuid.UUID
+		retryCount        int
+	}
+	var queue []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.id, &p.integrationID, &p.retryCount); err != nil {
+			rows.Close()
+			return 0, 0, 0, err
+		}
+		queue = append(queue, p)
+	}
+	rows.Close()
+
+	for _, p := range queue {
+		retried++
+		// Stamp the attempt up-front so a panicking deliver path
+		// doesn't leave last_retry_at unset (which would cause the
+		// next tick to immediately retry without backoff).
+		if _, err := s.pool.Exec(ctx, `
+			UPDATE integration_dead_letters
+			   SET last_retry_at = now(), retry_count = retry_count + 1
+			 WHERE id = $1`, p.id); err != nil {
+			// Log-and-continue: skipping one row shouldn't fail the
+			// whole sweep.
+			continue
+		}
+		// Reuse Replay() — same path as the operator-driven endpoint,
+		// so behaviour is identical.
+		if err := s.Replay(ctx, p.id, nil); err != nil {
+			// Replay's failure path already wrote integration_replays;
+			// here we only need to track give-up status.
+		}
+		// Check resolution: Replay marks 'replayed' on delivered=true.
+		var resolvedAt *time.Time
+		_ = s.pool.QueryRow(ctx,
+			`SELECT resolved_at FROM integration_dead_letters WHERE id=$1`, p.id).
+			Scan(&resolvedAt)
+		if resolvedAt != nil {
+			succeeded++
+			continue
+		}
+		// Still pending — did we hit the per-row retry cap?
+		if p.retryCount+1 >= maxRetries {
+			if _, err := s.pool.Exec(ctx,
+				`UPDATE integration_dead_letters SET give_up_at = now() WHERE id = $1`,
+				p.id); err == nil {
+				gaveUp++
+			}
+		}
+	}
+	return retried, succeeded, gaveUp, nil
+}
+
 // ---------------- helpers ---------------------------------------------------
 
 func stringFromPayload(p map[string]any, k string) (string, bool) {

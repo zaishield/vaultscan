@@ -562,43 +562,37 @@ func refreshDLQDepth(ctx context.Context, pool *pgxpool.Pool) error {
 // Bounded at 100 per tick so a 10k-deep backlog doesn't synchronously
 // rip through the downstream API.
 func autoRetryDeadLetters(ctx context.Context, pool *pgxpool.Pool, svc *integrations.Service, log zerolog.Logger) error {
-	rows, err := pool.Query(ctx, `
-		SELECT dl.id
-		  FROM integration_dead_letters dl
-		  JOIN integrations i ON i.id = dl.integration_id
-		 WHERE dl.resolved_at IS NULL
-		   AND dl.attempts < 5
-		   AND dl.enqueued_at < now() - interval '5 minutes'
-		   AND i.enabled = true
-		 ORDER BY dl.enqueued_at
-		 LIMIT 100`)
+	// Delegated to integrations.RetryDeadLetters which tracks
+	// per-row retry_count, applies 2^retry_count-minute backoff
+	// keyed off last_retry_at, and sets give_up_at after
+	// maxRetries (default 8) so a permanently-broken downstream
+	// stops being hammered every tick.
+	batch := 50
+	if v := os.Getenv("VAULTSCAN_INTEGRATION_AUTORETRY_BATCH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 5000 {
+			batch = n
+		}
+	}
+	maxRetries := 8
+	if v := os.Getenv("VAULTSCAN_INTEGRATION_AUTORETRY_MAX_RETRIES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 50 {
+			maxRetries = n
+		}
+	}
+	retried, succeeded, gaveUp, err := svc.RetryDeadLetters(ctx, batch, maxRetries)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	var ids []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err == nil {
-			ids = append(ids, id)
-		}
+	// Only log when there's something to say — every 5-min tick
+	// with an empty DLQ would otherwise be log noise.
+	if retried > 0 || gaveUp > 0 {
+		log.Info().Int("retried", retried).Int("ok", succeeded).Int("gave_up", gaveUp).
+			Msg("dlq auto-retry sweep")
 	}
-	if len(ids) == 0 {
-		return nil
-	}
-	var success, fail int
-	for _, id := range ids {
-		// nil actor = system-initiated retry; the integration_replays
-		// row records `requested_by IS NULL` so an audit can tell
-		// system-retries from operator-retries.
-		if err := svc.Replay(ctx, id, nil); err != nil {
-			fail++
-		} else {
-			success++
-		}
-	}
-	log.Info().Int("ok", success).Int("fail", fail).Int("total", len(ids)).
-		Msg("dlq auto-retry sweep")
+	// _ = pool keeps the parameter name documented even though the
+	// helper now delegates entirely to the service-level method.
+	_ = pool
+	_ = uuid.Nil // retained import path
 	return nil
 }
 
