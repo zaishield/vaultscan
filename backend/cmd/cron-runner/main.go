@@ -319,6 +319,68 @@ func main() {
 			}
 			return nil
 		}},
+		// Tenant quarantine purger. Hard-deletes tenants whose
+		// quarantine window (7 days by default) has elapsed. The
+		// platform-admin's POST .../quarantine starts the clock;
+		// the matching DELETE cancels it. Once the window closes,
+		// the cascade DELETE walks every FK relationship (engagements,
+		// findings, evidence, audit_logs, etc.) so the row truly goes
+		// away. Override window via VAULTSCAN_QUARANTINE_DAYS.
+		{name: "tenant_purge_swept_quarantines", interval: time.Hour, fn: func(ctx context.Context) error {
+			days := 7
+			if v := os.Getenv("VAULTSCAN_QUARANTINE_DAYS"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					days = n
+				}
+			}
+			tag, err := pool.Pool.Exec(ctx, `
+				DELETE FROM tenants
+				 WHERE quarantine_started_at IS NOT NULL
+				   AND quarantine_started_at < now() - $1::interval`,
+				fmt.Sprintf("%d days", days))
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() > 0 {
+				log.Warn().Int64("tenants", tag.RowsAffected()).Int("window_days", days).
+					Msg("hard-deleted quarantined tenants past window")
+			}
+			return nil
+		}},
+		// Compliance rollup snapshot — weekly persisted view so auditors
+		// can ask "what did SOC2 coverage look like on this date".
+		{name: "compliance_rollup_snapshot", interval: 7 * 24 * time.Hour, fn: func(ctx context.Context) error {
+			rows, err := pool.Pool.Query(ctx, `SELECT id FROM tenants WHERE status='active'`)
+			if err != nil {
+				return err
+			}
+			var tenantIDs []uuid.UUID
+			for rows.Next() {
+				var id uuid.UUID
+				if err := rows.Scan(&id); err == nil {
+					tenantIDs = append(tenantIDs, id)
+				}
+			}
+			rows.Close()
+			eval := compliance.NewEvaluator(pool.Pool)
+			for _, tid := range tenantIDs {
+				if _, err := eval.Snapshot(ctx, tid); err != nil {
+					log.Warn().Err(err).Str("tenant", tid.String()).Msg("snapshot failed")
+				}
+			}
+			log.Info().Int("tenants", len(tenantIDs)).Msg("compliance rollup snapshot")
+			return nil
+		}},
+		// Expire impersonation sessions older than the expires_at cap.
+		// Belt-and-braces — the JWT itself also expires, but cleaning
+		// the DB row lets the active-sessions endpoint stay clean.
+		{name: "impersonation_session_expirer", interval: 5 * time.Minute, fn: func(ctx context.Context) error {
+			_, err := pool.Pool.Exec(ctx, `
+				UPDATE support_impersonation_sessions
+				   SET ended_at = expires_at
+				 WHERE ended_at IS NULL AND expires_at < now()`)
+			return err
+		}},
 	}
 
 	// Wire the integration service onto the in-process event bus so

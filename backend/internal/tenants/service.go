@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -266,6 +267,149 @@ func (s *Service) SetResidency(ctx context.Context, tenantID uuid.UUID, region s
 			ActorID: actor, Event: "tenant.residency_set",
 			TargetType: "tenant", TargetID: tenantID.String(),
 			Payload: map[string]any{"from": prev, "to": region, "reason": reason},
+		})
+	}
+	return nil
+}
+
+// QuarantineForDeletion marks the tenant for hard-deletion AFTER a
+// 7-day quarantine window. During the window the tenant is
+// suspended (no new writes) but every row remains intact —
+// CancelQuarantine restores access. The actual destructive delete
+// is performed by the cron-runner's tenant_purge_swept_quarantines
+// task once the window expires.
+//
+// Requires `create_tenant` permission + MFA at the HTTP layer.
+func (s *Service) QuarantineForDeletion(ctx context.Context, tenantID uuid.UUID,
+	actor *uuid.UUID, reason string,
+) error {
+	if reason == "" {
+		return errors.New("tenants: reason required for quarantine")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tenants
+		   SET status = 'suspended',
+		       quarantine_started_at = now(),
+		       quarantine_initiated_by = $2,
+		       quarantine_reason = $3,
+		       updated_at = now()
+		 WHERE id = $1
+		   AND quarantine_started_at IS NULL`,
+		tenantID, actor, reason)
+	if err != nil {
+		return fmt.Errorf("tenants: quarantine: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("tenants: not found or already quarantined")
+	}
+	t, _ := s.Get(ctx, tenantID)
+	if t != nil {
+		_ = s.audit.Record(ctx, audit.Entry{
+			PlatformID: t.PlatformID, PartnerID: &t.PartnerID, TenantID: &t.ID,
+			ActorID: actor, Event: "tenant.quarantined_for_deletion",
+			TargetType: "tenant", TargetID: tenantID.String(),
+			Payload: map[string]any{
+				"reason":            reason,
+				"deletion_eligible_at": time.Now().UTC().Add(7 * 24 * time.Hour),
+			},
+		})
+	}
+	return nil
+}
+
+// CancelQuarantine restores access to a quarantined tenant. Cleans
+// the quarantine_* columns + flips status back to active. Idempotent.
+func (s *Service) CancelQuarantine(ctx context.Context, tenantID uuid.UUID, actor *uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tenants
+		   SET status = 'active',
+		       quarantine_started_at = NULL,
+		       quarantine_initiated_by = NULL,
+		       quarantine_reason = NULL,
+		       updated_at = now()
+		 WHERE id = $1
+		   AND quarantine_started_at IS NOT NULL`, tenantID)
+	if err != nil {
+		return fmt.Errorf("tenants: cancel quarantine: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("tenants: not in quarantine")
+	}
+	t, _ := s.Get(ctx, tenantID)
+	if t != nil {
+		_ = s.audit.Record(ctx, audit.Entry{
+			PlatformID: t.PlatformID, PartnerID: &t.PartnerID, TenantID: &t.ID,
+			ActorID: actor, Event: "tenant.quarantine_cancelled",
+			TargetType: "tenant", TargetID: tenantID.String(),
+		})
+	}
+	return nil
+}
+
+// MigrateToPartner moves a tenant to a different partner (acquisition,
+// MSSP swap, reorg). Records the move in tenant_partner_migrations
+// and updates partner_customer_mapping. The actual partner_id flip
+// is intentionally a single UPDATE so the FK cascade does the right
+// thing for engagement / asset / finding rows that link through
+// partner_id.
+//
+// Requires `create_tenant` permission + MFA at the HTTP layer.
+func (s *Service) MigrateToPartner(ctx context.Context, tenantID, toPartnerID uuid.UUID,
+	actor uuid.UUID, reason string,
+) error {
+	if reason == "" {
+		return errors.New("tenants: reason required for partner migration")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var fromPartner uuid.UUID
+	if err := tx.QueryRow(ctx,
+		`SELECT partner_id FROM tenants WHERE id=$1 FOR UPDATE`,
+		tenantID).Scan(&fromPartner); err != nil {
+		return fmt.Errorf("tenants: lookup current partner: %w", err)
+	}
+	if fromPartner == toPartnerID {
+		return errors.New("tenants: already on this partner")
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE tenants SET partner_id = $2, updated_at = now() WHERE id = $1`,
+		tenantID, toPartnerID); err != nil {
+		return fmt.Errorf("tenants: flip partner: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM partner_customer_mapping WHERE tenant_id = $1`,
+		tenantID); err != nil {
+		return fmt.Errorf("tenants: drop old mapping: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO partner_customer_mapping(partner_id, tenant_id) VALUES ($1, $2)`,
+		toPartnerID, tenantID); err != nil {
+		return fmt.Errorf("tenants: insert new mapping: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO tenant_partner_migrations(tenant_id, from_partner_id, to_partner_id,
+		    migrated_by, reason)
+		VALUES ($1, $2, $3, $4, $5)`,
+		tenantID, fromPartner, toPartnerID, actor, reason); err != nil {
+		return fmt.Errorf("tenants: migration history: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	t, _ := s.Get(ctx, tenantID)
+	if t != nil {
+		_ = s.audit.Record(ctx, audit.Entry{
+			PlatformID: t.PlatformID, PartnerID: &t.PartnerID, TenantID: &t.ID,
+			ActorID: &actor, Event: "tenant.migrated_to_partner",
+			TargetType: "tenant", TargetID: tenantID.String(),
+			Payload: map[string]any{
+				"from_partner": fromPartner, "to_partner": toPartnerID, "reason": reason,
+			},
 		})
 	}
 	return nil

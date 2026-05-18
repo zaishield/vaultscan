@@ -22,6 +22,16 @@ type VaultscanClaims struct {
 	TenantID    string   `json:"tenant_id,omitempty"`
 	Roles       []string `json:"roles"`
 	MFA         bool     `json:"mfa"`
+
+	// ImpersonationSessionID identifies a support-engineer
+	// impersonation session. When set, the JWT's identity claims
+	// reflect the TARGET (so RLS + permissions evaluate as the
+	// customer would see), but every audit row also references
+	// this session so VaultScan-side oversight can review.
+	ImpersonationSessionID string `json:"impersonation_session_id,omitempty"`
+	// OperatorID is the VaultScan-side support engineer who opened
+	// the impersonation session. Empty for non-impersonated tokens.
+	OperatorID string `json:"operator_id,omitempty"`
 }
 
 type Verifier struct {
@@ -151,6 +161,69 @@ func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 func (v *Verifier) IssueDevToken(c VaultscanClaims) (string, error) {
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 	return tok.SignedString(v.sharedSecret)
+}
+
+// ImpersonationSession is the minimal shape IssueImpersonationToken
+// needs. Mirrors impersonation.Session to avoid importing that
+// package into auth (which would create a cycle).
+type ImpersonationSession struct {
+	ID           string
+	OperatorID   string
+	TargetUserID string
+	TargetEmail  string
+	TargetTenant string
+	TargetRoles  []string
+	PlatformID   string
+	PartnerID    string
+}
+
+// IssueImpersonationToken mints a short-lived JWT whose identity
+// claims reflect the TARGET user, with the impersonation session ID
+// + operator ID embedded so every downstream audit row attributes
+// both parties. Uses RSA when the KeyManager is configured (prod)
+// and falls back to HMAC (dev).
+//
+// The TTL is the session's remaining lifetime; the impersonation
+// service caps it at 60 min absolute.
+func (v *Verifier) IssueImpersonationToken(s impersonationSessionLike, ttl time.Duration) (string, error) {
+	if ttl <= 0 {
+		return "", errors.New("auth: impersonation ttl must be positive")
+	}
+	now := time.Now().UTC()
+	c := VaultscanClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   s.TargetUserIDStr(),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+			NotBefore: jwt.NewNumericDate(now),
+		},
+		Email:                  s.TargetEmailStr(),
+		PlatformID:             s.PlatformIDStr(),
+		PartnerID:              s.PartnerIDStr(),
+		TenantID:               s.TargetTenantStr(),
+		Roles:                  s.TargetRolesList(),
+		MFA:                    true, // impersonation requires MFA upstream
+		ImpersonationSessionID: s.IDStr(),
+		OperatorID:             s.OperatorIDStr(),
+	}
+	if v.keyManager != nil {
+		return v.IssueRSAToken(context.Background(), c)
+	}
+	return v.IssueDevToken(c)
+}
+
+// impersonationSessionLike is the adapter interface. The HTTP
+// handler builds it from an impersonation.Session; the indirection
+// keeps the auth package import-cycle-free.
+type impersonationSessionLike interface {
+	IDStr() string
+	OperatorIDStr() string
+	TargetUserIDStr() string
+	TargetEmailStr() string
+	TargetTenantStr() string
+	TargetRolesList() []string
+	PlatformIDStr() string
+	PartnerIDStr() string
 }
 
 // IssueRSAToken mints an RS256 token signed with the current active

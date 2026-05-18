@@ -35,10 +35,15 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/middleware"
 	"github.com/zaishield/vaultscan/backend/internal/observability"
 	"github.com/zaishield/vaultscan/backend/internal/partners"
+	"github.com/zaishield/vaultscan/backend/internal/compliance"
+	"github.com/zaishield/vaultscan/backend/internal/impersonation"
+	"github.com/zaishield/vaultscan/backend/internal/planrequests"
 	"github.com/zaishield/vaultscan/backend/internal/reporting"
 	"github.com/zaishield/vaultscan/backend/internal/retesting"
 	"github.com/zaishield/vaultscan/backend/internal/scanorch"
+	"github.com/zaishield/vaultscan/backend/internal/scimtokens"
 	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
+	"github.com/zaishield/vaultscan/backend/internal/ssoconfig"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
 	"github.com/zaishield/vaultscan/backend/internal/users"
 )
@@ -99,6 +104,13 @@ type Services struct {
 	// middleware wiring. Exposed so the /api/v1/usage handler can
 	// Peek() the caller's remaining tokens. nil before Mount runs.
 	Limiter middleware.Limiter
+
+	// External + internal plane services added in migration 0061.
+	SSOConfig      *ssoconfig.Service
+	SCIMTokens     *scimtokens.Service
+	PlanRequests   *planrequests.Service
+	Impersonation  *impersonation.Service
+	ComplianceEval *compliance.Evaluator
 }
 
 // Mount returns a fully wired HTTP router.
@@ -369,6 +381,38 @@ func Mount(s *Services) http.Handler {
 				Put("/{tenant_id}/branding", putTenantBranding(s))
 			r.With(middleware.RequirePermission("manage_branding")).
 				Delete("/{tenant_id}/branding", clearTenantBranding(s))
+
+			// SSO config (SAML / OIDC) — customer self-serve.
+			r.Get("/{tenant_id}/sso", getSSOConfig(s))
+			r.With(middleware.RequirePermission("manage_branding"), middleware.RequireMFA()).
+				Put("/{tenant_id}/sso", putSSOConfig(s))
+
+			// SCIM provisioning tokens — customer self-serve.
+			r.With(middleware.RequirePermission("manage_branding")).
+				Get("/{tenant_id}/scim/tokens", listSCIMTokens(s))
+			r.With(middleware.RequirePermission("manage_branding"), middleware.RequireMFA()).
+				Post("/{tenant_id}/scim/tokens", createSCIMToken(s))
+			r.With(middleware.RequirePermission("manage_branding"), middleware.RequireMFA()).
+				Delete("/{tenant_id}/scim/tokens/{token_id}", revokeSCIMToken(s))
+		})
+
+		// Compliance rollup (customer + auditor). Read-only.
+		r.Route("/api/v1/compliance/tenants/{tenant_id}", func(r chi.Router) {
+			r.With(middleware.RequirePermission("view_audit_logs")).
+				Get("/rollup", getComplianceRollup(s))
+			r.With(middleware.RequirePermission("view_audit_logs"), middleware.RequireMFA()).
+				Post("/snapshot", snapshotCompliance(s))
+		})
+
+		// Customer-facing plan-change requests (NOT direct plan changes
+		// — those still require create_tenant + are operator-only).
+		// Anyone with `manage_branding` (= customer admin) can file
+		// or list their partner's own requests.
+		r.Route("/api/v1/partners/{partner_id}/billing/plan-requests", func(r chi.Router) {
+			r.With(middleware.RequirePermission("manage_branding")).
+				Get("/", listPartnerPlanRequests(s))
+			r.With(middleware.RequirePermission("manage_branding")).
+				Post("/", filePlanRequest(s))
 		})
 
 		// Effective identity + session management (VS-01 hardening).
@@ -810,6 +854,30 @@ func Mount(s *Services) http.Handler {
 		r.With(middleware.RequireMFA()).
 			Post("/api/v1/platform/break-glass/redeem", redeemBreakGlass(s))
 		r.Get("/api/v1/platform/policy-rules", listPolicyRules(s))
+
+		// Internal-plane GA additions (migration 0061).
+		// Plan-change-request decisioning (platform / sales-ops queue).
+		r.With(middleware.RequirePermission("create_tenant")).
+			Get("/api/v1/platform/billing/plan-requests", listPendingPlanRequests(s))
+		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
+			Post("/api/v1/platform/billing/plan-requests/{id}/decide", decidePlanRequest(s))
+		// Manual usage adjustments (finance — credits, surcharges).
+		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
+			Post("/api/v1/platform/billing/usage-adjustments", createUsageAdjustment(s))
+		// Support-engineer impersonation (full audit trail).
+		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
+			Post("/api/v1/platform/impersonate", startImpersonation(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Delete("/api/v1/platform/impersonate/{session_id}", endImpersonation(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Get("/api/v1/platform/impersonate/active", listActiveImpersonations(s))
+		// Tenant lifecycle: quarantine + cancel + partner-migrate.
+		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
+			Post("/api/v1/platform/tenants/{tenant_id}/quarantine", quarantineTenant(s))
+		r.With(middleware.RequirePermission("create_tenant")).
+			Delete("/api/v1/platform/tenants/{tenant_id}/quarantine", cancelQuarantine(s))
+		r.With(middleware.RequirePermission("create_tenant"), middleware.RequireMFA()).
+			Post("/api/v1/platform/tenants/{tenant_id}/migrate", migrateTenantPartner(s))
 
 		// MFA enrolment + management (HS-01).
 		r.Post("/api/v1/auth/mfa/enroll/start", mfaEnrollStart(s))

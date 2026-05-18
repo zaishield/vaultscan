@@ -42,9 +42,14 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/partners"
 	"github.com/zaishield/vaultscan/backend/internal/reporting"
 	"github.com/zaishield/vaultscan/backend/internal/retesting"
+	"github.com/zaishield/vaultscan/backend/internal/compliance"
+	"github.com/zaishield/vaultscan/backend/internal/impersonation"
+	"github.com/zaishield/vaultscan/backend/internal/planrequests"
 	"github.com/zaishield/vaultscan/backend/internal/scanorch"
+	"github.com/zaishield/vaultscan/backend/internal/scimtokens"
 	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
 	"github.com/zaishield/vaultscan/backend/internal/searchindex"
+	"github.com/zaishield/vaultscan/backend/internal/ssoconfig"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
 )
 
@@ -349,6 +354,13 @@ func main() {
 			Msg("api: default partner slug not found; handlers that need a fallback partner will return 400")
 	}
 
+	// External + internal plane services (migration 0061).
+	ssoSvc := ssoconfig.New(pool.Pool, auditSvc)
+	scimSvc := scimtokens.New(pool.Pool, auditSvc)
+	planReqSvc := planrequests.New(pool.Pool, auditSvc)
+	impersonationSvc := impersonation.New(pool.Pool, auditSvc)
+	complianceEval := compliance.NewEvaluator(pool.Pool)
+
 	router := api.Mount(&api.Services{
 		Pool: pool.Pool, Cfg: cfg, Log: log, Verifier: verifier,
 		Audit: auditSvc, Bus: bus, Branding: brand,
@@ -362,6 +374,9 @@ func main() {
 		Nodes: nodeOps, LiveStream: liveStream,
 		Guardrails: guardrailSvc, Bruteforce: bruteforce,
 		MFA: mfaSvc, Keys: keyMgr,
+		SSOConfig: ssoSvc, SCIMTokens: scimSvc,
+		PlanRequests: planReqSvc, Impersonation: impersonationSvc,
+		ComplianceEval: complianceEval,
 	})
 
 	// Wrap the router so every request gets an OTel span with the route
