@@ -64,7 +64,7 @@ that integrations can forward to the customer.
 Programmatic (platform-admin):
 
 ```bash
-curl -X PUT "$API/api/v1/partners/$PARTNER_ID/plan" \
+curl -X PUT "$API/api/v1/partners/$PARTNER_ID/billing/plan" \
   -H "Authorization: Bearer $ADMIN_JWT" \
   -d '{"plan":"enterprise","custom_overrides":{"concurrent_scans":150}}'
 ```

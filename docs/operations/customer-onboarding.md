@@ -22,13 +22,22 @@ Estimated total time: 60-120 minutes spread across 1-2 weeks
    curl -X PUT "$API/api/v1/tenants/$TENANT_ID/residency" \
      -d '{"region":"eu","reason":"MSA §4.2"}'
    ```
-5. Invite the customer's first admin user (via SCIM if they have it,
-   or manual /users POST with a one-time enrollment link).
+5. Invite the customer's first admin user:
+   ```bash
+   curl -X POST "$API/api/v1/users" \
+     -H "Authorization: Bearer $ADMIN_JWT" \
+     -d '{"email":"...","full_name":"...","partner_id":"<id>","tenant_id":"<id>","roles":["client_admin"]}'
+   ```
+   Returns a one-time enrollment link that the operator emails to
+   the customer admin.
 6. Email the customer:
-   - Their admin's enrollment link
-   - Link to https://docs.vaultscan.zaishield.com/getting-started
+   - Their admin's enrollment link (from step 5)
    - Their named CSM / TAM contact
    - Estimated time to first scan
+   - Link to the operator-published customer-facing docs (operators
+     deploying VaultScan host these themselves; the platform doesn't
+     ship a public docs site — point at your support portal /
+     Notion / Confluence)
 
 ## Day 1 — Customer admin completes setup (~30 min)
 
@@ -36,11 +45,19 @@ Customer follows the in-app onboarding wizard, which walks them through:
 
 ### 1. Sign in + MFA enrollment
 
+The platform delegates authentication to an external IdP (Keycloak
+in the bundled dev stack; the customer's SAML / OIDC IdP in
+production). There is NO local-password path — the enrollment
+link redirects the customer to the IdP's sign-in flow.
+
 - Click the enrollment link from the welcome email
-- Set their password
-- Enrol MFA (TOTP via Authenticator / Authy / 1Password; recovery codes shown once)
+- Sign in via the federated IdP (or set up the SP-side trust first;
+  see step 2 below)
+- Enrol MFA (TOTP via Authenticator / Authy / 1Password; recovery
+  codes shown once). Operator endpoints:
+  - `POST /api/v1/auth/mfa/enroll/start` → returns secret + QR
+  - `POST /api/v1/auth/mfa/enroll/confirm` with the first TOTP code
 - MFA is REQUIRED for admin role; non-admin users can opt in
-- Customer-facing doc: `https://docs.vaultscan.zaishield.com/mfa`
 
 ### 2. Configure SSO (optional, recommended)
 
@@ -80,7 +97,9 @@ Two paths:
 - Agent enrolls (mTLS, cert pinned)
 - Now scans of their internal targets work end-to-end
 
-Customer-facing doc: `https://docs.vaultscan.zaishield.com/agents`
+See `agent-fleet-onboarding.md` (this repo) for the full agent
+provisioning walkthrough — install script, mTLS cert pinning,
+policy bindings, telemetry verification.
 
 ### 5. Configure their first integration
 

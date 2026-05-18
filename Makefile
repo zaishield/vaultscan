@@ -358,3 +358,35 @@ tf-local-portforward: ## kubectl port-forward api (8080) + portal (5173) for ENV
 	@kubectl --context kind-vaultscan-$(ENV) -n vaultscan port-forward svc/vaultscan-api    8080:8080 & \
 	 kubectl --context kind-vaultscan-$(ENV) -n vaultscan port-forward svc/vaultscan-portal 5173:80   & \
 	 wait
+
+# ----------------------------------------------------------------------------
+# Developer convenience + operator backup helpers (referenced by docs)
+# ----------------------------------------------------------------------------
+
+.PHONY: watch-api backup-snapshot restore-snapshot
+
+watch-api: ## Hot-reload the API binary on every Go file change (dev only)
+	@command -v reflex >/dev/null 2>&1 || { \
+	  echo "reflex not installed. install with: go install github.com/cespare/reflex@latest"; exit 1; \
+	}
+	cd backend && reflex -r '\.go$$' -s -- sh -c 'go run ./cmd/api'
+
+backup-snapshot: ## Take a verified pg_dump snapshot to /var/lib/vaultscan-snapshots/
+	@command -v pg_dump >/dev/null 2>&1 || { echo "pg_dump not installed"; exit 1; }
+	@test -n "$$VAULTSCAN_DATABASE_URL" || { echo "VAULTSCAN_DATABASE_URL not set"; exit 1; }
+	mkdir -p /var/lib/vaultscan-snapshots
+	@SNAP="/var/lib/vaultscan-snapshots/snap-$$(date +%FT%H-%M-%S).sql.gz"; \
+	  echo "snapshot → $$SNAP"; \
+	  pg_dump --no-owner --no-privileges --format=plain "$$VAULTSCAN_DATABASE_URL" \
+	    | gzip > "$$SNAP"; \
+	  sha256sum "$$SNAP" > "$$SNAP.sha256"; \
+	  echo "✓ snapshot saved + sha256-attested"; \
+	  ls -la "$$SNAP"
+
+restore-snapshot: ## Restore from a snapshot file: make restore-snapshot SNAPSHOT_ID=<path>
+	@test -n "$(SNAPSHOT_ID)" || { echo "SNAPSHOT_ID required (path to .sql.gz from make backup-snapshot)"; exit 1; }
+	@test -f "$(SNAPSHOT_ID)" || { echo "SNAPSHOT_ID file not found: $(SNAPSHOT_ID)"; exit 1; }
+	@test -n "$$VAULTSCAN_DATABASE_URL" || { echo "VAULTSCAN_DATABASE_URL not set"; exit 1; }
+	@printf '\033[1;31m!! RESTORING — DESTRUCTIVE. Current DB contents will be replaced.\033[0m\n'
+	@read -r -p "Type 'restore' to proceed: " ans && [ "$$ans" = "restore" ]
+	gunzip -c "$(SNAPSHOT_ID)" | psql "$$VAULTSCAN_DATABASE_URL"

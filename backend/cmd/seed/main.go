@@ -25,6 +25,8 @@ import (
 
 func main() {
 	dropFlag := flag.Bool("drop", false, "remove demo records before re-seeding (lossy)")
+	extendedFlag := flag.Bool("extended", false,
+		"also create multi-tenant / multi-region / multi-plan fixtures + real users + integrations + audit history (QA / demo environments)")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -274,6 +276,18 @@ func main() {
 			f.title, f.sev, f.cvss, f.cve, f.scanner, f.scanType, f.endpoint, fp); err != nil {
 			log.Fatal().Err(err).Msg("insert finding")
 		}
+	}
+
+	// Extended fixtures (multi-tenant, real users, integrations,
+	// scan jobs, compliance evidence, audit history, notification
+	// preferences). Opt-in via -extended; layered on top of the
+	// minimal demo so QA / sales / training environments have
+	// realistic data to exercise without hand-crafted SQL.
+	if *extendedFlag {
+		if err := extendedSeed(ctx, tx, fixedSeedIDs()); err != nil {
+			log.Fatal().Err(err).Msg("extended seed")
+		}
+		log.Info().Msg("extended fixtures applied")
 	}
 
 	if err := tx.Commit(ctx); err != nil {
