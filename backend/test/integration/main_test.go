@@ -38,10 +38,12 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/evidence"
 	"github.com/zaishield/vaultscan/backend/internal/findings"
+	"github.com/zaishield/vaultscan/backend/internal/integrations"
 	"github.com/zaishield/vaultscan/backend/internal/reporting"
 	"github.com/zaishield/vaultscan/backend/internal/scanorch"
 	"github.com/zaishield/vaultscan/backend/internal/scopeguard"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
+	"github.com/zaishield/vaultscan/backend/internal/users"
 )
 
 // IDs reused across tests so cross-test references stay deterministic.
@@ -52,22 +54,24 @@ var (
 )
 
 type harness struct {
-	pool        *pgxpool.Pool
-	audit       *audit.Service
-	bus         *eventbus.Bus
-	branding    *branding.Service
-	tenants     *tenants.Service
-	engagements *engagements.Service
-	authdocs    *authdocs.Service
-	assets      *assets.Service
-	scope       *scopeguard.Service
-	scanorch    *scanorch.Orchestrator
-	nodes       *scanorch.NodeOps
-	signer      *scanorch.Signer
-	agents      *agents.Service
-	findings    *findings.Service
-	reports     *reporting.Service
-	vault       *evidence.Vault
+	pool         *pgxpool.Pool
+	audit        *audit.Service
+	bus          *eventbus.Bus
+	branding     *branding.Service
+	tenants      *tenants.Service
+	engagements  *engagements.Service
+	authdocs     *authdocs.Service
+	assets       *assets.Service
+	scope        *scopeguard.Service
+	scanorch     *scanorch.Orchestrator
+	nodes        *scanorch.NodeOps
+	signer       *scanorch.Signer
+	agents       *agents.Service
+	findings     *findings.Service
+	reports      *reporting.Service
+	vault        *evidence.Vault
+	users        *users.Service
+	integrations *integrations.Service
 }
 
 var sharedHarness *harness
@@ -163,10 +167,14 @@ func bootHarness(dsn string) (*harness, func(), error) {
 		pool.Close()
 		return nil, nil, fmt.Errorf("node ops: %w", err)
 	}
-	orch := scanorch.New(pool.Pool, scope, auditSvc, bus, signer).WithNodeOps(nodeOps)
+	orch := scanorch.New(pool.Pool, scope, auditSvc, bus, signer).
+		WithNodeOps(nodeOps).
+		WithResidency(tenSvc, "")
 	agentSvc := agents.New(pool.Pool, auditSvc, bus)
 	findSvc := findings.New(pool.Pool, auditSvc, bus)
 	reportSvc := reporting.New(pool.Pool, brand, vault, auditSvc, bus)
+	userSvc := users.New(pool.Pool, auditSvc)
+	intSvc := integrations.New(pool.Pool, bus, auditSvc)
 	_ = log
 
 	h := &harness{
@@ -174,6 +182,7 @@ func bootHarness(dsn string) (*harness, func(), error) {
 		tenants: tenSvc, engagements: engSvc, authdocs: docSvc, assets: assetSvc,
 		scope: scope, scanorch: orch, nodes: nodeOps, signer: signer,
 		agents: agentSvc, findings: findSvc, reports: reportSvc, vault: vault,
+		users: userSvc, integrations: intSvc,
 	}
 	cleanup := func() {
 		dropCtx, dropCancel := context.WithTimeout(context.Background(), 30*time.Second)
