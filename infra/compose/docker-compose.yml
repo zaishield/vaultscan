@@ -217,6 +217,14 @@ services:
     restart: unless-stopped
     ports: ["${VAULTSCAN_PORTAL_PORT:-5173}:80"]
     depends_on: [api]
+    healthcheck:
+      # /healthz mirrors the production nginx-unprivileged config so
+      # the same probe URL works in dev compose + every helm-deployed env.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
 
   # External scanner worker (Blueprint §12). Polls dispatched external scan
   # jobs for its region, verifies the cloud signature + image digest, runs
@@ -273,6 +281,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9091/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
 
 volumes:
   vaultscan-pg: {}
