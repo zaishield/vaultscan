@@ -182,9 +182,10 @@ def parameters_for(path: str):
 # spec on a route they've audited end-to-end.
 #
 # Honest current state:
-#   * Entries below: 13 endpoints with tight schemas
+#   * Entries below: 23 endpoints with tight schemas (engagements,
+#     assets, scans, integrations, reports added in the second batch)
 #   * Total routes:  ~223 (see paths summary at end of openapi.yaml)
-#   * Coverage:      ~6%. The remaining endpoints are accurate enough
+#   * Coverage:      ~10%. The remaining endpoints are accurate enough
 #                    for client codegen at the field-list level but
 #                    surface NO type constraints (string vs int vs uuid,
 #                    nullable, enum membership). Tightening more
@@ -385,6 +386,209 @@ SCHEMA_OVERRIDES = {
                 "now":     {"type": "string", "format": "date-time"},
             },
             "required": ["version", "uptime"],
+        },
+    },
+
+    # ----- Engagements ------------------------------------------------------
+    "POST /api/v1/engagements": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "partner_id":             {"type": "string", "format": "uuid"},
+                "tenant_id":              {"type": "string", "format": "uuid"},
+                "client_id":              {"type": "string", "format": "uuid"},
+                "code":                   {"type": "string", "minLength": 1},
+                "name":                   {"type": "string", "minLength": 1},
+                "description":            {"type": "string"},
+                "starts_at":              {"type": "string", "format": "date-time"},
+                "ends_at":                {"type": "string", "format": "date-time"},
+                "intensity":              {"type": "string", "enum": ["light", "standard", "intensive"]},
+                "emergency_contact_name":  {"type": "string"},
+                "emergency_contact_email": {"type": "string", "format": "email"},
+                "emergency_contact_phone": {"type": "string"},
+            },
+            "required": ["partner_id", "tenant_id", "code", "name", "starts_at", "ends_at"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":        {"type": "string", "format": "uuid"},
+                "code":      {"type": "string"},
+                "name":      {"type": "string"},
+                "status":    {"type": "string"},
+                "starts_at": {"type": "string", "format": "date-time"},
+                "ends_at":   {"type": "string", "format": "date-time"},
+            },
+            "required": ["id", "code", "status"],
+        },
+    },
+
+    # ----- Assets -----------------------------------------------------------
+    "POST /api/v1/assets": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "partner_id":     {"type": "string", "format": "uuid"},
+                "tenant_id":      {"type": "string", "format": "uuid"},
+                "engagement_id":  {"type": "string", "format": "uuid"},
+                "asset_type":     {"type": "string", "enum": [
+                    "host", "url", "ip_range", "domain", "cloud_account",
+                    "api_endpoint", "container_image", "code_repository",
+                ]},
+                "name":           {"type": "string"},
+                "value":          {"type": "string"},
+                "plane":          {"type": "string", "enum": ["external", "internal"]},
+                "criticality":    {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+                "owner":          {"type": "string"},
+                "environment":    {"type": "string"},
+                "cloud_provider": {"type": "string", "enum": ["aws", "gcp", "azure", "other", ""]},
+                "tags":           {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["partner_id", "tenant_id", "asset_type", "value"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":         {"type": "string", "format": "uuid"},
+                "asset_type": {"type": "string"},
+                "value":      {"type": "string"},
+                "created_at": {"type": "string", "format": "date-time"},
+            },
+            "required": ["id"],
+        },
+    },
+
+    # ----- Scans ------------------------------------------------------------
+    "POST /api/v1/scans/external": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "partner_id":    {"type": "string", "format": "uuid"},
+                "tenant_id":     {"type": "string", "format": "uuid"},
+                "engagement_id": {"type": "string", "format": "uuid"},
+                "profile_code":  {"type": "string"},
+                "region":        {"type": "string"},
+                "agent_id":      {"type": "string", "format": "uuid"},
+                "targets":       {"type": "array", "items": {"type": "string"}},
+                "schedule_at":   {"type": "string", "format": "date-time"},
+                "intensity":     {"type": "string", "enum": ["light", "standard", "intensive"]},
+            },
+            "required": ["engagement_id", "profile_code", "targets"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":     {"type": "string", "format": "uuid"},
+                "status": {"type": "string", "enum": [
+                    "queued", "approval_pending", "running", "succeeded",
+                    "failed", "cancelled",
+                ]},
+            },
+            "required": ["id", "status"],
+        },
+    },
+    "POST /api/v1/scans/internal": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "partner_id":    {"type": "string", "format": "uuid"},
+                "tenant_id":     {"type": "string", "format": "uuid"},
+                "engagement_id": {"type": "string", "format": "uuid"},
+                "profile_code":  {"type": "string"},
+                "agent_id":      {"type": "string", "format": "uuid"},
+                "targets":       {"type": "array", "items": {"type": "string"}},
+                "schedule_at":   {"type": "string", "format": "date-time"},
+                "intensity":     {"type": "string", "enum": ["light", "standard", "intensive"]},
+            },
+            "required": ["engagement_id", "profile_code", "agent_id", "targets"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":     {"type": "string", "format": "uuid"},
+                "status": {"type": "string"},
+            },
+            "required": ["id", "status"],
+        },
+    },
+    "GET /api/v1/scans/{scan_id}": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":            {"type": "string", "format": "uuid"},
+                "engagement_id": {"type": "string", "format": "uuid"},
+                "profile_code":  {"type": "string"},
+                "plane":         {"type": "string", "enum": ["external", "internal"]},
+                "status":        {"type": "string"},
+                "started_at":    {"type": "string", "format": "date-time", "nullable": True},
+                "ended_at":      {"type": "string", "format": "date-time", "nullable": True},
+            },
+            "required": ["id", "status"],
+        },
+    },
+
+    # ----- Integrations -----------------------------------------------------
+    "POST /api/v1/integrations/{integration_id}": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "tenant_id":    {"type": "string", "format": "uuid"},
+                "partner_id":   {"type": "string", "format": "uuid"},
+                "name":         {"type": "string", "minLength": 1},
+                "config":       {"type": "object", "additionalProperties": True},
+                "secret_ref":   {"type": "string"},
+                "event_filter": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["name"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {"id": {"type": "string", "format": "uuid"}},
+            "required": ["id"],
+        },
+    },
+    "POST /api/v1/integrations/{integration_id}/test": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "ok":          {"type": "boolean"},
+                "status_code": {"type": "integer"},
+                "duration_ms": {"type": "integer"},
+                "error":       {"type": "string"},
+            },
+            "required": ["ok"],
+        },
+    },
+    "PUT /api/v1/integrations/{integration_id}/signing-secret": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {"secret": {"type": "string"}},
+            "required": ["secret"],
+        },
+    },
+
+    # ----- Reports ----------------------------------------------------------
+    "GET /api/v1/reports/{report_id}": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":           {"type": "string", "format": "uuid"},
+                "tenant_id":    {"type": "string", "format": "uuid"},
+                "report_type":  {"type": "string"},
+                "status":       {"type": "string", "enum": [
+                    "draft", "pending_review", "approved", "delivered", "expired",
+                ]},
+                "created_at":   {"type": "string", "format": "date-time"},
+                "generated_at": {"type": "string", "format": "date-time", "nullable": True},
+                "approved_by":  {"type": "string", "format": "uuid", "nullable": True},
+            },
+            "required": ["id", "report_type", "status"],
         },
     },
 
