@@ -23,6 +23,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/billing"
 	"github.com/zaishield/vaultscan/backend/internal/middleware"
+	"github.com/zaishield/vaultscan/backend/internal/scanorch"
 	"github.com/zaishield/vaultscan/backend/internal/tenants"
 )
 
@@ -61,6 +62,29 @@ func residencyErrorJSON(w http.ResponseWriter, err error) bool {
 		"error": map[string]any{
 			"code":    "data_residency_violation",
 			"message": err.Error(),
+		},
+	})
+	return true
+}
+
+// unpinnedImageErrorJSON maps scanorch.ErrNoDigest to a 503
+// Service Unavailable. Production-strict installs refuse to
+// dispatch scans when scanner-image digests aren't pinned —
+// surfacing this as 503 (vs 500) communicates "this is a
+// configuration / supply-chain gate, not a code bug." The
+// operator clears the alert by either populating
+// tools/scanner-images/digests.json (cut a v* release tag) or
+// explicitly setting VAULTSCAN_REQUIRE_PINNED_IMAGES=false.
+func unpinnedImageErrorJSON(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, scanorch.ErrNoDigest) {
+		return false
+	}
+	w.Header().Set("Retry-After", "300")
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		"error": map[string]any{
+			"code":    "unpinned_scanner_image",
+			"message": err.Error(),
+			"hint":    "operator must populate tools/scanner-images/digests.json (cut a v* release tag) or set VAULTSCAN_REQUIRE_PINNED_IMAGES=false in non-production environments",
 		},
 	})
 	return true

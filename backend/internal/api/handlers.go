@@ -885,6 +885,9 @@ func submitScan(s *Services, plane string, w http.ResponseWriter, r *http.Reques
 		if quotaErrorJSON(w, err) {
 			return
 		}
+		if unpinnedImageErrorJSON(w, err) {
+			return
+		}
 		internalErr(w, err)
 		return
 	}

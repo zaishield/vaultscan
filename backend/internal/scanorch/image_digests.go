@@ -30,6 +30,11 @@ type ImageDigestRegistry struct {
 	digests  map[string]string
 	version  string
 	registry string
+	// strict: when true, ImageRefForStrict refuses to fall back to
+	// :latest for unknown tools (returns ErrUnpinnedImage). Wired
+	// from cmd/api to envmode.IsProduction so a no-tag-yet branch
+	// can run in dev with the warning + production refuses outright.
+	strict bool
 }
 
 // NewImageDigestRegistry loads from the given JSON file path. Returns
@@ -62,6 +67,24 @@ func NewImageDigestRegistry(path string) (*ImageDigestRegistry, error) {
 	r.version = doc.Version
 	r.registry = doc.Registry
 	return r, nil
+}
+
+// Strict reports whether the registry refuses fallback :latest
+// references for unknown tools. Set via SetStrict; cmd/api wires
+// this from envmode.IsProduction OR an explicit env override.
+func (r *ImageDigestRegistry) Strict() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.strict
+}
+
+// SetStrict toggles strict mode. In strict mode, the strict-aware
+// caller path returns ErrNoDigest when a tool has no digest. The
+// non-strict ImageRefFor keeps the legacy :latest fallback.
+func (r *ImageDigestRegistry) SetStrict(v bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.strict = v
 }
 
 // ImageRefFor returns the pinned, signed image reference for tool.
@@ -135,14 +158,17 @@ func (r *ImageDigestRegistry) All() map[string]string {
 // (production with VAULTSCAN_REQUIRE_PINNED_IMAGES=true).
 var ErrNoDigest = errors.New("scanorch: image digest pin missing")
 
-// ImageRefForStrict is ImageRefFor that errors instead of falling
-// back to :latest. Use this in production code paths that MUST never
-// emit a mutable tag.
+// ImageRefForStrict is ImageRefFor that ALWAYS errors instead of
+// falling back to :latest. Use this in production code paths that
+// MUST never emit a mutable tag (caller decides via Strict()).
 func (r *ImageDigestRegistry) ImageRefForStrict(tool, fallbackRegistry string) (string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	d, ok := r.digests[tool]
 	if !ok || d == "" {
+		if unpinnedSink != nil {
+			unpinnedSink(tool)
+		}
 		return "", fmt.Errorf("%w: tool=%s", ErrNoDigest, tool)
 	}
 	registry := r.registry

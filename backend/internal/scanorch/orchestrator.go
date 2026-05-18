@@ -92,16 +92,27 @@ func (o *Orchestrator) WithDigests(d *ImageDigestRegistry) *Orchestrator {
 }
 
 // imageRefFor returns the scan_tasks.image_ref value: pinned digest
-// reference when available, mutable :latest fallback otherwise.
-func (o *Orchestrator) imageRefFor(tool string) string {
+// reference when available.
+//
+// Behavior depends on the registry's strict flag:
+//   strict=true  → returns ("", ErrNoDigest) for unpinned tools.
+//                  Caller (Submit) propagates this as a submission
+//                  failure; the API maps it to 503 unpinned_image.
+//   strict=false → falls back to <registry>/<tool>:latest with a
+//                  one-time warning via unpinnedSink. Used in dev /
+//                  pre-release-tag environments.
+func (o *Orchestrator) imageRefFor(tool string) (string, error) {
 	fallback := o.FallbackRegistry
 	if fallback == "" {
 		fallback = "registry.zaishield.com/vaultscan/scanners"
 	}
 	if o.Digests != nil {
-		return o.Digests.ImageRefFor(tool, fallback)
+		if o.Digests.Strict() {
+			return o.Digests.ImageRefForStrict(tool, fallback)
+		}
+		return o.Digests.ImageRefFor(tool, fallback), nil
 	}
-	return fallback + "/" + tool + ":latest"
+	return fallback + "/" + tool + ":latest", nil
 }
 
 func New(pool *pgxpool.Pool, g *scopeguard.Service, a *audit.Service, b *eventbus.Bus, s *Signer) *Orchestrator {
@@ -333,14 +344,19 @@ func (o *Orchestrator) Submit(ctx context.Context, in SubmitInput) (out *models.
 	// Materialize per-tool tasks.
 	for _, tool := range prof.Tools {
 		taskID := uuid.New()
-		imageRef := o.imageRefFor(tool)
-		_, err := o.pool.Exec(ctx, `
+		imageRef, refErr := o.imageRefFor(tool)
+		if refErr != nil {
+			// Strict-mode + unpinned tool. Refuse the whole submit
+			// rather than dispatch a fraction of the profile's
+			// tools — partial scans are misleading.
+			return nil, nil, refErr
+		}
+		if _, ierr := o.pool.Exec(ctx, `
 			INSERT INTO scan_tasks(id, scan_job_id, tool, image_ref, status,
 			    cpu_limit, memory_limit, runtime_limit_s)
 			VALUES ($1,$2,$3,$4,'queued','2','4Gi',1800)`,
-			taskID, job.ID, tool, imageRef)
-		if err != nil {
-			return nil, nil, err
+			taskID, job.ID, tool, imageRef); ierr != nil {
+			return nil, nil, ierr
 		}
 	}
 

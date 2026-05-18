@@ -112,6 +112,15 @@ secrets:
 
 networkPolicies:
   enabled: true
+  externalEgress:
+    cidrBlocks:
+      - "10.0.0.0/8"
+    egressPorts:
+      - { protocol: TCP, port: 443 }
+      - { protocol: TCP, port: 5432 }
+      - { protocol: TCP, port: 6432 }
+      - { protocol: TCP, port: 9200 }
+      - { protocol: TCP, port: 4222 }
 serviceMonitor:
   enabled: true
 metrics:

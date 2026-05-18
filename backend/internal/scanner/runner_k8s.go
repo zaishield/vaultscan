@@ -261,41 +261,7 @@ func buildJobManifest(name, namespace, sa, image, tool string, args []string, ru
 						"vaultscan.io/tool":           tool,
 					},
 				},
-				"spec": map[string]any{
-					"restartPolicy":      "Never",
-					"serviceAccountName": sa,
-					"automountServiceAccountToken": false,  // tool pods don't talk to K8s
-					"securityContext": map[string]any{
-						"runAsNonRoot": true,
-						"runAsUser":    65532,
-						"runAsGroup":   65532,
-						"fsGroup":      65532,
-						"seccompProfile": map[string]any{"type": "RuntimeDefault"},
-					},
-					"containers": []any{
-						map[string]any{
-							"name":  tool,
-							"image": image,
-							"args":  args,
-							"securityContext": map[string]any{
-								"allowPrivilegeEscalation": false,
-								"readOnlyRootFilesystem":   true,
-								"runAsNonRoot":             true,
-								"capabilities":             map[string]any{"drop": []string{"ALL"}},
-							},
-							"resources": map[string]any{
-								"requests": map[string]any{"cpu": "200m", "memory": "256Mi"},
-								"limits":   map[string]any{"cpu": "2",    "memory": "4Gi"},
-							},
-							"volumeMounts": []any{
-								map[string]any{"name": "tmp", "mountPath": "/tmp"},
-							},
-						},
-					},
-					"volumes": []any{
-						map[string]any{"name": "tmp", "emptyDir": map[string]any{"sizeLimit": "1Gi"}},
-					},
-				},
+				"spec": specForTool(tool, sa, image, args),
 			},
 		},
 	}

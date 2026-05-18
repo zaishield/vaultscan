@@ -184,6 +184,18 @@ func main() {
 	if reg, err := scanorch.NewImageDigestRegistry(
 		getenvOr("VAULTSCAN_SCANNER_DIGESTS_PATH", "tools/scanner-images/digests.json"),
 	); err == nil {
+		// Strict mode = production default; refuses to dispatch an
+		// unsigned scanner image. Override via env for the rare
+		// "production install but no v* tag yet" case. The override
+		// is loud — boots emit a warning that ops must clear.
+		strict := envmode.IsProduction(cfg.Env)
+		if v := os.Getenv("VAULTSCAN_REQUIRE_PINNED_IMAGES"); v != "" {
+			strict = (v == "true")
+		}
+		reg.SetStrict(strict)
+		if strict && len(reg.All()) == 0 {
+			log.Warn().Msg("scanner digests.json is empty AND strict mode is on — scan submissions will be refused until digests are populated")
+		}
 		orch = orch.WithDigests(reg)
 		if v := reg.Version(); v != "" {
 			log.Info().Str("digests_version", v).
