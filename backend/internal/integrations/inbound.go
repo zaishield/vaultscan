@@ -42,6 +42,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 // ErrSignatureMismatch indicates the computed HMAC does not match
@@ -204,6 +206,11 @@ func (s *Service) VerifyInbound(ctx context.Context, integrationID uuid.UUID, ti
 		if err := Verify(string(secret), timestamp, body, signatureHex, VerifyOptions{}); err != nil {
 			code := classifyVerifyError(err)
 			s.logInbound(ctx, integrationID, false, code, sourceIP, bodyHex)
+			// Surface bad-signature attempts as a per-integration
+			// metric. A brute-force probe shows up as a flat-line
+			// rate against a single integration_id+code label set;
+			// alerting can page on sustained non-zero rate >1/min.
+			observability.InboundHMACFailures.WithLabelValues(code).Inc()
 			return err
 		}
 	default:

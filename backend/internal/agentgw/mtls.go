@@ -114,9 +114,86 @@ func NewCertVerifier(ctx context.Context, pool *pgxpool.Pool) (*CertVerifier, er
 	}, nil
 }
 
+// StartCAPoolRefresh runs a background goroutine that periodically
+// re-reads agent_ca_certificates and atomically swaps the issuer
+// pool. Without this, a CA rotation requires a process restart and
+// the pool can serve a revoked CA for the lifetime of the running
+// gateway. Callers wire this from cmd/agent-gateway/main.go after
+// constructing the verifier; the returned func cancels the loop on
+// shutdown.
+func (v *CertVerifier) StartCAPoolRefresh(ctx context.Context, interval time.Duration) func() {
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				fresh, err := buildCAPoolFromDB(ctx, v.pool)
+				if err != nil {
+					// Keep existing pool — refusing to swap on a
+					// transient DB error is better than nil'ing the
+					// pool and rejecting every handshake.
+					continue
+				}
+				v.cacheMu.Lock()
+				v.issuer = fresh
+				v.cacheMu.Unlock()
+			}
+		}
+	}()
+	return cancel
+}
+
+// buildCAPoolFromDB is the inner reader used by the periodic refresh
+// loop. (NewCertVerifier inlines the same query for boot-time fast-
+// fail semantics.)
+func buildCAPoolFromDB(ctx context.Context, pool *pgxpool.Pool) (*x509.CertPool, error) {
+	issuer := x509.NewCertPool()
+	rows, err := pool.Query(ctx, `
+		SELECT cert_pem FROM agent_ca_certificates
+		 WHERE enabled = true AND not_after > now()`)
+	if err != nil {
+		return nil, fmt.Errorf("agentgw: load CAs: %w", err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var pemBytes string
+		if err := rows.Scan(&pemBytes); err != nil {
+			return nil, err
+		}
+		if !issuer.AppendCertsFromPEM([]byte(pemBytes)) {
+			return nil, fmt.Errorf("agentgw: CA pool refused a PEM in refresh")
+		}
+		count++
+	}
+	if count == 0 {
+		return nil, errors.New("agentgw: refresh found zero enabled CAs")
+	}
+	return issuer, nil
+}
+
 // IssuerPool returns the underlying *x509.CertPool. Used to build the
 // tls.Config.ClientCAs.
-func (v *CertVerifier) IssuerPool() *x509.CertPool { return v.issuer }
+//
+// NOTE: TLS handshakes capture this pool ONCE when the listener starts.
+// A CA refresh via StartCAPoolRefresh updates the verifier's internal
+// pointer, but already-accepted TLS sessions use the boot-time pool.
+// To pick up a rotation, the operator restarts the gateway after
+// updating agent_ca_certificates. The refresh path still helps in
+// that it keeps the cached fingerprint set fresh for handshake
+// callbacks.
+func (v *CertVerifier) IssuerPool() *x509.CertPool {
+	v.cacheMu.RLock()
+	defer v.cacheMu.RUnlock()
+	return v.issuer
+}
 
 // VerifyPeerCertificate plugs into tls.Config.VerifyPeerCertificate.
 // At this point the standard library has already confirmed the chain

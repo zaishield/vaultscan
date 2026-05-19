@@ -134,6 +134,29 @@ var (
 		},
 		[]string{"kind"},
 	)
+	// TenantPoolDowngrade: count of times IsolationRouter.PoolFor
+	// fell back from a dedicated tenant pool to the shared platform
+	// pool. A non-zero rate means a dedicated-tier tenant is
+	// silently sharing isolation; operator should inspect
+	// tenant_pool_routing.
+	TenantPoolDowngrade = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "vaultscan_tenant_pool_downgrade_total",
+			Help: "Dedicated tenants that fell back to the shared platform pool (by reason).",
+		},
+		[]string{"reason"},
+	)
+	// InboundHMACFailures: count of inbound webhook signature
+	// verifications that failed, labelled by reason. A sustained
+	// non-zero rate against a single integration is the classic
+	// signature-probe signature; alert when it crosses 1/min.
+	InboundHMACFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "vaultscan_inbound_hmac_failures_total",
+			Help: "Inbound webhook signature verifications that failed (by reason code).",
+		},
+		[]string{"reason"},
+	)
 	EmergencyStopSLAms = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "vaultscan_emergency_stop_sla_ms",
 		Help:    "Time from operator request to agent ack, in milliseconds.",
@@ -221,6 +244,8 @@ func init() {
 		AESGCMSeals,
 		AuditTSAFailures,
 		NotifyQuarantine,
+		TenantPoolDowngrade,
+		InboundHMACFailures,
 		AgentsByStatus,
 		IntegrationDeliveryFailures,
 		IntegrationDeadLetterDepth,

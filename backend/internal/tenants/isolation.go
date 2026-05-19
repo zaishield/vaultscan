@@ -38,6 +38,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 // PoolKind names the routing strategy for a dedicated tenant. The
@@ -124,9 +126,10 @@ func (r *IsolationRouter) PoolFor(ctx context.Context, tenantID uuid.UUID) (*pgx
 	if err != nil || dsn == "" {
 		// Fall back to platform pool — a misconfigured dedicated
 		// tenant degrades to shared isolation rather than going
-		// dark. The bad routing row is operator-visible via the
-		// audit trail (tenant_isolation_history) so it doesn't
-		// hide silently.
+		// dark. Emit a metric so the operator sees the downgrade
+		// without grepping logs; the audit trail
+		// (tenant_isolation_history) is the durable record.
+		observability.TenantPoolDowngrade.WithLabelValues("dsn_lookup_failed").Inc()
 		r.cacheStore(tenantID, r.platform)
 		return r.platform, nil
 	}
@@ -134,6 +137,7 @@ func (r *IsolationRouter) PoolFor(ctx context.Context, tenantID uuid.UUID) (*pgx
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		// Same fall-back rationale as above.
+		observability.TenantPoolDowngrade.WithLabelValues("pool_init_failed").Inc()
 		r.cacheStore(tenantID, r.platform)
 		return r.platform, nil
 	}

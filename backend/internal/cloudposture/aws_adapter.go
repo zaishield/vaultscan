@@ -34,6 +34,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zaishield/vaultscan/backend/internal/httputil"
@@ -297,36 +298,52 @@ func (a *AWSAdapter) checkEBSEncryptionByDefault(ctx context.Context, _ CloudAcc
 	if len(regions) == 0 {
 		regions = []string{a.HomeRegion}
 	}
-	var out []ControlResult
-	for _, r := range regions {
-		ctrl := ControlResult{
-			ControlID: "CIS-AWS-2.2", Title: "EBS default encryption enabled",
-			Severity: "high", Resource: "ec2:::ebs-default-encryption", Region: r,
-			Remediation: "aws ec2 enable-ebs-encryption-by-default --region " + r,
-		}
-		body, err := a.ec2Call(ctx, creds, r, "GetEbsEncryptionByDefault", "2016-11-15")
-		if err != nil {
-			out = append(out, manualResultFor(ctrl, err))
-			continue
-		}
-		type ec2resp struct {
-			XMLName               xml.Name `xml:"GetEbsEncryptionByDefaultResponse"`
-			EbsEncryptionByDefault bool    `xml:"ebsEncryptionByDefault"`
-		}
-		var rr ec2resp
-		if err := xml.Unmarshal(body, &rr); err != nil {
-			out = append(out, manualResultFor(ctrl, err))
-			continue
-		}
-		if rr.EbsEncryptionByDefault {
-			ctrl.Status = "pass"
-		} else {
-			ctrl.Status = "fail"
-			ctrl.Evidence = "ebsEncryptionByDefault=false"
-		}
-		out = append(out, ctrl)
+	// Bounded parallelism — a 30-region scan against the AWS EC2
+	// endpoint serially can take minutes per Scan() call. Limit
+	// concurrency to 8 so we don't blow the EC2 rate limit either.
+	type result struct {
+		idx int
+		ctrl ControlResult
 	}
-	return out
+	results := make([]ControlResult, len(regions))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, r := range regions {
+		wg.Add(1)
+		go func(i int, r string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ctrl := ControlResult{
+				ControlID: "CIS-AWS-2.2", Title: "EBS default encryption enabled",
+				Severity: "high", Resource: "ec2:::ebs-default-encryption", Region: r,
+				Remediation: "aws ec2 enable-ebs-encryption-by-default --region " + r,
+			}
+			body, err := a.ec2Call(ctx, creds, r, "GetEbsEncryptionByDefault", "2016-11-15")
+			if err != nil {
+				results[i] = manualResultFor(ctrl, err)
+				return
+			}
+			type ec2resp struct {
+				XMLName               xml.Name `xml:"GetEbsEncryptionByDefaultResponse"`
+				EbsEncryptionByDefault bool    `xml:"ebsEncryptionByDefault"`
+			}
+			var rr ec2resp
+			if err := xml.Unmarshal(body, &rr); err != nil {
+				results[i] = manualResultFor(ctrl, err)
+				return
+			}
+			if rr.EbsEncryptionByDefault {
+				ctrl.Status = "pass"
+			} else {
+				ctrl.Status = "fail"
+				ctrl.Evidence = "ebsEncryptionByDefault=false"
+			}
+			results[i] = ctrl
+		}(i, r)
+	}
+	wg.Wait()
+	return results
 }
 
 // ---- low-level HTTP wrappers ---------------------------------------------
