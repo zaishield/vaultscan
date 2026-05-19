@@ -61,7 +61,7 @@ func TestKEKRotation_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	newKeyB64 := base64.StdEncoding.EncodeToString(newKeyBytes)
-	oldKeyB64 := "ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA="
+	oldKeyB64 := "ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktMzJieXRlcyE="
 
 	// ---- Phase 1: rotation window ----
 	// New active KEK + old KEK in previous list. Existing rows are
@@ -158,7 +158,7 @@ func TestKEKRotation_RewrapIsIdempotent(t *testing.T) {
 	// kek_id (i.e. "no rotation needed"). The sweep must report 0.
 	v, err := evidence.NewVault(h.pool,
 		audit.New(h.pool), eventbus.New(h.pool),
-		"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA=",
+		"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktMzJieXRlcyE=",
 		evidence.WithStorage(h.vault.Storage()),
 		evidence.WithActiveKEKID("platform-master-v1"),
 	)

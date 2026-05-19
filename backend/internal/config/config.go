@@ -210,7 +210,7 @@ func Load() (*Config, error) {
 		SecretsKMSSecretKey:    os.Getenv("VAULTSCAN_SECRETS_KMS_SECRET_KEY"),
 		SecretsKMSSessionToken: os.Getenv("VAULTSCAN_SECRETS_KMS_SESSION_TOKEN"),
 		EvidenceMasterKey: getenv("VAULTSCAN_EVIDENCE_MASTER_KEY",
-			"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA="),
+			"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktMzJieXRlcyE="),
 		EvidenceBackend:        getenv("VAULTSCAN_EVIDENCE_BACKEND", "filesystem"),
 		EvidenceFilesystemRoot: os.Getenv("VAULTSCAN_EVIDENCE_FS_ROOT"),
 		EvidenceS3ForcePathStyle: getenv("VAULTSCAN_EVIDENCE_S3_FORCE_PATH_STYLE", "true") == "true",

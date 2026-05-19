@@ -21,7 +21,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/auth"
 )
 
-const testKEK = "ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA=" // shared with harness
+const testKEK = "ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktMzJieXRlcyE=" // shared with harness
 
 // computeTOTP mirrors the algorithm in auth/totp.go so we can produce a
 // valid code given the user's enrolment secret.

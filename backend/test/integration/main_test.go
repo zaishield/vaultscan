@@ -158,7 +158,7 @@ func bootHarness(dsn string) (*harness, func(), error) {
 	bus := eventbus.New(pool.Pool)
 	signer, _ := scanorch.NewSigner("integration-test", "")
 	vault, err := evidence.NewVault(pool.Pool, auditSvc, bus,
-		"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA=")
+		"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktMzJieXRlcyE=")
 	if err != nil {
 		pool.Close()
 		return nil, nil, fmt.Errorf("vault: %w", err)

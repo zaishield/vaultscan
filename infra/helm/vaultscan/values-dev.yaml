@@ -89,7 +89,7 @@ secrets:
   inline:
     databaseURL: ""
     jwtSecret: "dev-jwt-secret-deliberately-long-enough-to-pass-validator-xxxxxxxx"
-    evidenceMasterKey: "Ynl0ZXMtZ2VuZXJhdGVkLWZvci1kZXYtdXNlLW9ubHktbm90LXByb2QyAA=="
+    evidenceMasterKey: "ZGV2LWtlay3JRmoe9tbTIcpQ6TNMC1R7NCFEwkFd8iY="
     jobSigningKey: ""
     objectStoreKey: "devminio"
     objectStoreSecret: "devminio-secret-please-rotate-in-prod"

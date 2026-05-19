@@ -88,7 +88,7 @@ secrets:
     # Long, non-default values that would survive the production_guard
     # if VAULTSCAN_ENV ever gets flipped to "production" by accident.
     jwtSecret: "ci-kind-jwt-secret-deliberately-long-enough-to-pass-validator-zzzzzzzz"
-    evidenceMasterKey: "Ynl0ZXMtZ2VuZXJhdGVkLWZvci1raW5kLWNpLW9ubHktbm90LXByb2QwAA=="
+    evidenceMasterKey: "a2luZC1rZWst40TOQZQTfcNQ5nactikIkbbTI84bN0w="
     jobSigningKey: ""
     objectStoreKey: "kindminio"
     objectStoreSecret: "kindminio-secret-please-rotate-in-prod"

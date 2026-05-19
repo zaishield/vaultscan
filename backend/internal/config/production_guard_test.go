@@ -11,7 +11,7 @@ func TestValidateProduction_devEnvIsNoOp(t *testing.T) {
 	c := &Config{
 		Env:               "development",
 		JWTSharedSecret:   "dev-only-shared-secret-change-me",
-		EvidenceMasterKey: "ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA=",
+		EvidenceMasterKey: "ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktMzJieXRlcyE=",
 	}
 	if err := c.validateProduction(); err != nil {
 		t.Fatalf("dev env should not validate: %v", err)
@@ -22,7 +22,7 @@ func TestValidateProduction_rejectsAllDevDefaults(t *testing.T) {
 	c := &Config{
 		Env:               "production",
 		JWTSharedSecret:   "dev-only-shared-secret-change-me",
-		EvidenceMasterKey: "ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA=",
+		EvidenceMasterKey: "ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktMzJieXRlcyE=",
 		ScannerPullKey:    "ZGV2LXNjYW5uZXItcHVsbC1tYXN0ZXIta2V5LTAwMDA=",
 		ObjectStoreSecret: "vaultscan-dev-secret",
 		DatabaseURL:       "postgres://vaultscan:vaultscan@localhost:5432/vaultscan?sslmode=disable",

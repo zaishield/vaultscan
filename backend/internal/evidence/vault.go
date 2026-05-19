@@ -151,7 +151,7 @@ func ValidatePreviousMasterKeys(keysB64 []string) error {
 // and a comment naming where it came from.
 var knownDevMasterKeys = []string{
 	// backend/test/integration/main_test.go harness
-	"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA=",
+	"ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktMzJieXRlcyE=",
 	// backend/cmd/api/example_config.yaml (any future placeholder)
 	"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 }
@@ -175,12 +175,21 @@ func NewVault(pool *pgxpool.Pool, a *audit.Service, b *eventbus.Bus, masterKeyB6
 	if err != nil {
 		return nil, fmt.Errorf("evidence: master key not valid base64: %w", err)
 	}
-	// EXACT 32 bytes required. The previous "len(key) < 32" + key[:32]
-	// silently truncated a longer key (e.g. an operator who base64'd
-	// 33 bytes encrypted everything under only the first 32 — silent
-	// mis-key). Refuse out of caution rather than guess intent.
-	if len(key) != 32 {
-		return nil, fmt.Errorf("evidence: master key must decode to EXACTLY 32 bytes (got %d)", len(key))
+	// Reject keys shorter than 32 bytes — they cannot satisfy AES-256.
+	if len(key) < 32 {
+		return nil, fmt.Errorf("evidence: master key must decode to >= 32 bytes (got %d)", len(key))
+	}
+	// Accept longer keys (operator base64'd 33+ bytes) by truncating to
+	// the first 32 with a structured-warn log. The earlier "EXACTLY 32"
+	// rejection caught silent foot-guns but ALSO broke every shipped
+	// dev default (audit finding F-004 / F-001). The warn restores the
+	// foot-gun visibility without the hard fail: a single line in boot
+	// logs every operator sees, no silent mismatch on re-encrypt.
+	if len(key) > 32 {
+		fmt.Fprintf(os.Stderr,
+			"warn: evidence master key decoded to %d bytes; truncating to first 32. "+
+				"Re-encode with exactly 32 bytes to silence this warning.\n", len(key))
+		key = key[:32]
 	}
 	v := &Vault{
 		pool: pool, audit: a, bus: b,

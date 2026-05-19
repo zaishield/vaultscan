@@ -35,7 +35,7 @@ import (
 // avoid grepping the binary).
 var devDefaults = map[string]string{
 	"jwt-shared-secret":     sha256hex("dev-only-shared-secret-change-me"),
-	"evidence-master-key":   sha256hex("ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA="),
+	"evidence-master-key":   sha256hex("ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktMzJieXRlcyE="),
 	"scanner-pull-key":      sha256hex("ZGV2LXNjYW5uZXItcHVsbC1tYXN0ZXIta2V5LTAwMDA="),
 	"object-store-secret":   sha256hex("vaultscan-dev-secret"),
 	"job-signing-key-id":    sha256hex("dev-key-1"),
@@ -49,7 +49,7 @@ var devDefaults = map[string]string{
 // equivalent. We additionally hash the canonical decoded form so any
 // re-encoding of the same key material trips the check.
 var devKEKBytes = map[string]string{
-	"evidence-master-key": sha256BytesHex("ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA="),
+	"evidence-master-key": sha256BytesHex("ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktMzJieXRlcyE="),
 	"scanner-pull-key":    sha256BytesHex("ZGV2LXNjYW5uZXItcHVsbC1tYXN0ZXIta2V5LTAwMDA="),
 }
 
