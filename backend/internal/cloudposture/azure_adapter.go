@@ -36,6 +36,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zaishield/vaultscan/backend/internal/httputil"
 )
 
 // AzureCredentials are the Service Principal secrets used to obtain a
@@ -67,9 +69,13 @@ type cachedToken struct {
 }
 
 func NewAzureAdapter(resolver AzureCredentialsResolver) *AzureAdapter {
+	c := httputil.NewClient(httputil.Options{Timeout: 30 * time.Second})
+	c.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	return &AzureAdapter{
 		Resolver:   resolver,
-		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		HTTPClient: c,
 		tokenByID:  map[string]cachedToken{},
 	}
 }

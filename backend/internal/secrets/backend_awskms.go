@@ -120,10 +120,15 @@ func (b *AWSKMSBackend) Put(ctx context.Context, ref, value string) error {
 // ---- KMS HTTP ------------------------------------------------------------
 
 func (b *AWSKMSBackend) kmsEncrypt(ctx context.Context, plain []byte) (string, error) {
+	// json.Marshal of the request body holds a copy of the
+	// base64-encoded plaintext on the heap. Build the body, send it,
+	// then zero the buffer so the only post-call heap residue is the
+	// CiphertextBlob (already encrypted under the CMK).
 	body, _ := json.Marshal(map[string]any{
 		"KeyId":     b.keyID,
 		"Plaintext": base64.StdEncoding.EncodeToString(plain),
 	})
+	defer zeroBytes(body)
 	resp, err := b.kmsCall(ctx, "TrentService.Encrypt", body)
 	if err != nil {
 		return "", err

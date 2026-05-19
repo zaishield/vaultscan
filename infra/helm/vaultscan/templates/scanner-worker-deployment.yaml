@@ -57,6 +57,7 @@ spec:
       serviceAccountName: {{ include "vaultscan.fullname" $ }}-scanner-worker
       securityContext:
         {{- include "vaultscan.podSecurityContext" $ | nindent 8 }}
+      {{- include "vaultscan.podTopologyConstraints" (dict "app.kubernetes.io/name" $.Chart.Name "app.kubernetes.io/instance" $.Release.Name "app.kubernetes.io/component" "scanner-worker") | nindent 6 }}
       # Scanner workers process long-running scan jobs (nuclei runs
       # can be 5+ minutes). 120s grace gives the worker time to stop
       # picking new work, finish anything in-flight, and emit the

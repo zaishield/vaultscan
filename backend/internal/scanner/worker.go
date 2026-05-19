@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -97,12 +98,24 @@ func (w *Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(w.poll)
 	defer ticker.Stop()
 	w.log.Info().Msg("scanner worker started")
+	const drainMarker = "/tmp/vaultscan-scanner-drain"
 	for {
 		select {
 		case <-ctx.Done():
 			w.log.Info().Msg("scanner worker shutting down")
 			return
 		case <-ticker.C:
+		}
+		// Drain marker: when the Helm preStop hook calls
+		// `scanner-worker --drain`, that command writes drainMarker
+		// (see cmd/scanner-worker/main.go). Honour it by skipping
+		// new claims; in-flight jobs continue to run until SIGTERM.
+		// Without this poll the preStop drain was a no-op and only
+		// SIGTERM signalled the worker — interrupting whatever was
+		// in flight.
+		if _, err := os.Stat(drainMarker); err == nil {
+			w.log.Debug().Msg("drain marker present, skipping claim tick")
+			continue
 		}
 		job, err := w.claimNext(ctx)
 		if err != nil {

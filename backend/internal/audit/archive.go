@@ -19,7 +19,6 @@
 package audit
 
 import (
-	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -32,7 +31,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/zaishield/vaultscan/backend/internal/logging"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
+
+// archiveLogger is the component-tagged child logger for the audit
+// archiver. Routed through logging.Component so level + env +
+// service labels match the rest of the process.
+var archiveLogger = logging.Component("audit-archive")
 
 // ArchiveStorage is the contract a backend implements. The evidence
 // package's Storage interface satisfies this; we redeclare locally
@@ -161,6 +168,18 @@ func (a *Archiver) RunOnce(ctx context.Context, actor *uuid.UUID) (int64, error)
 			tokenBytes = tok.Token
 			tsaSerial = tok.Serial
 			tsaURL = a.tsa.URL
+		} else {
+			// Don't fail the whole archive run on TSA outage — the
+			// archive's chain hash is still self-validating. BUT
+			// log loud + bump a metric so an operator sees sustained
+			// TSA failures before an auditor asks for a token weeks
+			// later and the on-call discovers it's been missing.
+			archiveLogger.Warn().
+				Err(err).
+				Str("op", "tsa.Timestamp").
+				Str("tsa_url", a.tsa.URL).
+				Msg("audit archive run could not obtain RFC3161 timestamp; row will be persisted without TSA proof")
+			observability.AuditTSAFailures.Inc()
 		}
 	}
 
@@ -347,8 +366,9 @@ func (a *Archiver) purgeOldArchives(ctx context.Context) error {
 // substitute. The real impls use os; we redeclare here as vars to
 // keep production behavior with minimal surface.
 
-// keep import live for tar — used by extended packagers down the road
-var _ = tar.NewReader
+// (The previous `var _ = tar.NewReader` keep-alive line and its
+// archive/tar import are gone — nothing in this file actually uses
+// tar, the comment-justified placeholder was vestigial.)
 
 // osMkdirAll + osWriteFile + lastSlash are file-scope vars so tests
 // can monkey-patch. Production assigns the real os.* funcs via init.

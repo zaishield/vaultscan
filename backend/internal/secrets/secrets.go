@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 )
 
 // Backend is the pluggable contract every secrets provider satisfies.
@@ -67,13 +68,19 @@ func (e EnvBackend) Put(_ context.Context, ref, value string) error {
 }
 
 // MemoryBackend is a goroutine-safe in-memory provider used by tests.
+// The map is guarded by mu — without it the doc-promised
+// "goroutine-safe" was a lie and concurrent Put/Get in tests would
+// race-flag under `go test -race`.
 type MemoryBackend struct {
+	mu    sync.RWMutex
 	store map[string]string
 }
 
 func NewMemoryBackend() *MemoryBackend { return &MemoryBackend{store: map[string]string{}} }
 
 func (m *MemoryBackend) Get(_ context.Context, ref string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	v, ok := m.store[ref]
 	if !ok {
 		return "", fmt.Errorf("secrets: ref %q not found", ref)
@@ -82,6 +89,8 @@ func (m *MemoryBackend) Get(_ context.Context, ref string) (string, error) {
 }
 
 func (m *MemoryBackend) Put(_ context.Context, ref, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.store[ref] = value
 	return nil
 }

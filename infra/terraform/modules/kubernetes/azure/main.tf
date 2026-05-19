@@ -60,6 +60,16 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   private_cluster_enabled = !var.cluster_endpoint_public_access
 
+  # When the API server endpoint is public, restrict to the operator
+  # IP allowlist. Wires the var.api_server_authorized_ip_ranges
+  # input that was previously declared but never plumbed through.
+  dynamic "api_server_access_profile" {
+    for_each = (var.cluster_endpoint_public_access && length(var.api_server_authorized_ip_ranges) > 0) ? [1] : []
+    content {
+      authorized_ip_ranges = var.api_server_authorized_ip_ranges
+    }
+  }
+
   tags = local.common_tags
 }
 

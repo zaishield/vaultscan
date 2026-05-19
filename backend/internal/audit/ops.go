@@ -469,12 +469,19 @@ type TimelineEvent struct {
 // for a specific tenant. Used by the legal-export bundle and by
 // incident-response tooling.
 func (s *Service) Timeline(ctx context.Context, tenantID uuid.UUID, since, until time.Time) ([]TimelineEvent, error) {
+	// Hard limit on Timeline result set. Without a cap, a caller (or
+	// compromised actor) requesting a multi-year window would
+	// stream the entire tenant's audit history into the API pod's
+	// heap — easy OOM. 100k rows is the documented upper bound;
+	// larger exports must use the keyset-paginated /audit/export
+	// path.
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, occurred_at, event, actor_id, actor_type,
 		       COALESCE(target_type,''), COALESCE(target_id,''), payload
 		  FROM audit_logs
 		 WHERE tenant_id=$1 AND occurred_at BETWEEN $2 AND $3
-		 ORDER BY occurred_at`, tenantID, since, until)
+		 ORDER BY occurred_at
+		 LIMIT 100000`, tenantID, since, until)
 	if err != nil {
 		return nil, err
 	}

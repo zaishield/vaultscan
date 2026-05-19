@@ -151,9 +151,19 @@ func (c *TSAClient) Timestamp(ctx context.Context, hash []byte) (*TimestampToken
 		}
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// 4 MiB cap. Commercial TSAs (DigiCert, Sectigo) routinely embed
+	// a full cross-cert chain that pushes past 1 MiB. The previous
+	// 1<<20 cap silently TRUNCATED valid responses; downstream DER
+	// parsing then failed with a confusing ASN.1 error instead of a
+	// "TSA response too large" signal. Reading cap+1 lets us
+	// distinguish "filled the buffer" from "fits in cap".
+	const tsaMaxBody = 4 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, tsaMaxBody+1))
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(body)) > tsaMaxBody {
+		return nil, fmt.Errorf("rfc3161: TSA response exceeds %d bytes; increase cap or check TSA config", tsaMaxBody)
 	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("rfc3161: TSA %s returned %d: %s",
@@ -196,7 +206,11 @@ type messageImprint struct {
 
 // buildTSReq DER-encodes a TimeStampReq (RFC 3161 §2.4.1) for sha256.
 func buildTSReq(hash []byte) ([]byte, error) {
-	nonce := new(big.Int).SetBytes(randomNonceBytes())
+	nonceBytes, err := randomNonceBytes()
+	if err != nil {
+		return nil, fmt.Errorf("rfc3161: nonce: %w", err)
+	}
+	nonce := new(big.Int).SetBytes(nonceBytes)
 	req := tsReq{
 		Version: 1,
 		MessageImprint: messageImprint{
@@ -213,10 +227,15 @@ func buildTSReq(hash []byte) ([]byte, error) {
 }
 
 // randomNonceBytes returns 8 random bytes (RFC 3161 recommends ≥64-bit).
-func randomNonceBytes() []byte {
+// rand.Read errors propagate — the previous swallow could have
+// returned an all-zero nonce on entropy stall, which a colluding
+// TSA could replay-attack.
+func randomNonceBytes() ([]byte, error) {
 	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return b
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 // ---- Response parsing ----------------------------------------------------

@@ -129,7 +129,7 @@ spec:
           expr: |
             sum(rate(vaultscan_integration_delivery_failures_total[5m]))
               / sum(rate(vaultscan_integration_delivery_failures_total[5m])
-                    + rate(vaultscan_integration_delivery_failures_total{outcome="ok"}[5m])) > 0.20
+                    + rate(vaultscan_integration_delivery_failures_total[5m])) > 0.20
           for: 10m
           labels:
             severity: warning
@@ -178,37 +178,38 @@ spec:
       rules:
         - record: vaultscan:api_request_success_ratio:5m
           expr: |
-            sum(rate(vaultscan_http_requests_total{status!~"5..",path!~"/livez|/healthz|/readyz"}[5m]))
+            sum(rate(vaultscan_http_requests_total{status!~"5..",route!~"/livez|/healthz|/readyz"}[5m]))
             /
-            clamp_min(sum(rate(vaultscan_http_requests_total{path!~"/livez|/healthz|/readyz"}[5m])), 0.01)
+            clamp_min(sum(rate(vaultscan_http_requests_total{route!~"/livez|/healthz|/readyz"}[5m])), 0.01)
 
         - record: vaultscan:api_request_success_ratio:28d
           expr: |
-            sum(rate(vaultscan_http_requests_total{status!~"5..",path!~"/livez|/healthz|/readyz"}[28d]))
+            sum(rate(vaultscan_http_requests_total{status!~"5..",route!~"/livez|/healthz|/readyz"}[28d]))
             /
-            clamp_min(sum(rate(vaultscan_http_requests_total{path!~"/livez|/healthz|/readyz"}[28d])), 0.01)
+            clamp_min(sum(rate(vaultscan_http_requests_total{route!~"/livez|/healthz|/readyz"}[28d])), 0.01)
 
         - record: vaultscan:api_request_latency_p95:5m
           expr: |
             histogram_quantile(0.95,
-              sum by (le, path) (rate(vaultscan_http_request_duration_seconds_bucket{path!~"/livez|/healthz|/readyz"}[5m])))
+              sum by (le, route) (rate(vaultscan_http_request_duration_seconds_bucket{route!~"/livez|/healthz|/readyz"}[5m])))
 
         - record: vaultscan:api_request_latency_p99:5m
           expr: |
             histogram_quantile(0.99,
-              sum by (le, path) (rate(vaultscan_http_request_duration_seconds_bucket{path!~"/livez|/healthz|/readyz"}[5m])))
+              sum by (le, route) (rate(vaultscan_http_request_duration_seconds_bucket{route!~"/livez|/healthz|/readyz"}[5m])))
 
         - record: vaultscan:scan_completion_ratio:1h
           expr: |
-            sum(increase(vaultscan_scan_jobs_completed_total{outcome="success"}[1h]))
+            sum(increase(vaultscan_scan_jobs_completed_total{status="succeeded"}[1h]))
             /
             clamp_min(sum(increase(vaultscan_scan_jobs_completed_total[1h])), 1)
 
-        - record: vaultscan:integration_delivery_success_ratio:1h
-          expr: |
-            (sum(increase(vaultscan_integration_delivery_failures_total{outcome="ok"}[1h])))
-            /
-            clamp_min(sum(increase(vaultscan_integration_delivery_failures_total[1h])), 1)
+        # NOTE: integration_delivery_success_ratio was previously
+        # defined here using a non-existent `outcome` label on
+        # vaultscan_integration_delivery_failures_total — the metric
+        # only counts FAILURES, so a success ratio cannot be computed
+        # from it. The rule is intentionally omitted until a paired
+        # `vaultscan_integration_delivery_attempts_total` is wired.
 
     # SLO burn-rate alerts. Two windows (fast + slow) on an
     # error-budget burn of 14.4× the 28-day target. Standard
@@ -219,9 +220,9 @@ spec:
           expr: |
             (1 - vaultscan:api_request_success_ratio:5m) > (14.4 * 0.001)
               and
-            (1 - sum(rate(vaultscan_http_requests_total{status!~"5..",path!~"/livez|/healthz|/readyz"}[1h]))
+            (1 - sum(rate(vaultscan_http_requests_total{status!~"5..",route!~"/livez|/healthz|/readyz"}[1h]))
                  /
-                 clamp_min(sum(rate(vaultscan_http_requests_total{path!~"/livez|/healthz|/readyz"}[1h])), 0.01))
+                 clamp_min(sum(rate(vaultscan_http_requests_total{route!~"/livez|/healthz|/readyz"}[1h])), 0.01))
               > (14.4 * 0.001)
           for: 2m
           labels:

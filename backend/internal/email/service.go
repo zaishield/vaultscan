@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	htmltemplate "html/template"
 	"text/template"
 
 	"github.com/google/uuid"
@@ -142,7 +143,13 @@ func (s *Service) Send(ctx context.Context, in SendInput) (*Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	bodyHTML, err := renderString("html", tmpl.BodyHTML, in.Vars)
+	// HTML body uses html/template (context-aware autoescape) so a
+	// finding title containing `<script>` is escaped before reaching
+	// the recipient's mail client. The previous text/template path
+	// emitted the raw bytes — an attacker who could influence template
+	// vars (e.g. finding title from an integration) could inject HTML
+	// into every email rendered with that template.
+	bodyHTML, err := renderHTMLString("html", tmpl.BodyHTML, in.Vars)
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +207,24 @@ func renderString(name, src string, vars map[string]any) (string, error) {
 	var buf strings.Builder
 	if err := t.Execute(&buf, vars); err != nil {
 		return "", fmt.Errorf("email: render %s: %w", name, err)
+	}
+	return buf.String(), nil
+}
+
+// renderHTMLString renders src as an html/template (RFC 7231 §3.1.1
+// HTML), applying context-aware autoescape. Use for any body that
+// will be interpreted as HTML by the recipient's mail client.
+func renderHTMLString(name, src string, vars map[string]any) (string, error) {
+	if src == "" {
+		return "", nil
+	}
+	t, err := htmltemplate.New(name).Parse(src)
+	if err != nil {
+		return "", fmt.Errorf("email: parse html %s: %w", name, err)
+	}
+	var buf strings.Builder
+	if err := t.Execute(&buf, vars); err != nil {
+		return "", fmt.Errorf("email: render html %s: %w", name, err)
 	}
 	return buf.String(), nil
 }

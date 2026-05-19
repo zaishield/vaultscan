@@ -114,6 +114,15 @@ var (
 		},
 		[]string{"role"},
 	)
+	// AuditTSAFailures: count of audit-archive runs that proceeded
+	// without an RFC 3161 timestamp because the TSA call failed.
+	// A SOC2 auditor expects every archive run to carry a TSA token;
+	// a non-zero rate over 1h is operator-actionable (DNS, cert,
+	// rate limit, TSA outage).
+	AuditTSAFailures = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "vaultscan_audit_tsa_failures_total",
+		Help: "Audit archive runs persisted without a TSA proof because the timestamp authority call failed.",
+	})
 	EmergencyStopSLAms = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "vaultscan_emergency_stop_sla_ms",
 		Help:    "Time from operator request to agent ack, in milliseconds.",
@@ -199,6 +208,7 @@ func init() {
 		AuditChainBreaks,
 		EvidenceIntegrityFailures,
 		AESGCMSeals,
+		AuditTSAFailures,
 		AgentsByStatus,
 		IntegrationDeliveryFailures,
 		IntegrationDeadLetterDepth,

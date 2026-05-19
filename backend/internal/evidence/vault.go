@@ -172,12 +172,19 @@ func NewVault(pool *pgxpool.Pool, a *audit.Service, b *eventbus.Bus, masterKeyB6
 		}
 	}
 	key, err := base64.StdEncoding.DecodeString(masterKeyB64)
-	if err != nil || len(key) < 32 {
-		return nil, fmt.Errorf("evidence: master key must decode to >=32 bytes")
+	if err != nil {
+		return nil, fmt.Errorf("evidence: master key not valid base64: %w", err)
+	}
+	// EXACT 32 bytes required. The previous "len(key) < 32" + key[:32]
+	// silently truncated a longer key (e.g. an operator who base64'd
+	// 33 bytes encrypted everything under only the first 32 — silent
+	// mis-key). Refuse out of caution rather than guess intent.
+	if len(key) != 32 {
+		return nil, fmt.Errorf("evidence: master key must decode to EXACTLY 32 bytes (got %d)", len(key))
 	}
 	v := &Vault{
 		pool: pool, audit: a, bus: b,
-		masterKey: key[:32],
+		masterKey: key,
 		rootDir:   filepath.Join(os.TempDir(), "vaultscan-evidence"),
 		urlTTL:    5 * time.Minute,
 	}

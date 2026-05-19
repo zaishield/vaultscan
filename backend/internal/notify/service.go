@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -239,7 +240,10 @@ func (t *SMTPTransport) Send(_ context.Context, cfg ChannelConfig, msg Message) 
 			return "", err
 		}
 		defer c.Close()
-		if err := c.StartTLS(&tls.Config{ServerName: t.Host}); err != nil {
+		// TLS 1.2 floor — STARTTLS without MinVersion would happily
+		// negotiate down to TLS 1.0/1.1. Some SMTP relays still offer
+		// those; we refuse to use them for credential transport.
+		if err := c.StartTLS(&tls.Config{ServerName: t.Host, MinVersion: tls.VersionTLS12}); err != nil {
 			return "", err
 		}
 		if err := c.Auth(auth); err != nil {
@@ -263,7 +267,14 @@ func (t *SMTPTransport) Send(_ context.Context, cfg ChannelConfig, msg Message) 
 		}
 		return "smtp 250 ok", c.Quit()
 	}
-	// Plain submission (lab / dev only).
+	// Plain submission — refused in production (would ship PLAIN
+	// SMTP auth credentials over the wire in cleartext). Dev/lab
+	// only. The production guard ensures VAULTSCAN_ENV=production
+	// is propagated; we check at call time so tests that flip env
+	// late still get the right behavior.
+	if env := strings.ToLower(os.Getenv("VAULTSCAN_ENV")); env == "production" || env == "prod" {
+		return "", errors.New("smtp: refusing plaintext submission in production — set UseTLS=true on the transport")
+	}
 	if err := smtp.SendMail(addr, auth, from, []string{to}, buf.Bytes()); err != nil {
 		return "", err
 	}

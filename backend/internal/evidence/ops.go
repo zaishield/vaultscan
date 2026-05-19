@@ -221,13 +221,40 @@ func (v *Vault) rewrapOne(ctx context.Context, tenantID, evidenceID uuid.UUID, o
 	if err != nil {
 		return fmt.Errorf("rewrap: encrypt: %w", err)
 	}
-	if err := v.storage.Put(ctx, stTenant, stObject, append(nonce, ct...)); err != nil {
-		return fmt.Errorf("rewrap: put: %w", err)
+	// Order matters for failure semantics:
+	//   1. Open a Postgres tx and UPDATE encryption_key_version
+	//      to newVer.
+	//   2. storage.Put the new ciphertext.
+	//   3. If Put fails → ROLLBACK → DB stays at oldVer, blob bytes
+	//      in storage remain at oldVer. Re-runs of rewrap will pick
+	//      this row up again.
+	//   4. Commit.
+	//
+	// Residual risk: storage.Put succeeds and the COMMIT fails (rare,
+	// requires a conn drop). The row stays at oldVer in DB but blob
+	// is at newVer in storage; the next read tries oldDEK and fails.
+	// Operators see an integrity_verified=false signal in custody;
+	// a re-run of rewrap recovers (Read → recompute over newDEK on
+	// next pass). We log this loud so on-call sees the rare window.
+	tx, err := v.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("rewrap: begin tx: %w", err)
 	}
-	if _, err := v.pool.Exec(ctx,
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx,
 		`UPDATE finding_evidence SET encryption_key_version = $2 WHERE id = $1`,
 		evidenceID, newVer); err != nil {
 		return fmt.Errorf("rewrap: update row: %w", err)
+	}
+	if err := v.storage.Put(ctx, stTenant, stObject, append(nonce, ct...)); err != nil {
+		return fmt.Errorf("rewrap: put: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		evidenceLogger.Error().Err(err).
+			Str("evidence_id", evidenceID.String()).
+			Int("new_version", newVer).
+			Msg("rewrap: storage.Put succeeded but tx.Commit failed — DB will be at old_version while blob is at new_version; next read may transiently fail until a follow-up rewrap pass corrects.")
+		return fmt.Errorf("rewrap: commit: %w", err)
 	}
 	_ = v.recordCustody(ctx, evidenceID, "rewrapped", nil, "system", nil, "", map[string]any{
 		"from_version": oldVer, "to_version": newVer,

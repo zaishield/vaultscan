@@ -49,6 +49,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zaishield/vaultscan/backend/internal/httputil"
 )
 
 // GCPCredentials carry the service-account JSON key fields needed for
@@ -74,9 +76,13 @@ type GCPAdapter struct {
 }
 
 func NewGCPAdapter(resolver GCPCredentialsResolver) *GCPAdapter {
+	c := httputil.NewClient(httputil.Options{Timeout: 30 * time.Second})
+	c.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	return &GCPAdapter{
 		Resolver:   resolver,
-		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		HTTPClient: c,
 		tokenByID:  map[string]cachedToken{},
 	}
 }

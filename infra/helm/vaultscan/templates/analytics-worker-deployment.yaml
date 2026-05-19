@@ -17,6 +17,7 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         {{- include "vaultscan.podSecurityContext" . | nindent 8 }}
+      {{- include "vaultscan.podTopologyConstraints" (dict "app.kubernetes.io/name" .Chart.Name "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/component" "analytics-worker") | nindent 6 }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}

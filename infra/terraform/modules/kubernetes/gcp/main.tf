@@ -56,6 +56,17 @@ module "gke" {
   horizontal_pod_autoscaling = true
   http_load_balancing        = true
 
+  # When the operator opts into a public endpoint, restrict it to
+  # the operator-curated IP allowlist. Without this wiring the
+  # docstring on var.master_authorized_networks_cidrs was a lie:
+  # public_access=true would expose the control plane to 0.0.0.0/0.
+  master_authorized_networks = length(var.master_authorized_networks_cidrs) > 0 ? [
+    for c in var.master_authorized_networks_cidrs : {
+      cidr_block   = c
+      display_name = "operator-allowlist"
+    }
+  ] : null
+
   node_pools = [
     {
       name               = "workers"

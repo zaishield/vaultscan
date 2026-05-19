@@ -249,7 +249,12 @@ func main() {
 			apiBase+"/api/v1/orchestrator/public-key", nil)
 		resp, err := internalClient.Do(req)
 		if err != nil {
-			writeJSON(w, 502, map[string]string{"error": "upstream api unreachable: " + err.Error()})
+			// Don't echo the underlying err to a (potentially
+			// compromised) agent — it leaks internal DNS/timeout
+			// detail. Log full err server-side; agent sees a
+			// generic 502.
+			log.Warn().Err(err).Msg("orchestrator public-key proxy: upstream unreachable")
+			writeJSON(w, 502, map[string]string{"error": "upstream api unreachable"})
 			return
 		}
 		defer resp.Body.Close()
@@ -273,12 +278,19 @@ func main() {
 			CertPEM     string `json:"cert_pem"`
 			Fingerprint string `json:"fingerprint"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, 400, map[string]string{"error": err.Error()})
+		// Cap enrollment body at 64 KiB. Token + cert PEM + fingerprint
+		// is comfortably under 8 KiB in practice; the 128 MiB global
+		// cap from middleware.MaxBodySize is too permissive for an
+		// unauthenticated endpoint. Without this, an attacker can
+		// stream a multi-MB body and burn gateway CPU through
+		// JSON parsing before Enroll runs the auth check.
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "bad enrollment payload"})
 			return
 		}
 		if err := agentSvc.Enroll(r.Context(), id, req.Token, req.CertPEM, req.Fingerprint); err != nil {
-			writeJSON(w, 401, map[string]string{"error": err.Error()})
+			log.Warn().Err(err).Str("agent_id", id.String()).Msg("enroll failed")
+			writeJSON(w, 401, map[string]string{"error": "enrollment refused"})
 			return
 		}
 		writeJSON(w, 200, map[string]string{"status": "enrolled"})
@@ -309,7 +321,8 @@ func main() {
 				DiskPercent: req.DiskPercent, RunningJobs: req.RunningJobs,
 				QueueDepth: req.QueueDepth, Version: req.Version, Payload: req.Payload,
 			}); err != nil {
-				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				log.Warn().Err(err).Str("agent_id", agentID.String()).Msg("heartbeat persist failed")
+				writeJSON(w, 500, map[string]string{"error": "heartbeat failed"})
 				return
 			}
 			writeJSON(w, 200, map[string]string{"status": "ack"})
@@ -320,7 +333,8 @@ func main() {
 			n, _ := strconv.Atoi(r.URL.Query().Get("max"))
 			out, err := agentSvc.PollJobs(r.Context(), agentID, n)
 			if err != nil {
-				writeJSON(w, 500, map[string]string{"error": err.Error()})
+				log.Warn().Err(err).Str("agent_id", agentID.String()).Msg("poll jobs failed")
+				writeJSON(w, 500, map[string]string{"error": "poll failed"})
 				return
 			}
 			writeJSON(w, 200, map[string]any{"items": out})

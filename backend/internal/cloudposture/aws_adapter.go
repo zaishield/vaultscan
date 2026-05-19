@@ -35,6 +35,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/zaishield/vaultscan/backend/internal/httputil"
 )
 
 // AWSCredentialsResolver returns the credentials for a given account.
@@ -51,12 +53,20 @@ type AWSAdapter struct {
 	HTTPClient  *http.Client
 }
 
-// NewAWSAdapter constructs an adapter with a default 30s HTTP timeout.
+// NewAWSAdapter constructs an adapter using the central httputil
+// client (timeouts, pool reuse, air-gap allowlist), with a
+// CheckRedirect that refuses redirects entirely — AWS service
+// endpoints don't redirect, so any 3xx from this surface is either
+// a misconfig or a hijack attempt.
 func NewAWSAdapter(homeRegion string, resolver AWSCredentialsResolver) *AWSAdapter {
+	c := httputil.NewClient(httputil.Options{Timeout: 30 * time.Second})
+	c.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	return &AWSAdapter{
 		HomeRegion: homeRegion,
 		Resolver:   resolver,
-		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		HTTPClient: c,
 	}
 }
 
