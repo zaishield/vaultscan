@@ -107,10 +107,19 @@ func Idempotency(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			// Insert in-flight row OR look up existing.
 			existing, inserted, err := claim(r.Context(), pool, tenantID, key, hash)
 			if err != nil {
-				// DB failure — fall back to running the handler so
-				// we don't 503 the whole API. Logs surface the failure
-				// via the standard request logger.
-				next.ServeHTTP(w, r)
+				// DB failure on the claim path defeats the
+				// at-most-once guarantee. Previous behaviour was to
+				// fall through to running the handler — that's
+				// fail-OPEN and silently turns idempotent calls into
+				// "execute multiple times if the DB hiccups", which
+				// is the exact opposite of what Idempotency-Key
+				// promises. Fail closed with 503 + a hint so the
+				// client retries when the claim store recovers.
+				idempotencyHits("claim_error")
+				w.Header().Set("Retry-After", "2")
+				writeJSONError(w, http.StatusServiceUnavailable,
+					"idempotency_store_unavailable",
+					"idempotency-key claim store is unavailable; retry shortly")
 				return
 			}
 			if !inserted {

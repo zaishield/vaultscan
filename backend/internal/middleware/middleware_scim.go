@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	authpkg "github.com/zaishield/vaultscan/backend/internal/auth"
+	"github.com/zaishield/vaultscan/backend/internal/db"
 	"github.com/zaishield/vaultscan/backend/internal/scimtokens"
 )
 
@@ -97,29 +98,24 @@ func SCIMTokenAuth(svc *scimtokens.Service) func(http.Handler) http.Handler {
 			}
 			ctx := context.WithValue(r.Context(), SCIMTenantCtxKey{}, tenantID)
 			ctx = authpkg.ContextWithIdentity(ctx, identity)
+			// Bind the tenant into the DB context too so the pool's
+			// BeforeAcquire hook engages RLS on every conn the
+			// downstream SCIMServer borrows. Without this, the
+			// SCIMServer's `WHERE tenant_id = $1` was the sole
+			// isolation; an accidental missing predicate on a future
+			// SCIM query would leak cross-tenant.
+			ctx = db.ContextWithTenantBinding(ctx, tenantID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
-// clientIPv4 extracts the request's source IP for the audit
-// trail. Same helper logic as the rest of the middleware (trusts
-// X-Forwarded-For only when a trusted-proxy chain is configured;
-// here we just take the first non-loopback hop).
+// clientIPv4 extracts the request's source IP for the audit trail.
+// Delegates to the shared ClientIP helper which honours the
+// TrustedProxyCIDRs allowlist — without that, an attacker can spoof
+// X-Forwarded-For directly and forge last_used_ip on SCIM tokens.
 func clientIPv4(r *http.Request) net.IP {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		for _, raw := range strings.Split(xff, ",") {
-			ip := net.ParseIP(strings.TrimSpace(raw))
-			if ip != nil && !ip.IsLoopback() {
-				return ip
-			}
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return net.ParseIP(host)
-	}
-	return nil
+	return ClientIP(r)
 }
 
 // TenantFromSCIMContext returns the tenant ID set by SCIMTokenAuth.

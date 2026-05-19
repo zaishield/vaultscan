@@ -75,6 +75,13 @@ type StartInput struct {
 	TicketRef    string        `json:"ticket_ref"`
 	Reason       string        `json:"reason"`
 	Duration     time.Duration `json:"duration"` // capped at MaxSessionDuration
+	// OperatorMFAVerified must be set true by the HTTP handler ONLY
+	// after RequireImpersonationMFA middleware has confirmed the
+	// operator completed step-up MFA. The previous design hardcoded
+	// true inside Start(), so any future internal caller (cron, sweeper,
+	// admin tool) would bypass MFA without realising it. Making this
+	// an explicit input removes the implicit trust.
+	OperatorMFAVerified bool `json:"-"`
 }
 
 type Service struct {
@@ -178,11 +185,13 @@ func (s *Service) Start(ctx context.Context, operator uuid.UUID, in StartInput) 
 
 	return &Session{
 		ID: id, OperatorID: operator, OperatorEmail: operatorEmail,
-		// The HTTP layer that calls Start() routes through
-		// RequireImpersonationMFA middleware, so by definition the
-		// operator has completed step-up MFA. Record that fact on the
-		// session for downstream consumers (impAdapter → JWT MFA claim).
-		OperatorMFAVerified: true,
+		// OperatorMFAVerified is provided by the caller (HTTP layer)
+		// who alone knows whether RequireImpersonationMFA actually
+		// passed. Service-layer Start() no longer auto-stamps true —
+		// any internal caller that doesn't set this gets MFA=false
+		// on the resulting impersonation token, forcing a step-up
+		// prompt on first sensitive action.
+		OperatorMFAVerified: in.OperatorMFAVerified,
 		TargetUserID: in.TargetUserID, TargetEmail: targetEmail,
 		TargetTenant: targetTenant, TicketRef: in.TicketRef, Reason: in.Reason,
 		StartedAt: now, ExpiresAt: expires,

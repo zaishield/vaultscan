@@ -157,6 +157,14 @@ func TenantScope(headerName string) func(http.Handler) http.Handler {
 // any non-pool-routed query (e.g. a raw *pgxpool.Conn already
 // acquired) sees the GUC immediately.
 func TenantBinding(pool *pgxpool.Pool) func(http.Handler) http.Handler {
+	// pool is retained on the signature for backward compat with
+	// callers/tests that still pass it; the pool's installed
+	// BeforeAcquire hook is the authoritative binder, so we don't
+	// need to touch the pool here. Removing the warmup avoids the
+	// short cross-tenant window where a freshly bound conn could
+	// be borrowed by an OTHER in-flight handler before this
+	// middleware's binding propagated to ctx.
+	_ = pool
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, _ := auth.FromContext(r.Context())
@@ -166,17 +174,7 @@ func TenantBinding(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			} else {
 				ctx = db.ContextWithoutTenantBinding(ctx)
 			}
-			r = r.WithContext(ctx)
-			// Best-effort warmup: prime one conn's GUC. The pool's
-			// BeforeAcquire is the authoritative binder; this is
-			// purely an optimisation for hot paths that issue many
-			// short queries on a single borrowed conn.
-			if id != nil && id.TenantID != nil {
-				_ = db.SetTenantContext(ctx, pool, *id.TenantID)
-			} else {
-				_ = db.ClearTenantContext(ctx, pool)
-			}
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

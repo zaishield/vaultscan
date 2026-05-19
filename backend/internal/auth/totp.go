@@ -319,6 +319,12 @@ func (m *MFAService) unwrapSecret(ctx context.Context, userID uuid.UUID) ([]byte
 	return m.open(wrapped)
 }
 
+// consumeRecoveryCode walks the user's recovery-code list looking for
+// a bcrypt match. Mirrors the scimtokens.Verify timing-oracle defence:
+// every non-empty slot is bcrypt-checked regardless of earlier hits,
+// so request latency doesn't leak which slot (if any) matched. Without
+// this an attacker timing failed-then-successful attempts could
+// learn the slot ordering.
 func (m *MFAService) consumeRecoveryCode(ctx context.Context, userID uuid.UUID, code string) error {
 	var raw []byte
 	if err := m.pool.QueryRow(ctx,
@@ -328,25 +334,32 @@ func (m *MFAService) consumeRecoveryCode(ctx context.Context, userID uuid.UUID, 
 	var hashes []string
 	_ = json.Unmarshal(raw, &hashes)
 	codeUpper := strings.ToUpper(strings.ReplaceAll(code, "-", ""))
+	matchedIdx := -1
 	for i, h := range hashes {
 		if h == "" {
 			continue
 		}
-		if bcrypt.CompareHashAndPassword([]byte(h), []byte(codeUpper)) == nil {
-			// Consume by zeroing the hash + decrementing the counter.
-			hashes[i] = ""
-			out, _ := json.Marshal(hashes)
-			_, _ = m.pool.Exec(ctx, `
-				UPDATE user_mfa
-				   SET recovery_codes = $2::jsonb,
-				       recovery_codes_left = GREATEST(recovery_codes_left - 1, 0),
-				       last_verified_at = now()
-				 WHERE user_id = $1`,
-				userID, out)
-			return nil
+		// Always run bcrypt on every non-empty slot. Take only the
+		// first match's index — total bcrypt cost is N×slot-cost
+		// regardless of input, so slot position is no longer
+		// observable via latency.
+		if bcrypt.CompareHashAndPassword([]byte(h), []byte(codeUpper)) == nil && matchedIdx == -1 {
+			matchedIdx = i
 		}
 	}
-	return errors.New("mfa: code invalid")
+	if matchedIdx == -1 {
+		return errors.New("mfa: code invalid")
+	}
+	hashes[matchedIdx] = ""
+	out, _ := json.Marshal(hashes)
+	_, _ = m.pool.Exec(ctx, `
+		UPDATE user_mfa
+		   SET recovery_codes = $2::jsonb,
+		       recovery_codes_left = GREATEST(recovery_codes_left - 1, 0),
+		       last_verified_at = now()
+		 WHERE user_id = $1`,
+		userID, out)
+	return nil
 }
 
 func (m *MFAService) newRecoveryCodes() ([]string, []string, error) {

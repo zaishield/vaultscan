@@ -200,15 +200,20 @@ func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 	}
 	if claims.PartnerID != "" {
 		pid, err := uuid.Parse(claims.PartnerID)
-		if err == nil {
-			id.PartnerID = &pid
+		if err != nil {
+			// Previously silently dropped — a forged token with a
+			// malformed partner_id would land with PartnerID=nil and
+			// fall through to platform-scope handlers. Refuse.
+			return nil, fmt.Errorf("auth: bad partner_id: %w", err)
 		}
+		id.PartnerID = &pid
 	}
 	if claims.TenantID != "" {
 		tid, err := uuid.Parse(claims.TenantID)
-		if err == nil {
-			id.TenantID = &tid
+		if err != nil {
+			return nil, fmt.Errorf("auth: bad tenant_id: %w", err)
 		}
+		id.TenantID = &tid
 	}
 	if v.pool != nil {
 		if err := v.loadPermissions(ctx, id); err != nil {

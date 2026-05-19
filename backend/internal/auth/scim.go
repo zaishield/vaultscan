@@ -171,7 +171,15 @@ func (s *SCIMServer) createUser(w http.ResponseWriter, r *http.Request) {
 		s.scimError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	users, _ := s.queryUsers(r.Context(), *id.TenantID, "userName eq \""+email+"\"")
+	// Look up the freshly-minted user BY ID instead of interpolating
+	// the email into a SCIM filter string. The previous form
+	// `userName eq "<email>"` concatenated the email verbatim into
+	// the filter grammar: an email containing a `"` (RFC 5321 allows
+	// quoted-local-part) corrupted the filter and at minimum read
+	// the wrong row, at worst leaked an arbitrary tenant row to an
+	// IdP that controls the userName value.
+	users, _ := s.queryUsers(r.Context(), *id.TenantID,
+		fmt.Sprintf("id eq %q", newID.String()))
 	if len(users) > 0 {
 		writeSCIM(w, http.StatusCreated, users[0])
 		return
@@ -280,21 +288,33 @@ func (s *SCIMServer) patchUser(w http.ResponseWriter, r *http.Request, userID uu
 			case "name.formatted":
 				var v string
 				_ = json.Unmarshal(op.Value, &v)
-				_, _ = s.pool.Exec(r.Context(),
+				if _, err := s.pool.Exec(r.Context(),
 					`UPDATE users SET full_name=$1 WHERE id=$2 AND tenant_id=$3`,
-					v, userID, *id.TenantID)
+					v, userID, *id.TenantID); err != nil {
+					s.scimError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
 			}
 		case "remove":
 			switch path {
 			case "active":
 				// Removing "active" in SCIM ≈ deactivate the user.
-				_, _ = s.pool.Exec(r.Context(),
+				// Errors propagate as 500 so a deprovisioning PATCH
+				// for a leaver doesn't silently return 200 while the
+				// row stays active.
+				if _, err := s.pool.Exec(r.Context(),
 					`UPDATE users SET status='deactivated' WHERE id=$1 AND tenant_id=$2`,
-					userID, *id.TenantID)
+					userID, *id.TenantID); err != nil {
+					s.scimError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
 			case "name.formatted":
-				_, _ = s.pool.Exec(r.Context(),
+				if _, err := s.pool.Exec(r.Context(),
 					`UPDATE users SET full_name=NULL WHERE id=$1 AND tenant_id=$2`,
-					userID, *id.TenantID)
+					userID, *id.TenantID); err != nil {
+					s.scimError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
 			}
 		default:
 			s.scimError(w, http.StatusBadRequest,

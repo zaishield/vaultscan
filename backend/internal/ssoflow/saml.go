@@ -198,16 +198,46 @@ func samlAttributesToMap(a *auth.SAMLAssertion) map[string][]string {
 // finishFlow drops the JWT in a session cookie + redirects to the
 // caller's return_to. The portal reads the cookie via a /auth/exchange
 // endpoint that swaps it for an in-memory JWT (kept out of XSS reach).
+//
+// Open-redirect defence: returnTo MUST be a same-origin path. The
+// state cookie carries operator-controlled state, but `return_to`
+// originates from the `/saml/start` query string and survives the
+// IdP round-trip — without the same-origin check, a phisher who
+// got a victim to click `/sso/start?return_to=https://evil.example/`
+// could harvest the freshly-issued session cookie via the Referer
+// header (and worse: the SAML/OIDC flow would otherwise complete
+// successfully, so the victim sees no warning).
 func (s *Service) finishFlow(w http.ResponseWriter, r *http.Request, returnTo, jwtTok string) {
 	http.SetCookie(w, &http.Cookie{
 		Name: "vaultscan_session", Value: jwtTok, Path: "/",
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 		MaxAge: 12 * 60 * 60, // 12h, matches JWT exp
 	})
-	if returnTo == "" {
+	if returnTo == "" || !sameOriginPath(returnTo) {
 		returnTo = "/"
 	}
 	http.Redirect(w, r, returnTo, http.StatusFound)
+}
+
+// sameOriginPath returns true iff p is a relative path (starts with
+// "/" and is NOT protocol-relative "//host"). Absolute URLs and
+// schemeless host-relative values are refused. This is the same
+// shape Google/Okta/Auth0 use for their post-auth return_to gates.
+func sameOriginPath(p string) bool {
+	if len(p) < 1 || p[0] != '/' {
+		return false
+	}
+	// Reject "//evil.example/path" — RFC 3986 network-path reference,
+	// which browsers treat as absolute against the current scheme.
+	if len(p) >= 2 && p[1] == '/' {
+		return false
+	}
+	// Reject "/\evil.example" — some old browsers treat backslash like
+	// forward-slash in URL parsing. Defense in depth.
+	if len(p) >= 2 && p[1] == '\\' {
+		return false
+	}
+	return true
 }
 
 // respondFlowError uniformly handles the resolveTenant errors so we

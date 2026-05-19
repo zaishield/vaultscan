@@ -70,13 +70,23 @@ func (o Options) withDefaults() Options {
 // Callers should keep ONE instance and reuse it for the lifetime
 // of the process — the connection pool is what makes this
 // configuration worth using.
+//
+// Air-gap mode (VAULTSCAN_AIR_GAP=true): when set, the dialer's
+// Control hook rejects any IP not on VAULTSCAN_AIR_GAP_EGRESS_ALLOWLIST.
+// Every client constructed via NewClient inherits this gate; raw
+// http.DefaultClient / hand-rolled transports do NOT — that's
+// intentional, the lint rule forbids those.
 func NewClient(o Options) *http.Client {
 	o = o.withDefaults()
+	dialer := &net.Dialer{
+		Timeout:   o.DialTimeout,
+		KeepAlive: 30 * time.Second,
+	}
+	if AirGapEnabled() {
+		dialer.Control = airgapDialControl
+	}
 	tr := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   o.DialTimeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		DialContext: dialer.DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          o.MaxIdleConns,
 		MaxIdleConnsPerHost:   o.MaxIdleConnsPerHost,

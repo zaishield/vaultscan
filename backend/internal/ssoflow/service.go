@@ -410,12 +410,54 @@ func (s *Service) mapClaims(ctx context.Context, tenantID uuid.UUID,
 		PartnerID:  partnerID.String(),
 		TenantID:   tenantID.String(),
 		Roles:      roles,
-		// MFA is false on a fresh SSO mint — if the tenant's admin
-		// role requires MFA the user is prompted to complete TOTP
-		// before sensitive actions. SAML/OIDC IdPs that already
-		// asserted MFA via amr=mfa would set this true (TODO: parse).
-		MFA: false,
+		// MFA is honoured from the IdP's assertion. OIDC uses
+		// acr (auth context class) or amr (auth methods array);
+		// SAML uses AuthnContextClassRef. We look at the attribute
+		// bag that mapClaims received and accept the canonical
+		// values most IdPs emit. Users hitting an MFA-required
+		// admin role without an asserted MFA still get a step-up
+		// prompt — this only changes whether the FIRST sensitive
+		// action prompts.
+		MFA: ssoClaimsAssertedMFA(attrs),
 	}, nil
+}
+
+// ssoClaimsAssertedMFA scans the IdP-asserted attribute bag for the
+// canonical MFA signals. Returns true on any of:
+//   - amr contains "mfa"|"totp"|"hwk"|"otp"|"swk" (OIDC §2)
+//   - acr ∈ {"mfa", "loa2", "loa3", "phr", "phrh"} (Okta + ISO 29115)
+//   - AuthnContextClassRef contains "MultiFactorContract" or
+//     "TLSClient" (SAML common ref strings)
+//
+// The IdP's word is authoritative here: if the customer admin trusts
+// their IdP to enforce MFA, this honours that. The federation layer
+// has already validated the assertion's signature upstream.
+func ssoClaimsAssertedMFA(attrs map[string][]string) bool {
+	amrValues := map[string]bool{
+		"mfa": true, "totp": true, "hwk": true, "otp": true, "swk": true,
+	}
+	for _, v := range attrs["amr"] {
+		if amrValues[v] {
+			return true
+		}
+	}
+	acrValues := map[string]bool{
+		"mfa": true, "loa2": true, "loa3": true, "phr": true, "phrh": true,
+	}
+	for _, v := range attrs["acr"] {
+		if acrValues[v] {
+			return true
+		}
+	}
+	for _, v := range attrs["AuthnContextClassRef"] {
+		switch v {
+		case "urn:oasis:names:tc:SAML:2.0:ac:classes:MultiFactorContract",
+			"urn:oasis:names:tc:SAML:2.0:ac:classes:TLSClient",
+			"http://schemas.microsoft.com/claims/multipleauthn":
+			return true
+		}
+	}
+	return false
 }
 
 // issueJWT delegates to Verifier — RS256 in production with a

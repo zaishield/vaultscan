@@ -10,6 +10,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -322,10 +323,18 @@ func (v *OIDCVerifier) checkRevoked(ctx context.Context, id *Identity, claims jw
 }
 
 // isLocalJWKS allows http://localhost / http://127.0.0.1 JWKS URLs
-// (dev fixtures, integration tests with a stub IdP). Production
-// must use https — the production guard refuses to boot if
-// VAULTSCAN_KEYCLOAK_ISSUER resolves to localhost.
+// in DEV ONLY. Production refuses regardless of host — a misconfigured
+// production node that points jwks at localhost would otherwise let
+// an attacker-served local JWKS forge identities.
+//
+// We check VAULTSCAN_ENV at the moment refreshJWKS is called rather
+// than at NewOIDCVerifier construction so a test harness that flips
+// the env later still gets dev semantics.
 func isLocalJWKS(u string) bool {
+	env := strings.ToLower(os.Getenv("VAULTSCAN_ENV"))
+	if env == "production" || env == "prod" {
+		return false
+	}
 	return strings.HasPrefix(u, "http://localhost") ||
 		strings.HasPrefix(u, "http://127.0.0.1") ||
 		strings.HasPrefix(u, "http://[::1]")
