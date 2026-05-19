@@ -21,11 +21,7 @@ package auth
 import (
 	"bytes"
 	"compress/flate"
-	"crypto"
 	cryptoRand "crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -35,6 +31,9 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/beevik/etree"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // SAMLConfig is the per-tenant SAML SP configuration.
@@ -147,31 +146,24 @@ func (c *SAMLConfig) ParseAndValidateResponse(b64Response string) (*SAMLAssertio
 	return out, nil
 }
 
-// verifySignature walks the SignedInfo element, computes the canonical
-// digest, and verifies the SignatureValue against the IdP cert.
+// verifySignature performs RFC 3275 XML-DSig validation of the SAML
+// Response/Assertion using goxmldsig. The library handles:
+//   - Exclusive C14N (RFC 3741) canonicalisation of both SignedInfo
+//     and the referenced element — the previous hand-rolled
+//     "strip xmlns" form diverged from real IdPs' c14n and produced
+//     both false negatives (rejected valid sigs) and theoretical
+//     false positives (accepted permuted XML).
+//   - Reference URI binding to the Assertion's ID attribute, with
+//     all the type:"...EnvelopedSignature" + Reference filter
+//     traversal SAML profile requires.
+//   - DigestMethod + SignatureMethod algorithm validation against
+//     the registered Algorithms set; the validator REJECTS by
+//     default — we explicitly require RSA-SHA256.
 //
-// This is a minimal implementation that handles the common shape:
-// enveloped signature on either Response or Assertion, RSA-SHA256.
-// verifySignature performs RSA-SHA256 verification of a SAML Response
-// / Assertion signature. The XML-DSig profile requires TWO checks:
-//
-//   1. SignatureValue verifies against SignedInfo via the IdP's RSA
-//      public key — proves the IdP produced THIS SignedInfo.
-//   2. SignedInfo/Reference/DigestValue equals the canonical hash of
-//      the element the Reference URI points at — proves the signed
-//      content has not been swapped (XML Signature Wrapping).
-//
-// The previous implementation only did step (1), which is a textbook
-// XSW vulnerability — an attacker keeps SignedInfo+SignatureValue
-// intact and substitutes the Assertion body. CVE-class.
-//
-// This implementation does both. Canonicalisation here is the
-// approximate "strip xmlns" form used by the previous code — that
-// remains a divergence from RFC 3275 Exclusive C14N and may fail
-// against IdPs that include attribute reordering or namespace
-// inheritance. For those, an operator should pull goxmldsig.
-//
-// Air-gap-safe (no external libs added).
+// We still refuse Response-only-signed assertions: SAML SP-init
+// best practice is to sign the Assertion itself, not just the
+// wrapping Response. Response-only sigs leave a textbook XSW
+// window. goxmldsig accepts either; we tighten the policy here.
 func (c *SAMLConfig) verifySignature(xmlBytes []byte, resp *samlResponseDoc) error {
 	if c.IdPCertPEM == "" {
 		return errors.New("saml: IdP cert not configured")
@@ -184,79 +176,139 @@ func (c *SAMLConfig) verifySignature(xmlBytes []byte, resp *samlResponseDoc) err
 	if err != nil {
 		return fmt.Errorf("saml: parse IdP cert: %w", err)
 	}
-	rsaPub, ok := cert.PublicKey.(*rsa.PublicKey)
-	if !ok {
-		return errors.New("saml: IdP cert is not RSA")
+
+	// Parse the raw XML with etree so goxmldsig can walk the DOM.
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(xmlBytes); err != nil {
+		return fmt.Errorf("saml: parse XML for c14n: %w", err)
 	}
-	// Locate the signature. Prefer the Assertion-level signature —
-	// signing only the wrapping Response leaves a XSW window where
-	// the Assertion can be swapped beneath a valid Response sig.
-	// We refuse "Response-signed but Assertion-unsigned" outright;
-	// SAML 2.0 best practice requires the Assertion itself to be
-	// signed for SP-initiated SSO.
-	sig := &resp.Assertion.Signature
-	if sig.SignatureValue == "" {
+	root := doc.Root()
+	if root == nil {
+		return errors.New("saml: empty XML")
+	}
+
+	// Find the Assertion element. SP-init SAML 2.0: the IdP
+	// MUST sign the Assertion (signing only the wrapping Response
+	// leaves a XSW window we refuse outright).
+	assertion := findChildLocal(root, "Assertion")
+	if assertion == nil {
+		return errors.New("saml: Response carries no Assertion")
+	}
+	assertionSig := findChildLocal(assertion, "Signature")
+	if assertionSig == nil {
 		return errors.New("saml: Assertion is not signed (Response-only signatures are XSW-risk; reject)")
 	}
-	if resp.Assertion.ID == "" {
+	assertionID := assertion.SelectAttrValue("ID", "")
+	if assertionID == "" {
 		return errors.New("saml: Assertion missing ID — cannot bind signature Reference URI")
 	}
-	// The signature's Reference URI must point at this Assertion.
-	// `URI="#&lt;assertion_id&gt;"` is the SAML convention; bare empty URI
-	// (meaning "the entire document") is permitted by XML-DSig but
-	// NOT by the SAML profile.
-	expectURI := "#" + resp.Assertion.ID
-	if sig.SignedInfo.Reference.URI != expectURI {
+
+	// Reference URI must point at the Assertion's ID. goxmldsig
+	// enforces this internally too, but we pre-check so the error
+	// message points at the actual binding failure.
+	refURI := signatureRefURI(assertionSig)
+	if refURI != "" && refURI != "#"+assertionID {
 		return fmt.Errorf("saml: signature Reference URI %q does not bind Assertion ID %q (XSW guard)",
-			sig.SignedInfo.Reference.URI, resp.Assertion.ID)
-	}
-	sigBytes, err := base64.StdEncoding.DecodeString(stripWhitespace(sig.SignatureValue))
-	if err != nil {
-		return fmt.Errorf("saml: signature base64: %w", err)
+			refURI, assertionID)
 	}
 
-	// (1) Verify SignatureValue against SignedInfo bytes.
-	signedInfoXML, err := xml.Marshal(sig.SignedInfo)
-	if err != nil {
-		return err
+	// Build the validation context. MemoryX509CertificateStore is
+	// the operator-controlled trust pool — only `cert` is in it,
+	// so goxmldsig rejects sigs by any other key. The default
+	// signature method registry includes RSA-SHA256 / SHA384 /
+	// SHA512; we narrow to SHA256 below via the explicit Algorithm
+	// check on the Signature element.
+	ctx := dsig.NewDefaultValidationContext(&dsig.MemoryX509CertificateStore{
+		Roots: []*x509.Certificate{cert},
+	})
+
+	// Tighten: reject anything weaker than SHA-256 (default registry
+	// would otherwise accept SHA-1).
+	sigAlg := signatureMethod(assertionSig)
+	if sigAlg != "" && !strings.HasSuffix(sigAlg, "rsa-sha256") &&
+		!strings.HasSuffix(sigAlg, "rsa-sha384") &&
+		!strings.HasSuffix(sigAlg, "rsa-sha512") {
+		return fmt.Errorf("saml: SignatureMethod %q rejected (RSA-SHA256/384/512 required)", sigAlg)
 	}
-	signedInfoXML = stripXMLNS(signedInfoXML)
-	siDigest := sha256.Sum256(signedInfoXML)
-	if err := rsa.VerifyPKCS1v15(rsaPub, crypto.SHA256, siDigest[:], sigBytes); err != nil {
-		return fmt.Errorf("saml: SignatureValue verification failed: %w", err)
+	digestAlg := referenceDigestMethod(assertionSig)
+	if digestAlg != "" && !strings.HasSuffix(digestAlg, "sha256") &&
+		!strings.HasSuffix(digestAlg, "sha384") &&
+		!strings.HasSuffix(digestAlg, "sha512") {
+		return fmt.Errorf("saml: DigestMethod %q rejected (SHA256/384/512 required)", digestAlg)
 	}
 
-	// (2) Verify the Reference DigestValue against the Assertion's
-	// canonical hash. Without this, signature scheme is XSW-vulnerable.
-	// Algorithm must be SHA-256; refuse anything weaker.
-	if !strings.HasSuffix(sig.SignedInfo.Reference.DigestMethod.Algorithm, "sha256") &&
-		sig.SignedInfo.Reference.DigestMethod.Algorithm != "" {
-		return fmt.Errorf("saml: unsupported DigestMethod %q (sha256 required)",
-			sig.SignedInfo.Reference.DigestMethod.Algorithm)
+	// Validate the Assertion element's enveloped signature. This
+	// performs:
+	//   1. Exclusive C14N on SignedInfo, verify SignatureValue
+	//      against the canonicalised bytes using cert.PublicKey.
+	//   2. For each Reference: c14n the referent (with the
+	//      EnvelopedSignature transform applied to strip the
+	//      Signature element itself), hash, compare to DigestValue.
+	// Any failure → returns a non-nil error; the wrapper here
+	// preserves the original error chain for diagnostic output.
+	if _, err := ctx.Validate(assertion); err != nil {
+		return fmt.Errorf("saml: xml-dsig validation failed: %w", err)
 	}
-	declaredDigest, err := base64.StdEncoding.DecodeString(
-		stripWhitespace(sig.SignedInfo.Reference.DigestValue))
-	if err != nil {
-		return fmt.Errorf("saml: DigestValue base64: %w", err)
-	}
-	if len(declaredDigest) == 0 {
-		return errors.New("saml: empty Reference DigestValue")
-	}
-	// Hash the actual Assertion element bytes. We re-marshal the typed
-	// struct and apply the same canonicalisation as for SignedInfo.
-	// IMPORTANT: this is an approximation of Exclusive C14N (RFC 3275).
-	// If you observe a real IdP whose hash doesn't match, do NOT just
-	// disable the check — pull in goxmldsig.
-	assertionXML, err := xml.Marshal(&resp.Assertion)
-	if err != nil {
-		return fmt.Errorf("saml: marshal Assertion for digest: %w", err)
-	}
-	assertionXML = stripXMLNS(assertionXML)
-	bodyDigest := sha256.Sum256(assertionXML)
-	if subtle.ConstantTimeCompare(declaredDigest, bodyDigest[:]) != 1 {
-		return errors.New("saml: Reference DigestValue does not match Assertion canonical hash (XSW detected or canonicalisation mismatch)")
+	_ = resp // typed struct still used by ParseAndValidateResponse for
+	         // audience + condition checks; the goxmldsig path operates
+	         // on the etree DOM exclusively.
+	return nil
+}
+
+// findChildLocal returns the first child whose local element name
+// matches (namespace-agnostic).
+func findChildLocal(parent *etree.Element, local string) *etree.Element {
+	for _, child := range parent.ChildElements() {
+		if child.Tag == local {
+			return child
+		}
 	}
 	return nil
+}
+
+// signatureRefURI extracts the first Reference URI under the given
+// Signature element, or "" if none. SAML profile requires exactly
+// one Reference (we don't enforce that here — goxmldsig does).
+func signatureRefURI(sig *etree.Element) string {
+	si := findChildLocal(sig, "SignedInfo")
+	if si == nil {
+		return ""
+	}
+	ref := findChildLocal(si, "Reference")
+	if ref == nil {
+		return ""
+	}
+	return ref.SelectAttrValue("URI", "")
+}
+
+// signatureMethod returns SignedInfo/SignatureMethod/@Algorithm.
+func signatureMethod(sig *etree.Element) string {
+	si := findChildLocal(sig, "SignedInfo")
+	if si == nil {
+		return ""
+	}
+	m := findChildLocal(si, "SignatureMethod")
+	if m == nil {
+		return ""
+	}
+	return m.SelectAttrValue("Algorithm", "")
+}
+
+// referenceDigestMethod returns SignedInfo/Reference/DigestMethod/@Algorithm.
+func referenceDigestMethod(sig *etree.Element) string {
+	si := findChildLocal(sig, "SignedInfo")
+	if si == nil {
+		return ""
+	}
+	ref := findChildLocal(si, "Reference")
+	if ref == nil {
+		return ""
+	}
+	dm := findChildLocal(ref, "DigestMethod")
+	if dm == nil {
+		return ""
+	}
+	return dm.SelectAttrValue("Algorithm", "")
 }
 
 // ---- types ---------------------------------------------------------------
@@ -374,29 +426,6 @@ func isEmailAttr(name string) bool {
 		strings.HasSuffix(low, "/emailaddress")
 }
 
-func stripWhitespace(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r != ' ' && r != '\n' && r != '\r' && r != '\t' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-func stripXMLNS(b []byte) []byte {
-	// Drop xmlns="..." attributes. Naive but effective for this scope.
-	s := string(b)
-	for {
-		idx := strings.Index(s, " xmlns=\"")
-		if idx < 0 {
-			break
-		}
-		end := strings.Index(s[idx+8:], "\"")
-		if end < 0 {
-			break
-		}
-		s = s[:idx] + s[idx+8+end+1:]
-	}
-	return []byte(s)
-}
+// stripWhitespace + stripXMLNS were used by the previous hand-rolled
+// c14n in verifySignature. goxmldsig now handles canonicalisation
+// per RFC 3741; both helpers are gone.

@@ -104,9 +104,45 @@ func TestParseAndValidateResponse_RejectsNoCert(t *testing.T) {
 	}
 }
 
-func TestStripWhitespace(t *testing.T) {
+// TestStripWhitespace removed — the helper it tested was replaced
+// by goxmldsig's c14n implementation.
+
+// TestSAMLSignedAssertion_RoundTrip generates a key + signed SAML
+// Assertion via goxmldsig, hands it to ParseAndValidateResponse,
+// and asserts the verifier accepts it. Catches any regression in
+// our Exclusive C14N wiring against the same library the IdPs we
+// integrate with use under the hood.
+func TestSAMLSignedAssertion_RoundTrip(t *testing.T) {
 	t.Parallel()
-	if got := stripWhitespace(" a  b\nc\r\nd "); got != "abcd" {
-		t.Errorf("got %q", got)
+	// Generate a 2048-bit RSA key + self-signed cert.
+	priv, certPEM := makeSAMLTestCert(t)
+	signedXML := signedSAMLResponse(t, priv, certPEM, "alice@example.com")
+
+	cfg := &SAMLConfig{
+		SPEntityID: "urn:vaultscan:sp:test-tenant",
+		IdPCertPEM: certPEM,
+	}
+	a, err := cfg.ParseAndValidateResponse(base64.StdEncoding.EncodeToString(signedXML))
+	if err != nil {
+		t.Fatalf("validate signed assertion: %v", err)
+	}
+	if a.Email != "alice@example.com" {
+		t.Errorf("expected email alice@example.com, got %q", a.Email)
+	}
+}
+
+// TestSAMLTamperedAssertion_RejectedByDigest mutates the signed
+// Assertion's NameID after signing; the validator MUST refuse.
+func TestSAMLTamperedAssertion_RejectedByDigest(t *testing.T) {
+	t.Parallel()
+	priv, certPEM := makeSAMLTestCert(t)
+	signedXML := signedSAMLResponse(t, priv, certPEM, "alice@example.com")
+	tampered := strings.Replace(string(signedXML), "alice@example.com",
+		"attacker@example.com", 1)
+
+	cfg := &SAMLConfig{SPEntityID: "urn:vaultscan:sp:test-tenant", IdPCertPEM: certPEM}
+	if _, err := cfg.ParseAndValidateResponse(base64.StdEncoding.EncodeToString(
+		[]byte(tampered))); err == nil {
+		t.Fatal("expected tampered Assertion to be rejected by digest mismatch")
 	}
 }
