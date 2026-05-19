@@ -349,12 +349,11 @@ func BuildTLSConfig(serverCertPEM, serverKeyPEM []byte, verifier *CertVerifier) 
 		ClientCAs:             verifier.IssuerPool(),
 		ClientAuth:            tls.RequireAndVerifyClientCert,
 		VerifyPeerCertificate: verifier.VerifyPeerCertificate,
-		// Lock cipher policy to modern AEAD only (Blueprint §13.5).
-		CipherSuites: []uint16{
-			tls.TLS_AES_128_GCM_SHA256,
-			tls.TLS_AES_256_GCM_SHA384,
-			tls.TLS_CHACHA20_POLY1305_SHA256,
-		},
+		// MinVersion=TLS 1.3 means CipherSuites is a no-op (tls.Config
+		// godoc: "list of enabled TLS 1.0–1.2 cipher suites"). Listing
+		// the TLS 1.3 AEAD identifiers here was a confused leftover
+		// from the days when we ran TLS 1.2. TLS 1.3 always negotiates
+		// from a fixed AEAD set. Field dropped.
 		PreferServerCipherSuites: true,
 	}, nil
 }

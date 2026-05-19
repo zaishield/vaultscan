@@ -9,9 +9,17 @@ terraform {
   }
 }
 
+# Database master password — rotate on token bump only.
+# Mirrors the AWS + GCP modules' pattern; see
+# modules/database/aws/main.tf for the operator-facing rotation
+# runbook.
 resource "random_password" "db" {
   length  = 32
   special = false
+
+  keepers = {
+    rotation_token = var.db_password_rotation_token
+  }
 }
 
 resource "azurerm_postgresql_flexible_server" "primary" {

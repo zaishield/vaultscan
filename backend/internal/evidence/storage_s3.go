@@ -38,6 +38,7 @@ type S3Storage struct {
 	endpoint       string  // https://s3.us-east-1.amazonaws.com or https://minio.local:9000
 	bucket         string
 	region         string
+	backendLabel   string  // operator-configured label surfaced via Name()
 	creds          awssig.Credentials
 	httpClient     *http.Client
 	forcePathStyle bool
@@ -53,6 +54,10 @@ type S3Config struct {
 	SessionToken    string  // optional (STS)
 	ForcePathStyle  bool    // default true (works with MinIO/AWS/Ceph)
 	HTTPClient      *http.Client
+	// BackendLabel surfaces via Storage.Name(). Operators set this
+	// to "minio" / "ceph" / "r2" so metrics tagged `backend=` match
+	// reality; defaults to "s3" when empty.
+	BackendLabel    string
 	// SSEHeader, if set, populates X-Amz-Server-Side-Encryption on PUT.
 	// "" disables; "AES256" enables SSE-S3; "aws:kms" enables SSE-KMS
 	// (requires SSEKMSKeyID).
@@ -77,10 +82,15 @@ func NewS3Storage(c S3Config) (*S3Storage, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	label := c.BackendLabel
+	if label == "" {
+		label = "s3"
+	}
 	return &S3Storage{
 		endpoint:       strings.TrimRight(c.Endpoint, "/"),
 		bucket:         c.Bucket,
 		region:         region,
+		backendLabel:   label,
 		creds:          awssig.Credentials{AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken},
 		httpClient:     httpClient,
 		forcePathStyle: c.ForcePathStyle,
@@ -88,7 +98,7 @@ func NewS3Storage(c S3Config) (*S3Storage, error) {
 	}, nil
 }
 
-func (s *S3Storage) Name() string { return "s3" }
+func (s *S3Storage) Name() string { return s.backendLabel }
 
 func (s *S3Storage) objectKey(tenantID, objectID uuid.UUID) string {
 	return fmt.Sprintf("tenants/%s/%s.enc", tenantID, objectID)

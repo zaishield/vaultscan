@@ -17,3 +17,8 @@ variable "private_dns_zone_id" { type = string; default = null }
 variable "enable_replica"      { type = bool;   default = false }
 variable "kubernetes_namespace" { type = string; default = "vaultscan" }
 variable "tags"                { type = map(string); default = {} }
+variable "db_password_rotation_token" {
+  type        = string
+  default     = "initial"
+  description = "Bump to rotate the DB master password; unchanged value keeps the current password."
+}

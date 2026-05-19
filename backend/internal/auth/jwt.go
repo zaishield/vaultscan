@@ -229,20 +229,6 @@ func (v *Verifier) IssueDevToken(c VaultscanClaims) (string, error) {
 	return tok.SignedString(v.sharedSecret)
 }
 
-// ImpersonationSession is the minimal shape IssueImpersonationToken
-// needs. Mirrors impersonation.Session to avoid importing that
-// package into auth (which would create a cycle).
-type ImpersonationSession struct {
-	ID           string
-	OperatorID   string
-	TargetUserID string
-	TargetEmail  string
-	TargetTenant string
-	TargetRoles  []string
-	PlatformID   string
-	PartnerID    string
-}
-
 // IssueImpersonationToken mints a short-lived JWT whose identity
 // claims reflect the TARGET user, with the impersonation session ID
 // + operator ID embedded so every downstream audit row attributes

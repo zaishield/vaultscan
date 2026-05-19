@@ -322,6 +322,9 @@ kyverno:
 # max_connections. Production deployments MUST enable this.
 pgbouncer:
   enabled: false
+  # Default is a moving tag for dev. Production overlays SHOULD pin
+  # to a digest (e.g. bitnami/pgbouncer@sha256:abc...) so a re-pull
+  # on pod restart can't drift to a different binary.
   image: bitnami/pgbouncer:1.22.1
   transaction:
     replicaCount: 2

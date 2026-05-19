@@ -335,15 +335,6 @@ type samlReference struct {
 	DigestValue string `xml:"DigestValue"`
 }
 
-// assertionWithID is what we match against signature Reference URI.
-// The Assertion's ID attribute (xsd:ID — required for SAML 2.0
-// Response/Assertion) is what the signature's Reference URI points
-// at as `#&lt;assertion-id&gt;`.
-type samlAssertionWithID struct {
-	XMLName xml.Name `xml:"Assertion"`
-	ID      string   `xml:"ID,attr"`
-}
-
 // ---- helpers -------------------------------------------------------------
 
 func samlID() string {

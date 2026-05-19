@@ -4,7 +4,6 @@ package secrets
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -73,6 +72,3 @@ func NewBackendFromConfig(cfg FactoryConfig) (Backend, error) {
 		return nil, fmt.Errorf("secrets: unknown backend %q (want: env|memory|openbao|infisical|awskms)", cfg.Backend)
 	}
 }
-
-// keep import live
-var _ = strconv.Atoi

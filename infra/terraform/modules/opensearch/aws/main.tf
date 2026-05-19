@@ -40,6 +40,36 @@ resource "aws_opensearch_domain" "this" {
   encrypt_at_rest { enabled = true }
   node_to_node_encryption { enabled = true }
 
+  # Publish all three slow-log + application-log streams to
+  # CloudWatch when an operator provides the log group ARNs.
+  # Without this, post-incident diagnosis is blind: queries that
+  # timed out, indexes that misbehaved, and ES_APPLICATION_LOGS
+  # never leave the cluster.
+  dynamic "log_publishing_options" {
+    for_each = var.search_slow_logs_arn != "" ? [1] : []
+    content {
+      log_type                 = "SEARCH_SLOW_LOGS"
+      cloudwatch_log_group_arn = var.search_slow_logs_arn
+      enabled                  = true
+    }
+  }
+  dynamic "log_publishing_options" {
+    for_each = var.index_slow_logs_arn != "" ? [1] : []
+    content {
+      log_type                 = "INDEX_SLOW_LOGS"
+      cloudwatch_log_group_arn = var.index_slow_logs_arn
+      enabled                  = true
+    }
+  }
+  dynamic "log_publishing_options" {
+    for_each = var.application_logs_arn != "" ? [1] : []
+    content {
+      log_type                 = "ES_APPLICATION_LOGS"
+      cloudwatch_log_group_arn = var.application_logs_arn
+      enabled                  = true
+    }
+  }
+
   domain_endpoint_options {
     enforce_https       = true
     tls_security_policy = "Policy-Min-TLS-1-2-PFS-2023-10"

@@ -12,3 +12,10 @@ variable "volume_size_gb" { type = number; default = 100 }
 variable "subnet_ids"        { type = list(string) }
 variable "security_group_ids" { type = list(string) }
 variable "tags"              { type = map(string); default = {} }
+
+# CloudWatch log group ARNs for OpenSearch's three log streams.
+# Set non-empty to enable per-stream publication; empty (default)
+# leaves the stream silent (matches the previous behaviour).
+variable "search_slow_logs_arn"  { type = string; default = "" }
+variable "index_slow_logs_arn"   { type = string; default = "" }
+variable "application_logs_arn"  { type = string; default = "" }

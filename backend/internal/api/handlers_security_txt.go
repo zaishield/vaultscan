@@ -44,31 +44,30 @@ func securityTxtHandler(s *Services) http.HandlerFunc {
 	if preflang == "" {
 		preflang = "en"
 	}
-	// RFC 9116 requires the Expires field. Use 12 months from boot
-	// — the operator should redeploy with a fresh string at least
-	// annually. Format: ISO 8601 with timezone.
-	expires := time.Now().UTC().Add(12 * 30 * 24 * time.Hour).Format(time.RFC3339)
-
-	body := fmt.Sprintf(
-		"Contact: %s\n"+
-			"Expires: %s\n"+
-			"Encryption: %s\n"+
-			"Preferred-Languages: %s\n"+
-			"Policy: %s\n"+
-			"Hiring: %s\n"+
-			"Acknowledgments: %s\n"+
-			"Canonical: %s/.well-known/security.txt\n",
-		contact,
-		expires,
-		policy+"/pgp",
-		preflang,
-		policy,
-		hiring,
-		ack,
-		s.Cfg.APIPublicURL(),
-	)
-
 	return func(w http.ResponseWriter, r *http.Request) {
+		// RFC 9116 requires the Expires field. Compute it per-request
+		// (12 months from now) so a long-lived pod doesn't end up
+		// serving an expired security.txt — the previous boot-time
+		// computation would expire if a pod ran for >12 months.
+		expires := time.Now().UTC().Add(12 * 30 * 24 * time.Hour).Format(time.RFC3339)
+		body := fmt.Sprintf(
+			"Contact: %s\n"+
+				"Expires: %s\n"+
+				"Encryption: %s\n"+
+				"Preferred-Languages: %s\n"+
+				"Policy: %s\n"+
+				"Hiring: %s\n"+
+				"Acknowledgments: %s\n"+
+				"Canonical: %s/.well-known/security.txt\n",
+			contact,
+			expires,
+			policy+"/pgp",
+			preflang,
+			policy,
+			hiring,
+			ack,
+			s.Cfg.APIPublicURL(),
+		)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		_, _ = w.Write([]byte(body))

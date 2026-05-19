@@ -92,6 +92,7 @@ resource "aws_db_instance" "primary" {
   allocated_storage        = var.allocated_storage_gb
   storage_type             = "gp3"
   storage_encrypted        = true
+  kms_key_id               = var.kms_key_id != "" ? var.kms_key_id : null
   db_name                  = "vaultscan"
   username                 = "vaultscan"
   password                 = random_password.db.result

@@ -33,6 +33,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -438,13 +439,15 @@ func portRangeIncludes(single string, list []string, port int) bool {
 	return false
 }
 
+// atoiOrZero converts s to int; any parse failure (including
+// negative numbers, since strconv.Atoi accepts a leading '-') yields
+// 0. Used for parsing CIDR port-range strings where 0 is a safe
+// "no match" sentinel. Wrapper around strconv.Atoi rather than a
+// hand-rolled loop.
 func atoiOrZero(s string) int {
-	n := 0
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0
-		}
-		n = n*10 + int(c-'0')
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0
 	}
 	return n
 }

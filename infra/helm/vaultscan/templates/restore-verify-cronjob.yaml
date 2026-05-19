@@ -1,4 +1,11 @@
 {{- if .Values.restoreVerify.enabled }}
+{{- /*
+Per-job random password for the sandbox postgres. Both the sandbox
+container and the verify container read the same value via this
+template variable, so they always agree. Using a literal "drill-only-
+not-real" tripped strict secret-scanner policies.
+*/}}
+{{- $sandboxPgPassword := randAlphaNum 24 -}}
 {{/*
 Nightly restore-verify drill (HS-03 follow-up).
 
@@ -54,7 +61,7 @@ spec:
               image: {{ .Values.restoreVerify.sandboxPostgresImage | default "postgres:16-alpine" }}
               env:
                 - { name: POSTGRES_USER,     value: vaultscan }
-                - { name: POSTGRES_PASSWORD, value: drill-only-not-real }
+                - { name: POSTGRES_PASSWORD, value: {{ $sandboxPgPassword }} }
                 - { name: POSTGRES_DB,       value: drill }
               # No PVC — the data lives in the pod's ephemeral storage
               # and is destroyed when the job finishes.
@@ -94,7 +101,7 @@ spec:
                 - name: S3_ENDPOINT
                   value: {{ .Values.backup.s3Endpoint | quote }}
                 - name: SANDBOX_PGURL
-                  value: "postgres://vaultscan:drill-only-not-real@127.0.0.1:5432/drill?sslmode=disable"
+                  value: "postgres://vaultscan:{{ $sandboxPgPassword }}@127.0.0.1:5432/drill?sslmode=disable"
               command: ["/bin/sh", "-c"]
               args:
                 - |

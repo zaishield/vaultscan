@@ -380,12 +380,15 @@ func canonicalActorID(id *uuid.UUID) string {
 	return id.String()
 }
 
-// canonicalString collapses an empty-or-nil-equivalent string to "".
-// Used for user_agent which can be NULL in the DB (no header sent) or
-// empty (header sent with empty value). Both must hash the same.
-func canonicalString(s string) string {
-	return s
-}
+// canonicalString is the canonical form of a user-agent (or any
+// optional string) used inside the chain-hash material. NULL-vs-
+// empty equivalence is already enforced upstream by derefStr (NULL
+// → ""), so this function is intentionally an identity pass-through:
+// the wrapper exists as a stable hook in case a future canonical
+// rule (CR/LF strip, control-char strip) needs to be added without
+// invalidating every historical chain row. Don't change the body
+// without bumping chain_hash_version.
+func canonicalString(s string) string { return s }
 
 // equal is retained as a thin wrapper over bytes.Equal so callers
 // can keep their `equal(a, b)` call sites without dragging the

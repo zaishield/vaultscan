@@ -30,3 +30,8 @@ variable "db_password_rotation_token" {
   default     = "initial"
   description = "Bump to rotate the DB master password; unchanged value keeps the current password."
 }
+variable "kms_key_id" {
+  type        = string
+  default     = ""
+  description = "Optional CMK ARN for RDS storage_encrypted. Empty = use the AWS-managed default key (shared with other AWS services in the account). Production deployments that want true key-control should pass a customer-managed key here."
+}
