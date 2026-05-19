@@ -216,6 +216,9 @@ func main() {
 	retestSvc := retesting.New(pool.Pool, auditSvc, bus, findSvc, orch)
 	reportSvc := reporting.New(pool.Pool, brand, vault, auditSvc, bus)
 	intSvc := integrations.New(pool.Pool, bus, auditSvc)
+	// Wire the vault as the outbound HMAC unwrapper so Test/Send can
+	// retrieve the migration 0069 encrypted-at-rest signing secret.
+	intSvc.OutboundWrapper = vault
 	// Bounded worker pool for outbound deliveries. Replaces the prior
 	// `go s.deliver(...)` fan-out which (a) was unbounded and (b) used
 	// context.Background() so SIGTERM killed in-flight calls mid-DLQ-write.

@@ -296,12 +296,38 @@ func (v *OIDCVerifier) checkRevoked(ctx context.Context, id *Identity, claims jw
 		return errors.New("oidc: token revoked (issued before min_iat)")
 	}
 
-	// Lockout check.
+	// Lockout check — tenant-scoped when the token asserts a tenant.
+	//
+	// The token's `sub` is operator-trust input: a forged Keycloak
+	// token whose sub UUID collides with an unrelated user in a
+	// DIFFERENT tenant must NOT bypass that other user's lockout.
+	// When id.TenantID is set, we require the users row to have
+	// matching tenant_id; when NOT set (platform-tier token), we
+	// allow tenant_id IS NULL (platform user). A row that doesn't
+	// match → fail closed, the token's sub doesn't represent a
+	// real user in the asserted tenant.
 	var locked *time.Time
+	var foundTenant *uuid.UUID
 	err = v.pool.QueryRow(ctx,
-		`SELECT locked_until FROM users WHERE id=$1`, id.UserID).Scan(&locked)
-	if err != nil && !errors.Is(err, pgxNoRows) {
+		`SELECT locked_until, tenant_id FROM users WHERE id=$1`, id.UserID).
+		Scan(&locked, &foundTenant)
+	if err != nil {
+		if errors.Is(err, pgxNoRows) {
+			return errors.New("oidc: token sub does not match any user row")
+		}
 		return fmt.Errorf("oidc: lockout lookup failed: %w", err)
+	}
+	// Bind the user row's tenant to the token's tenant claim.
+	if id.TenantID != nil {
+		if foundTenant == nil || *foundTenant != *id.TenantID {
+			return errors.New("oidc: token tenant_id does not match the user's tenant binding")
+		}
+	} else {
+		// Platform-tier token: only accept when the user is also
+		// platform-tier (tenant_id IS NULL on the row).
+		if foundTenant != nil {
+			return errors.New("oidc: platform-tier token cannot impersonate a tenant-scoped user")
+		}
 	}
 	if locked != nil && time.Now().Before(*locked) {
 		return fmt.Errorf("oidc: account locked until %s", locked.Format(time.RFC3339))

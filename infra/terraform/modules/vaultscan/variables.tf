@@ -53,3 +53,19 @@ variable "helm_value_overrides" {
   description = "Inline YAML strings appended to the helm release values list."
   default     = []
 }
+
+# Rotation tokens for the in-module secrets. Same pattern as the
+# database modules: bump the token to mint a fresh secret on next
+# apply; leave it untouched and the existing secret persists across
+# applies.
+variable "jwt_rotation_token" {
+  type        = string
+  default     = "initial"
+  description = "Bump to rotate VAULTSCAN_JWT_SECRET; unchanged value keeps the existing secret."
+}
+
+variable "evidence_key_rotation_token" {
+  type        = string
+  default     = "initial"
+  description = "Bump to rotate VAULTSCAN_EVIDENCE_MASTER_KEY; unchanged value keeps the existing key."
+}

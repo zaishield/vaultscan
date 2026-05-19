@@ -34,6 +34,16 @@ type Service struct {
 	audit  *audit.Service
 	client *http.Client
 
+	// OutboundWrapper is the vault-backed unwrap helper used to
+	// retrieve the outbound HMAC signing secret from the
+	// integrations.outbound_hmac_secret_encrypted column (migration
+	// 0069). Set this from cmd/api/main.go to s.Vault so Test/Send
+	// can decrypt the secret. nil = legacy-only mode (config.hmac_secret
+	// JSONB path).
+	OutboundWrapper interface {
+		UnwrapBlob(ctx context.Context, blob []byte) ([]byte, error)
+	}
+
 	// MaxAttempts is the maximum total deliveries (incl. the initial one)
 	// before an event is parked in the DLQ. Production default 5; tests
 	// can lower it to keep the suite snappy.
@@ -240,9 +250,16 @@ func (s *Service) Test(ctx context.Context, integrationID uuid.UUID) (*TestResul
 		return &TestResult{Error: err.Error()}, nil
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if secret, ok := config["hmac_secret"].(string); ok {
+	// Prefer the encrypted-at-rest secret (migration 0069); fall
+	// back to legacy plaintext config["hmac_secret"] for un-migrated
+	// integrations. SetOutboundHMACSecret moves a tenant to the
+	// encrypted form on the next operator edit.
+	if secret, _ := s.outboundHMACSecret(ctx, integrationID, s.OutboundWrapper); secret != "" {
 		req.Header.Set("X-Vaultscan-Signature",
 			"sha256="+hexDigest(hmac.New(sha256.New, []byte(secret)), body))
+	} else if legacy, ok := config["hmac_secret"].(string); ok && legacy != "" {
+		req.Header.Set("X-Vaultscan-Signature",
+			"sha256="+hexDigest(hmac.New(sha256.New, []byte(legacy)), body))
 	}
 	resp, err := s.client.Do(req)
 	latency := int(time.Since(start).Milliseconds())
@@ -431,9 +448,13 @@ func (s *Service) deliver(ctx context.Context, integrationID uuid.UUID, itype, n
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
-		if secret, ok := config["hmac_secret"].(string); ok {
+		// See Test() for the same encrypted-preferred lookup.
+		if secret, _ := s.outboundHMACSecret(ctx, integrationID, s.OutboundWrapper); secret != "" {
 			req.Header.Set("X-Vaultscan-Signature",
 				"sha256="+hexDigest(hmac.New(sha256.New, []byte(secret)), body))
+		} else if legacy, ok := config["hmac_secret"].(string); ok && legacy != "" {
+			req.Header.Set("X-Vaultscan-Signature",
+				"sha256="+hexDigest(hmac.New(sha256.New, []byte(legacy)), body))
 		}
 		// Wrap the actual upstream call in the per-integration
 		// circuit breaker. When the breaker is open the call

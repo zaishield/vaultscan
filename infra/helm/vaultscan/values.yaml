@@ -156,6 +156,24 @@ cronRunner:
   podDisruptionBudget:
     enabled: true
     minAvailable: 1
+  # audit-archive volume. Enable when VAULTSCAN_AUDIT_ARCHIVE_ENABLED=true
+  # is set in the API config — without a writable mount the
+  # cron-runner's audit_archive_sweep job EROFS-fails against the
+  # read-only root FS and silently no-ops every tick.
+  #
+  # Storage backend:
+  #   - default: auto-create a ReadWriteOnce PVC sized `size`
+  #     against the cluster default StorageClass.
+  #   - existingClaim: name of a pre-created PVC (operator-managed).
+  #   - volumeSource: a raw volume spec (nfs, hostPath, emptyDir for
+  #     dev) merged verbatim into the pod spec.
+  auditArchive:
+    enabled: false
+    mountPath: /var/lib/vaultscan/audit-archive
+    size: 20Gi
+    storageClassName: ""        # cluster default when empty
+    existingClaim: ""
+    volumeSource: {}
 
 # ----- Scanner Worker (Blueprint §12) --------------------------------------
 # One Deployment per region. Each pod claims dispatched external-plane

@@ -76,8 +76,31 @@ spec:
           resources: {{- toYaml .Values.cronRunner.resources | nindent 12 }}
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
+            {{- if .Values.cronRunner.auditArchive.enabled }}
+            - { name: audit-archive, mountPath: {{ .Values.cronRunner.auditArchive.mountPath | default "/var/lib/vaultscan/audit-archive" | quote }} }
+            {{- end }}
       volumes:
         - { name: tmp, emptyDir: { sizeLimit: 256Mi } }
+        {{- if .Values.cronRunner.auditArchive.enabled }}
+        # audit-archive volume. The audit_archive_sweep cron job
+        # writes nightly DER bundles + TSA tokens here before
+        # uploading to long-term storage. Without this mount the
+        # writes EROFS-fail against the read-only root FS and the
+        # archiver tick is silently a no-op.
+        # storage:
+        #   - persistentVolumeClaim (default below) — backed by the
+        #     cluster default StorageClass; survives pod restarts so
+        #     a sweep interrupted by a deploy can resume.
+        #   - operator can override with an explicit volume by
+        #     setting cronRunner.auditArchive.volumeSource.
+        - name: audit-archive
+          {{- with .Values.cronRunner.auditArchive.volumeSource }}
+          {{- toYaml . | nindent 10 }}
+          {{- else }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.cronRunner.auditArchive.existingClaim | default (printf "%s-audit-archive" (include "vaultscan.fullname" .)) | quote }}
+          {{- end }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -99,6 +122,27 @@ spec:
   selector: {{- include "vaultscan.componentSelector" (dict "root" . "component" "cron-runner") | nindent 4 }}
   ports:
     - { name: admin, port: 9091, targetPort: admin }
+{{- if and .Values.cronRunner.auditArchive.enabled (not .Values.cronRunner.auditArchive.existingClaim) (not .Values.cronRunner.auditArchive.volumeSource) }}
+---
+# PVC for the cron-runner audit-archive volume. Auto-created when
+# cronRunner.auditArchive.enabled=true AND neither existingClaim
+# nor volumeSource is set. Operators with an existing claim or a
+# different volume backend (NFS, hostPath for single-node dev)
+# override via those values.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-audit-archive
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "cron-runner" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.cronRunner.auditArchive.size | default "20Gi" | quote }}
+  {{- with .Values.cronRunner.auditArchive.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}
 {{- if .Values.cronRunner.podDisruptionBudget.enabled }}
 ---
 apiVersion: policy/v1

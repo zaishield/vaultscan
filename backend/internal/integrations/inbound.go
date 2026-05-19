@@ -35,6 +35,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -288,4 +289,83 @@ func (s *Service) SetSigningSecret(ctx context.Context, integrationID uuid.UUID,
 		       updated_at = now()
 		 WHERE id = $1`, integrationID, enc, version)
 	return err
+}
+
+// SetOutboundHMACSecret stores the outbound webhook HMAC signing
+// key in encrypted form (migration 0069). Mirrors SetSigningSecret
+// for inbound. Empty plaintext clears the column (disables outbound
+// signing for this integration).
+//
+// The plaintext is also wiped from the integrations.config JSONB
+// column so a future LIST or a DB dump no longer surfaces it.
+func (s *Service) SetOutboundHMACSecret(ctx context.Context, integrationID uuid.UUID, plaintext string, wrapper interface {
+	WrapBytes(ctx context.Context, blob []byte) ([]byte, int, error)
+}) error {
+	if plaintext == "" {
+		_, err := s.pool.Exec(ctx, `
+			UPDATE integrations
+			   SET outbound_hmac_secret_encrypted = NULL,
+			       outbound_hmac_key_version = NULL,
+			       config = config - 'hmac_secret',
+			       updated_at = now()
+			 WHERE id = $1`, integrationID)
+		return err
+	}
+	if wrapper == nil {
+		return errors.New("integrations: SetOutboundHMACSecret requires a non-nil wrapper")
+	}
+	enc, version, err := wrapper.WrapBytes(ctx, []byte(plaintext))
+	if err != nil {
+		return fmt.Errorf("integrations: wrap outbound hmac secret: %w", err)
+	}
+	_, err = s.pool.Exec(ctx, `
+		UPDATE integrations
+		   SET outbound_hmac_secret_encrypted = $2,
+		       outbound_hmac_key_version = $3,
+		       config = config - 'hmac_secret',
+		       updated_at = now()
+		 WHERE id = $1`, integrationID, enc, version)
+	return err
+}
+
+// outboundHMACSecret returns the plaintext outbound HMAC signing
+// secret for an integration, preferring the encrypted column
+// (migration 0069) and falling back to the legacy JSONB
+// config.hmac_secret for tenants not yet migrated.
+//
+// wrapper is the same shape SetSigningSecret accepts so callers
+// can pass evidence.Vault. nil wrapper means "encrypted column is
+// unreachable; only legacy fallback is in play".
+func (s *Service) outboundHMACSecret(ctx context.Context, integrationID uuid.UUID, wrapper interface {
+	UnwrapBlob(ctx context.Context, blob []byte) ([]byte, error)
+}) (string, error) {
+	var (
+		enc []byte
+		ver *int
+		cfg []byte
+	)
+	err := s.pool.QueryRow(ctx, `
+		SELECT outbound_hmac_secret_encrypted, outbound_hmac_key_version, config
+		  FROM integrations WHERE id = $1`, integrationID).
+		Scan(&enc, &ver, &cfg)
+	if err != nil {
+		return "", err
+	}
+	if len(enc) > 0 && wrapper != nil {
+		plain, err := wrapper.UnwrapBlob(ctx, enc)
+		if err != nil {
+			return "", fmt.Errorf("integrations: unwrap outbound hmac: %w", err)
+		}
+		return string(plain), nil
+	}
+	// Legacy fallback: config.hmac_secret. The next
+	// SetOutboundHMACSecret call migrates this row to the encrypted
+	// column AND strips the JSONB key.
+	var config map[string]any
+	if err := json.Unmarshal(cfg, &config); err == nil {
+		if s, ok := config["hmac_secret"].(string); ok {
+			return s, nil
+		}
+	}
+	return "", nil
 }
