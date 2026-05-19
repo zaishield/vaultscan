@@ -487,6 +487,7 @@ func (v *Vault) wrapWithAAD(plain, aad []byte) ([]byte, error) {
 		return nil, err
 	}
 	ct := gcm.Seal(nil, nonce, plain, aad)
+	observability.AESGCMSeals.WithLabelValues("master-kek").Inc()
 	return append(nonce, ct...), nil
 }
 
@@ -578,7 +579,9 @@ func encryptWithDEK(dek, plain []byte) (ct, nonce []byte, err error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, nil, err
 	}
-	return gcm.Seal(nil, nonce, plain, nil), nonce, nil
+	out := gcm.Seal(nil, nonce, plain, nil)
+	observability.AESGCMSeals.WithLabelValues("tenant-dek").Inc()
+	return out, nonce, nil
 }
 
 func decryptWithDEK(dek, ct, nonce []byte) ([]byte, error) {

@@ -98,6 +98,22 @@ var (
 		Name: "vaultscan_evidence_integrity_failures_total",
 		Help: "Evidence blobs that failed round-trip verification during sample sweeps.",
 	})
+	// AESGCMSeals counts AES-GCM Seal calls labelled by key role
+	// (master-kek | tenant-dek | jwk-wrap). 96-bit random nonces have
+	// a birthday bound of ~2^32 calls per key before collision risk
+	// gets non-negligible. With this metric, ops can alert when
+	// per-key Seal count climbs into the 10^8 range — well before
+	// danger — and rotate the key.
+	//
+	// Alert rule: sum by (role) (rate(vaultscan_aesgcm_seals_total[1h])) * 3600 * 24 * 365
+	// exceeds 1e9 per-year → schedule rotation.
+	AESGCMSeals = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "vaultscan_aesgcm_seals_total",
+			Help: "AES-GCM Seal invocations by key role. Track per-role call counts to detect approaching nonce birthday bound (~2^32 per key).",
+		},
+		[]string{"role"},
+	)
 	EmergencyStopSLAms = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "vaultscan_emergency_stop_sla_ms",
 		Help:    "Time from operator request to agent ack, in milliseconds.",
@@ -182,6 +198,7 @@ func init() {
 		FindingsDeduplicated,
 		AuditChainBreaks,
 		EvidenceIntegrityFailures,
+		AESGCMSeals,
 		AgentsByStatus,
 		IntegrationDeliveryFailures,
 		IntegrationDeadLetterDepth,

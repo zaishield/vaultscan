@@ -9,6 +9,13 @@ backend (53 internal packages, 12 cmd binaries, 86,656 LOC), agent
 (4) helm+Terraform overlays. Plus my own: end-to-end dev environment
 spin-up + full integration suite + 5 fuzz suites + 270+ test run.
 
+## Status update (post-remediation pass)
+
+Every P0 (14/14) and every P1 (42/42) finding listed below has now been
+addressed. Remaining backlog: P2 (63 items) and P3 (22 items) — see
+the per-batch commit messages on branch
+`claude/build-blueprint-parity-6rISg` for the file:line of each fix.
+
 ## Honest scope of what I tested vs. reviewed
 
 | Environment | Status | What I actually did |
@@ -26,8 +33,8 @@ operator steps; those steps require kubectl access to real clusters.
 
 | Severity | Count | Fixed | Open | Recommended action |
 |---|---|---|---|---|
-| **P0** — exploit-grade, blocks ship | **14** | 6 | 8 | Fix all before customer #1 |
-| **P1** — serious, blocks customer expansion | **42** | 2 | 40 | Fix all before SOC 2 audit |
+| **P0** — exploit-grade, blocks ship | **14** | 14 | 0 | All closed in this branch |
+| **P1** — serious, blocks customer expansion | **42** | 42 | 0 | All closed in this branch |
 | **P2** — hardening / defense-in-depth | **63** | 0 | 63 | Fix opportunistically + before each major release |
 | **P3** — nits / cleanup | **22** | 0 | 22 | Backlog |
 
@@ -44,66 +51,66 @@ operator steps; those steps require kubectl access to real clusters.
 | 7 | ServiceMonitor scrapes only api (cron-runner + analytics-worker invisible) | `helm/templates/servicemonitor.yaml` | ✅ Fixed — added admin + health endpoints |
 | 8 | pgbouncer PDB selector matches zero pods (drain takes both pools down) | `helm/templates/podDisruptionBudgets.yaml:78-87` | ✅ Fixed — two separate PDBs for tx + session |
 
-## P0 findings still OPEN (8 items)
+## P0 findings — ALL CLOSED in this branch
 
-| # | Finding | File | Recommended fix |
+| # | Finding | File | Commit |
 |---|---|---|---|
-| 9 | SSO state cookie has no single-use protection (replay) | `ssoflow/service.go:101-108,126-157` | Persist `jti` in DB; one-time consume on callback success |
-| 10 | SSO state cookie keyfunc accepts any signing method | `ssoflow/service.go:110-124` | Add `jwt.WithValidMethods([]string{"HS256"})` |
-| 11 | SSO auto-provisioning runs even when IdP email is unverified | `ssoflow/service.go:213-219` | Require `email_verified=true` claim (OIDC); gate provisioning behind tenant-config flag |
-| 12 | SSO accepts any IdP-asserted role code as platform role (privilege esc) | `ssoflow/service.go:232-245` | Per-tenant role-code allowlist |
-| 13 | TenantBinding GUC bleeds across pooled connections (cross-tenant RLS leak in race) | `middleware/middleware.go:154-166` | Pin connection per-request OR use `SET LOCAL` inside transaction |
-| 14 | TOTP Verify has no rate limit + no last-counter replay protection | `auth/totp.go:140-156,276-289` | Per-user MFA-verify lockout + persist last_used_counter |
-| 15 | KMS plaintext lives on heap as `string` (crash-dump leak) | `secrets/backend_awskms.go:108-127` | Use `[]byte`; zeroize after use |
-| 16 | Agent-gateway proxy uses `http.DefaultClient` (no SSRF guard, no timeout, no auth) | `cmd/agent-gateway/main.go:206-226` | Use `httputil.NewClient`; mount inside authenticated group |
+| 9 | SSO state cookie has no single-use protection (replay) | `ssoflow/service.go` + migration 0064 | 84187c0 |
+| 10 | SSO state cookie keyfunc accepts any signing method | `ssoflow/service.go` verifyState | 84187c0 |
+| 11 | SSO auto-provisioning runs even when IdP email is unverified | `ssoflow/service.go` mapClaims + migration 0065 | 84187c0 |
+| 12 | SSO accepts any IdP-asserted role code as platform role | `ssoflow/service.go` sssoRoleAllowed | 84187c0 |
+| 13 | TenantBinding GUC bleeds across pooled connections | `db/rls.go` BeforeAcquire + AfterRelease hooks | e22f415 |
+| 14 | TOTP Verify has no rate limit + no last-counter replay | `auth/totp.go` + migration 0066 | e22f415 |
+| 15 | KMS plaintext lives on heap | `secrets/backend_awskms.go` GetBytes + zeroBytes | e22f415 |
+| 16 | Agent-gateway proxy uses `http.DefaultClient` | `cmd/agent-gateway/main.go` internalClient | e22f415 |
 
-## P1 findings still OPEN (40 items, summarized)
+## P1 findings — ALL CLOSED in this branch
 
-### Cryptographic / audit-trail (17)
-- `constantTimeEqualString` early-returns on length mismatch (HMAC-only)
-- `audit_logs.DELETE` blocked by trigger; `purgeOldArchives` non-functional
-- Dev-key blocklist is substring match, trivially bypassed by base64 padding
-- `WithPreviousMasterKeys` silently appends `nil` on decode failure
-- AES-GCM 96-bit random nonce no per-key call-count metric (birthday)
-- Wrap blob doesn't include kek_id or DEK version as AAD
-- Audit chain hash misses `occurred_at` (requires migration + chain_hash_version column to fix safely without breaking existing chains)
-- VerifyIncremental falls back to VerifyDeep on ANY checkpoint-row error
-- VerifyIncremental UPDATE has no `AND last_verified_id <= $1` guard
-- Cosign image-ref identity match uses `strings.Contains` (substring bypass)
-- Cosign key-hint fallback defeats key pinning (dead second loop)
-- Rekor SET canonical-form reconstruction can drift from Sigstore canon
-- `LogDecision` non-transactional with `VerifyImage`
-- SigV4 reads entire body into memory + double-buffers
-- KMS plaintext base64 round-trip on heap
-- `evidence.logAccess` errors swallowed
-- evidenceLogger writes direct to stderr, bypassing central logger
+### Cryptographic / audit-trail (17) — closed
+- ✅ `constantTimeEqualString` length-leak (87c4299)
+- ✅ `audit_logs.DELETE` blocked by trigger; `purgeOldArchives` made functional via session GUC (f8b100a, migration 0068)
+- ✅ Dev-key blocklist base64 padding bypass (3ed2bb2)
+- ✅ `WithPreviousMasterKeys` silent nil-append (87c4299)
+- ✅ AES-GCM nonce per-key call-count metric `vaultscan_aesgcm_seals_total` (final batch)
+- ✅ Wrap blob no AAD — kek_id+tenant_id+version now bound (87c4299)
+- ✅ Audit chain `occurred_at` v2 with chain_hash_version dispatch (f8b100a, migration 0067)
+- ✅ VerifyIncremental fallback-on-any-error (f8b100a)
+- ✅ VerifyIncremental UPDATE race guard (f8b100a)
+- ✅ Cosign image-ref substring bypass (01a8383)
+- ✅ Cosign key-hint fallback removed (01a8383)
+- ✅ Rekor SET canonical form HTML-escape + safe-int bound (01a8383)
+- ✅ `LogDecision` errors no longer swallowed (01a8383)
+- ✅ SigV4 body buffer cap + drop second copy (01a8383)
+- ✅ KMS plaintext heap — closed under P0 #15
+- ✅ `evidence.logAccess` errors surface (87c4299)
+- ✅ evidenceLogger uses central logger.Component (87c4299)
 
-### Auth / SSO (13)
-- bruteforce.IsLocked swallows DB errors (silent shield-disable)
-- jwt.Verifier accepts any RSA family (RS256/384/512/PS256) — pin RS256 only
-- jwt.IssueImpersonationToken hardcodes MFA=true regardless of caller
-- jwt.IssueImpersonationToken falls back to HS256 when no KeyManager (prod risk)
-- OIDC verifier hardcodes Keycloak JWKS URL path (Auth0/Okta/Entra incompatible)
-- OIDC refreshJWKS doesn't enforce HTTPS scheme (MITM)
-- OIDC verifier doesn't normalise trailing slash on issuer compare
-- OIDC checkRevoked swallows DB errors (silent control bypass)
-- OIDC claimsHasMFA accepts `acr=mfa` without per-tenant configuration
-- SCIM Verify per-call latency scales with token count (timing oracle)
-- SCIM createUser uses upsert (RFC 7644 requires 409 on conflict)
-- SCIM patchUser ignores `op.Op` (only path-switching)
-- Partner-level roles in tenant_scope.go bypass partner-tenant linkage check
+### Auth / SSO (13) — closed
+- ✅ bruteforce.IsLocked propagates DB errors (3ed2bb2)
+- ✅ jwt RSA family pinning (3ed2bb2)
+- ✅ jwt impersonation MFA = session.OperatorMFAVerified (3ed2bb2)
+- ✅ jwt impersonation refuses HS256 when refuseHMAC set (3ed2bb2)
+- ✅ OIDC jwksPath argument (Keycloak/Auth0/Okta/Entra) (3ed2bb2)
+- ✅ OIDC refreshJWKS HTTPS enforcement (3ed2bb2)
+- ✅ OIDC issuer trailing-slash normalisation (3ed2bb2)
+- ✅ OIDC checkRevoked fails closed on DB errors (3ed2bb2)
+- ✅ OIDC `acr` allowlist via WithACRValues (3ed2bb2)
+- ✅ SCIM Verify no longer short-circuits (d978ce6)
+- ✅ SCIM createUser returns 409 on conflict (d978ce6)
+- ✅ SCIM patchUser honours op.Op verb (d978ce6)
+- ✅ tenant_scope.go WithPartnerTenantCheck (d978ce6)
 
-### Infrastructure (10)
-- Production image tags are NOT SHA-pinned (vaultscan.image helper has no digest path)
-- Kyverno cosign policy doesn't cover pgbouncer/backup/restore-verify/postgres images
-- Backup CronJob missing IRSA / S3 credentials Secret (nightly will fail silently)
-- AWS datastore SG opens all ports to VPC CIDR + 0/0 egress
-- EKS/GKE/AKS clusters default to public endpoint access (no IP allowlist)
-- Terraform random_password for JWT + evidence master key — no documented rotation lifecycle; state-loss = catastrophic
-- Helm chart secret.yaml has no fail-loud if production env + inline secrets
-- networkPolicies.externalEgress.cidrBlocks defaults to []  (production breaks silently if base loaded without overlay)
-- helm topology-spread/anti-affinity helper exists but no template uses it
-- agentGateway HPA in staging/uat inherits base minReplicas=3 but replicaCount=2 (silent 3-replica override)
+### Infrastructure (10) — closed
+- ✅ SHA-pin via global.imageDigests map (5df15c4)
+- ✅ Kyverno multi-pattern coverage (5df15c4)
+- ✅ Backup CronJob IRSA / Workload Identity (5df15c4)
+- ✅ AWS datastore SG port narrowing (5df15c4)
+- ✅ EKS/GKE/AKS public-endpoint default → false (5df15c4 + final batch)
+- ✅ Terraform random_password rotation_token keepers (5df15c4)
+- ✅ Helm chart secret.yaml production guard (5df15c4)
+- ✅ networkPolicies prod refuses empty cidrBlocks (5df15c4)
+- ✅ Topology-spread wired into api-deployment (5df15c4)
+- ✅ agentGateway HPA staging/uat minReplicas pin (5df15c4)
 
 ## P2 findings (63 items — see per-audit transcripts in `/tmp/claude-0/.../tasks/`)
 

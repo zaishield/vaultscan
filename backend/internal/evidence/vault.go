@@ -26,6 +26,7 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 	"github.com/zaishield/vaultscan/backend/internal/eventbus"
 	"github.com/zaishield/vaultscan/backend/internal/models"
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 type Vault struct {
@@ -537,7 +538,9 @@ func (v *Vault) encrypt(plain []byte) (ciphertext, nonce []byte, err error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, nil, err
 	}
-	return gcm.Seal(nil, nonce, plain, nil), nonce, nil
+	out := gcm.Seal(nil, nonce, plain, nil)
+	observability.AESGCMSeals.WithLabelValues("master-kek-legacy").Inc()
+	return out, nonce, nil
 }
 
 func (v *Vault) decrypt(ciphertext, nonce []byte) ([]byte, error) {

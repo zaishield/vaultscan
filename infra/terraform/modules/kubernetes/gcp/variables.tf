@@ -52,8 +52,15 @@ variable "release_channel" {
 }
 
 variable "cluster_endpoint_public_access" {
+  description = "Whether the GKE control plane is reachable from the public internet. Default FALSE — production GKE goes through Cloud NAT + Private Service Connect or a bastion. Flip true ONLY paired with master_authorized_networks (variable below)."
   type    = bool
-  default = true
+  default = false
+}
+
+variable "master_authorized_networks_cidrs" {
+  description = "When cluster_endpoint_public_access = true, the operator IP allowlist. Empty list with public_access=true is rejected — fail loud rather than expose the control plane to 0.0.0.0/0."
+  type    = list(string)
+  default = []
 }
 
 variable "node_machine_type" {
