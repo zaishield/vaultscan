@@ -35,6 +35,8 @@ type Config struct {
 	ClientID       string            `json:"client_id,omitempty"`
 	ClientSecretSet bool             `json:"client_secret_set"`
 	ClaimMapping   map[string]string `json:"claim_mapping"`
+	AllowAutoProvision bool          `json:"allow_auto_provision"`
+	AllowedRoleCodes []string        `json:"allowed_role_codes"`
 	LastTestedAt   *time.Time        `json:"last_tested_at,omitempty"`
 	LastTestOK     *bool             `json:"last_test_ok,omitempty"`
 	LastTestError  string            `json:"last_test_error,omitempty"`
@@ -52,6 +54,17 @@ type SetInput struct {
 	ClientID      string            `json:"client_id,omitempty"`
 	ClientSecret  string            `json:"client_secret,omitempty"`
 	ClaimMapping  map[string]string `json:"claim_mapping,omitempty"`
+	// AllowAutoProvision opts the tenant into SSO auto-creating users
+	// on first sign-in. Default false — SCIM is the canonical
+	// provisioner. SAML tenants additionally cannot rely on
+	// email_verified, so admins who enable this for SAML are
+	// explicitly trusting their IdP.
+	AllowAutoProvision bool `json:"allow_auto_provision"`
+	// AllowedRoleCodes is the tenant-curated allowlist of role codes
+	// that may be granted via IdP `roles` group assertions. nil = use
+	// legacy default-deny behavior; explicit empty slice = deny all
+	// roles (forces fall-back to client_viewer).
+	AllowedRoleCodes []string `json:"allowed_role_codes,omitempty"`
 }
 
 // ErrInvalidProvider is returned when an upsert specifies a
@@ -71,20 +84,24 @@ func New(pool *pgxpool.Pool, a *audit.Service) *Service {
 // the returned Config has provider_type="none" + enabled=false.
 func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Config, error) {
 	var (
-		c     Config
-		claim []byte
-		clientSecret string
+		c             Config
+		claim         []byte
+		clientSecret  string
+		allowedRoles  []string
 	)
 	c.TenantID = tenantID
 	err := s.pool.QueryRow(ctx, `
 		SELECT provider_type, enabled, COALESCE(metadata_xml,''),
 		       COALESCE(discovery_url,''), COALESCE(client_id,''),
 		       COALESCE(client_secret,''), claim_mapping,
+		       COALESCE(allow_auto_provision, false),
+		       COALESCE(allowed_role_codes, '{}'::text[]),
 		       last_tested_at, last_test_ok, COALESCE(last_test_error,''),
 		       updated_at
 		  FROM tenant_sso_config WHERE tenant_id = $1`, tenantID).
 		Scan(&c.ProviderType, &c.Enabled, &c.MetadataXML,
 			&c.DiscoveryURL, &c.ClientID, &clientSecret, &claim,
+			&c.AllowAutoProvision, &allowedRoles,
 			&c.LastTestedAt, &c.LastTestOK, &c.LastTestError,
 			&c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -99,6 +116,7 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Config, error) 
 		return nil, fmt.Errorf("ssoconfig: read: %w", err)
 	}
 	c.ClientSecretSet = clientSecret != ""
+	c.AllowedRoleCodes = allowedRoles
 	if len(claim) > 0 {
 		_ = json.Unmarshal(claim, &c.ClaimMapping)
 	}
@@ -145,24 +163,31 @@ func (s *Service) Set(ctx context.Context, tenantID uuid.UUID, in SetInput, acto
 		newSecret = in.ClientSecret
 	}
 
+	allowedRoles := in.AllowedRoleCodes
+	if allowedRoles == nil {
+		allowedRoles = []string{}
+	}
 	if _, err := s.pool.Exec(ctx, `
 		INSERT INTO tenant_sso_config(tenant_id, provider_type, enabled,
 		    metadata_xml, discovery_url, client_id, client_secret,
-		    claim_mapping, updated_at)
+		    claim_mapping, allow_auto_provision, allowed_role_codes,
+		    updated_at)
 		VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''),
-		        NULLIF($7,''), $8::jsonb, now())
+		        NULLIF($7,''), $8::jsonb, $9, $10, now())
 		ON CONFLICT (tenant_id) DO UPDATE
-		   SET provider_type = EXCLUDED.provider_type,
-		       enabled       = EXCLUDED.enabled,
-		       metadata_xml  = EXCLUDED.metadata_xml,
-		       discovery_url = EXCLUDED.discovery_url,
-		       client_id     = EXCLUDED.client_id,
-		       client_secret = EXCLUDED.client_secret,
-		       claim_mapping = EXCLUDED.claim_mapping,
-		       updated_at    = now()`,
+		   SET provider_type        = EXCLUDED.provider_type,
+		       enabled              = EXCLUDED.enabled,
+		       metadata_xml         = EXCLUDED.metadata_xml,
+		       discovery_url        = EXCLUDED.discovery_url,
+		       client_id            = EXCLUDED.client_id,
+		       client_secret        = EXCLUDED.client_secret,
+		       claim_mapping        = EXCLUDED.claim_mapping,
+		       allow_auto_provision = EXCLUDED.allow_auto_provision,
+		       allowed_role_codes   = EXCLUDED.allowed_role_codes,
+		       updated_at           = now()`,
 		tenantID, in.ProviderType, in.Enabled,
 		in.MetadataXML, in.DiscoveryURL, in.ClientID, newSecret,
-		string(claimBytes)); err != nil {
+		string(claimBytes), in.AllowAutoProvision, allowedRoles); err != nil {
 		return nil, fmt.Errorf("ssoconfig: upsert: %w", err)
 	}
 
@@ -202,12 +227,14 @@ func (s *Service) LoadConfigForTenant(ctx context.Context, tenantID uuid.UUID) (
 		return &LoadedConfig{Enabled: false}, nil
 	}
 	out := &LoadedConfig{
-		Enabled:      true,
-		ProviderType: c.ProviderType,
-		ClaimMapping: c.ClaimMapping,
-		MetadataXML:  c.MetadataXML,
-		DiscoveryURL: c.DiscoveryURL,
-		ClientID:     c.ClientID,
+		Enabled:            true,
+		ProviderType:       c.ProviderType,
+		ClaimMapping:       c.ClaimMapping,
+		MetadataXML:        c.MetadataXML,
+		DiscoveryURL:       c.DiscoveryURL,
+		ClientID:           c.ClientID,
+		AllowAutoProvision: c.AllowAutoProvision,
+		AllowedRoleCodes:   c.AllowedRoleCodes,
 	}
 	// Look up the secret directly — Get() intentionally returns it
 	// as a bool. The federation handler needs the actual value.
@@ -228,4 +255,18 @@ type LoadedConfig struct {
 	DiscoveryURL string            // OIDC only
 	ClientID     string            // OIDC only
 	ClientSecret string            // OIDC only — sensitive
+
+	// AllowAutoProvision lets first-sign-in SSO create a user row
+	// when no match exists. Disabled by default to make SCIM the
+	// canonical provisioner. When enabled, the federation layer
+	// additionally requires IdP email_verified=true (OIDC) before
+	// auto-creating the user.
+	AllowAutoProvision bool
+
+	// AllowedRoleCodes is the tenant-curated allowlist of role codes
+	// that may be granted via IdP `roles` group assertions. Empty =
+	// legacy default-deny on high-privilege roles + allow tenant-
+	// scoped viewer/operator tiers. Operators set this via the
+	// /api/v1/tenants/{id}/sso endpoint.
+	AllowedRoleCodes []string
 }

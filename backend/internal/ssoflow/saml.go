@@ -108,6 +108,10 @@ func (s *Service) SAMLACS(w http.ResponseWriter, r *http.Request, tenantSlug str
 		http.Error(w, `{"error":"provider_mismatch"}`, http.StatusBadRequest)
 		return
 	}
+	if err := s.consumeState(r.Context(), state); err != nil {
+		http.Error(w, `{"error":"state_replayed_or_invalid"}`, http.StatusBadRequest)
+		return
+	}
 
 	tenantID, cfg, err := s.resolveTenant(r.Context(), tenantSlug)
 	if err != nil {

@@ -98,6 +98,10 @@ func (s *Service) resolveTenant(ctx context.Context, slug string) (uuid.UUID, *s
 // — IdPs cap RelayState (SAML) at 80 bytes and `state` (OIDC) at
 // reasonable lengths. We pass an opaque token here and look up the
 // full state from the cookie on return.
+//
+// The `jti` (inherited via jwt.RegisteredClaims.ID) is REQUIRED and
+// is one-time consumed via sso_state_consumed (migration 0064). A
+// replay of the same state cookie trips the unique constraint.
 type stateClaims struct {
 	jwt.RegisteredClaims
 	TenantID     string `json:"tid"`
@@ -108,19 +112,71 @@ type stateClaims struct {
 }
 
 func (s *Service) signState(c stateClaims) (string, error) {
+	// Stamp a fresh jti if the caller didn't. Without one, single-
+	// use consumption can't function.
+	if c.ID == "" {
+		c.ID = uuid.NewString()
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
 	return tok.SignedString(s.stateKey)
 }
 
 func (s *Service) verifyState(token string) (*stateClaims, error) {
 	c := &stateClaims{}
-	t, err := jwt.ParseWithClaims(token, c, func(_ *jwt.Token) (any, error) {
-		return s.stateKey, nil
-	})
+	// CRITICAL: pin the signing method allowlist. Without
+	// WithValidMethods, the keyfunc returns s.stateKey for any
+	// signing method — including attacker-supplied alg values that
+	// jwt/v5 might dispatch to a verifier we didn't intend (e.g.
+	// `alg=RS256` against our HMAC secret used as PEM bytes).
+	t, err := jwt.ParseWithClaims(token, c,
+		func(_ *jwt.Token) (any, error) {
+			return s.stateKey, nil
+		},
+		jwt.WithValidMethods([]string{"HS256"}),
+	)
 	if err != nil || !t.Valid {
 		return nil, ErrStateInvalid
 	}
+	if c.ID == "" {
+		// No jti = can't enforce single-use. Refuse — every state
+		// cookie we mint going forward includes one (signState
+		// stamps it). An old in-flight cookie without jti will
+		// fail-closed on the operator's next deploy.
+		return nil, ErrStateInvalid
+	}
 	return c, nil
+}
+
+// consumeState records the state cookie's jti so a replay trips the
+// unique constraint. Returns ErrStateInvalid on replay (or DB error)
+// — caller treats ANY failure here as "401 invalid state", never
+// silently lets the flow continue.
+//
+// MUST be called exactly once per state cookie, AFTER all other
+// validation succeeds but BEFORE issuing the user-facing session
+// cookie. Race-safety: if two callbacks arrive simultaneously with
+// the same state (attacker replay during legitimate user's flow),
+// exactly one wins the INSERT; the other gets the constraint
+// violation and is rejected.
+func (s *Service) consumeState(ctx context.Context, c *stateClaims) error {
+	jti, err := uuid.Parse(c.ID)
+	if err != nil {
+		return ErrStateInvalid
+	}
+	tenantID, err := uuid.Parse(c.TenantID)
+	if err != nil {
+		return ErrStateInvalid
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO sso_state_consumed(jti, tenant_id)
+		VALUES ($1, $2)`, jti, tenantID); err != nil {
+		// Both replay (unique violation) and DB error → fail-closed.
+		// We deliberately don't distinguish — the security
+		// invariant is "this state was already used OR couldn't be
+		// recorded as used", either way refuse.
+		return ErrStateInvalid
+	}
+	return nil
 }
 
 // setStateCookie writes the state cookie. SameSite=Lax lets the
@@ -154,6 +210,53 @@ func (s *Service) clearStateCookie(w http.ResponseWriter) {
 		Name: stateCookieName, Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// sssoRoleAllowed enforces the tenant's role allowlist for IdP-
+// asserted role codes. Returns true iff the requested role is
+// safe to grant via SSO for THIS tenant. If the tenant has an
+// explicit allowlist, honor it. If the tenant has none (legacy),
+// default-deny the high-privilege platform/partner roles and
+// allow only tenant-scoped viewer/operator tiers.
+//
+// Defense-in-depth: even if an attacker bypasses everything else,
+// they cannot grant themselves zaishield_super_admin via IdP role
+// assertion.
+func sssoRoleAllowed(cfg *ssoconfig.LoadedConfig, requested string) bool {
+	// Hard-coded deny list — these roles can NEVER be granted via
+	// IdP assertion regardless of tenant config. Roles at this tier
+	// require operator-side assignment via /api/v1/users/{id}/roles
+	// which is itself permission-gated.
+	deniedAlways := map[string]bool{
+		"zaishield_super_admin": true,
+		"platform_admin":        true,
+		"distributor_admin":     true,
+		"support_engineer":      true,
+	}
+	if deniedAlways[requested] {
+		return false
+	}
+	// Per-tenant allowlist — if set, requested must be in it.
+	if len(cfg.AllowedRoleCodes) > 0 {
+		for _, allowed := range cfg.AllowedRoleCodes {
+			if allowed == requested {
+				return true
+			}
+		}
+		return false
+	}
+	// Legacy tenants with no allowlist: allow tenant-scoped roles
+	// only.
+	tenantScoped := map[string]bool{
+		"tenant_admin":    true,
+		"tenant_operator": true,
+		"tenant_viewer":   true,
+		"client_viewer":   true,
+		"client_admin":    true,
+		"pentester":       true,
+		"viewer":          true,
+	}
+	return tenantScoped[requested]
 }
 
 // ---- Claim mapping --------------------------------------------------
@@ -190,8 +293,24 @@ func (s *Service) mapClaims(ctx context.Context, tenantID uuid.UUID,
 	}
 	name := get("name")
 
+	// SECURITY: refuse auto-provisioning when the IdP did NOT assert
+	// `email_verified = true`. Without this, an attacker controlling
+	// a tenant's IdP can register `admin@victim-org.com` at their IdP
+	// (no verification), assert it via SSO, and land in the tenant
+	// as a freshly-provisioned active user.
+	//
+	// SAML doesn't carry email_verified natively; tenants using SAML
+	// must opt-in to auto-provisioning via cfg.AllowAutoProvision.
+	// OIDC IdPs are expected to set email_verified when they trust
+	// the email; we treat its absence as "do not provision".
+	emailVerified := false
+	if v := get("email_verified"); v == "true" || v == "True" || v == "1" {
+		emailVerified = true
+	}
+
 	// Look up the user — provision on first sign-in if SCIM hasn't
-	// already.
+	// already, AND only if the tenant's SSO config allows it AND the
+	// IdP attested email verification.
 	var (
 		userID    uuid.UUID
 		partnerID uuid.UUID
@@ -209,6 +328,12 @@ func (s *Service) mapClaims(ctx context.Context, tenantID uuid.UUID,
 		 LIMIT 1`, email, tenantID).
 		Scan(&userID, &partnerID, &platformID)
 	if err != nil {
+		if !cfg.AllowAutoProvision {
+			return nil, fmt.Errorf("ssoflow: user %q not found in tenant and auto-provisioning is disabled", email)
+		}
+		if !emailVerified {
+			return nil, fmt.Errorf("ssoflow: auto-provisioning refused — IdP did not assert email_verified=true for %q", email)
+		}
 		// Auto-provision under the tenant's partner.
 		if err := s.pool.QueryRow(ctx,
 			`SELECT platform_id, partner_id FROM tenants WHERE id = $1`,
@@ -225,17 +350,34 @@ func (s *Service) mapClaims(ctx context.Context, tenantID uuid.UUID,
 		}
 		_ = s.audit.Record(ctx, audit.Entry{
 			Event: "user.provisioned_via_sso",
+			PlatformID: platformID,
 			TenantID: &tenantID, ActorID: &userID,
 			TargetType: "user", TargetID: userID.String(),
-			Payload: map[string]any{"email": email, "provider": cfg.ProviderType},
+			Payload: map[string]any{"email": email, "provider": cfg.ProviderType, "email_verified": emailVerified},
 		})
 	}
 
-	// Map groups → roles. Best-effort: if the IdP-provided group name
-	// matches a role code in the platform, grant it. Anything that
-	// doesn't match is ignored (logged via audit, not as an error).
+	// Map groups → roles. PER-TENANT ROLE ALLOWLIST — without this,
+	// any IdP-asserted role string that matches a platform role
+	// code grants that role. An attacker controlling the IdP can
+	// claim `roles: [zaishield_super_admin]` and gain platform admin.
+	//
+	// cfg.AllowedRoleCodes is the operator-curated allowlist. If
+	// empty (legacy tenants), we default-deny the high-privilege
+	// roles (super_admin, platform_admin) but allow viewer/operator
+	// tiers via the legacy lookup. New tenants MUST configure the
+	// allowlist.
 	roles := []string{}
 	for _, g := range getMulti("roles") {
+		if !sssoRoleAllowed(cfg, g) {
+			_ = s.audit.Record(ctx, audit.Entry{
+				Event: "user.sso_role_rejected",
+				PlatformID: platformID,
+				TenantID: &tenantID, ActorID: &userID,
+				Payload: map[string]any{"requested_role": g, "reason": "not in tenant allowlist"},
+			})
+			continue
+		}
 		var roleCode string
 		_ = s.pool.QueryRow(ctx,
 			`SELECT code FROM roles WHERE code = $1`, g).Scan(&roleCode)

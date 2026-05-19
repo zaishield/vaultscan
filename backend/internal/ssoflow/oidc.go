@@ -194,6 +194,13 @@ func (s *Service) OIDCCallback(w http.ResponseWriter, r *http.Request, tenantSlu
 		http.Error(w, `{"error":"provider_mismatch"}`, http.StatusBadRequest)
 		return
 	}
+	// Single-use consumption — INSERT the jti so a replay trips the
+	// unique constraint and fails-closed. Done BEFORE the token
+	// exchange so we don't make an outbound IdP call for a replay.
+	if err := s.consumeState(r.Context(), state); err != nil {
+		http.Error(w, `{"error":"state_replayed_or_invalid"}`, http.StatusBadRequest)
+		return
+	}
 
 	tenantID, cfg, err := s.resolveTenant(r.Context(), tenantSlug)
 	if err != nil {
