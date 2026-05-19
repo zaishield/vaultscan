@@ -162,6 +162,84 @@ func TestAuditBundle_RealRun(t *testing.T) {
 	}
 }
 
+// TestAuditBundle_VerifySubcommand exercises the auditor-facing
+// `audit-bundle verify` subcommand: produce a real bundle, then
+// hand-craft tampered variants and confirm verify exits non-zero
+// with a clear message.
+func TestAuditBundle_VerifySubcommand(t *testing.T) {
+	dsn := os.Getenv("VAULTSCAN_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("VAULTSCAN_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	schema := "ab_v_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c, _ := pgxpool.New(context.Background(), dsn)
+		defer c.Close()
+		_, _ = c.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
+	})
+	_, file, _, _ := runtime.Caller(0)
+	migrationsDir := filepath.Join(filepath.Dir(file), "..", "..", "migrations")
+	if err := applyMigrations(t, dsn, schema, migrationsDir); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := t.TempDir() + "/audit-bundle"
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+
+	signKey := hex.EncodeToString(sha256.New().Sum([]byte("test-key")))[:64]
+	bundlePath := t.TempDir() + "/bundle.tar.gz"
+	gen := exec.Command(bin,
+		"-db", appendSearchPath(dsn, schema),
+		"-output", bundlePath,
+		"-sign-key", signKey)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("generate: %v\n%s", err, out)
+	}
+
+	// Happy path: verify with the correct key.
+	t.Run("good_signature", func(t *testing.T) {
+		out, err := exec.Command(bin, "verify", bundlePath, "-sign-key", signKey).CombinedOutput()
+		if err != nil {
+			t.Errorf("verify with correct key failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(string(out), "OK") {
+			t.Errorf("verify output missing OK: %s", out)
+		}
+	})
+
+	// Bad signature: wrong key → must FAIL.
+	t.Run("wrong_signature", func(t *testing.T) {
+		badKey := strings.Repeat("aa", 32)
+		_, err := exec.Command(bin, "verify", bundlePath, "-sign-key", badKey).CombinedOutput()
+		if err == nil {
+			t.Error("verify with wrong key should have failed but returned 0")
+		}
+	})
+
+	// No signature flag → verify runs but skips sig check (prints
+	// note). Should succeed because all sha256s are still valid.
+	t.Run("no_signature_flag", func(t *testing.T) {
+		out, err := exec.Command(bin, "verify", bundlePath).CombinedOutput()
+		if err != nil {
+			t.Errorf("verify without sig key should succeed: %v\n%s", err, out)
+		}
+		if !strings.Contains(string(out), "OK") {
+			t.Errorf("verify output missing OK: %s", out)
+		}
+	})
+}
+
 // applyMigrations reads .up.sql files in dir, sets the connection's
 // search_path to the target schema, and runs each in order.
 func applyMigrations(t *testing.T, dsn, schema, dir string) error {

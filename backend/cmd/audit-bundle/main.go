@@ -42,7 +42,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -50,7 +52,28 @@ import (
 	"github.com/zaishield/vaultscan/backend/internal/audit"
 )
 
+// gzipNewReader is a thin wrapper so the verify subcommand's
+// helpers can stay short. The error-prone "wrap a file in a
+// gzip.Reader" pattern lives here once.
+func gzipNewReader(r io.Reader) (io.Reader, error) {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, err
+	}
+	return gz, nil
+}
+
 func main() {
+	// Subcommand dispatch: `audit-bundle verify <bundle> -sign-key X`
+	// re-checks every artifact's sha256 against manifest.json and
+	// verifies bundle.sig HMAC. No DB required — the auditor runs
+	// this against a bundle they were handed.
+	if len(os.Args) >= 2 && os.Args[1] == "verify" {
+		os.Args = os.Args[1:] // shift so flag.Parse() sees the subcommand args
+		runVerify()
+		return
+	}
+
 	dbURL := flag.String("db", "", "Postgres URL (or set VAULTSCAN_DATABASE_URL)")
 	outPath := flag.String("output", "", "where to write the bundle tar.gz")
 	signKey := flag.String("sign-key", "", "hex-encoded HMAC key (32 bytes) for bundle.sig; if omitted, bundle.sig is not produced")
@@ -354,3 +377,157 @@ func writeTarFile(tw *tar.Writer, name string, body []byte) error {
 	_, err := tw.Write(body)
 	return err
 }
+
+// ----- verify subcommand ------------------------------------------
+
+// runVerify is the auditor-facing path. Run as:
+//
+//   audit-bundle verify path/to/bundle.tar.gz \
+//     -sign-key <hex 32 bytes the operator gave you>
+//
+// It re-computes every artifact's sha256, compares against the
+// manifest, verifies the HMAC signature, and prints a one-line
+// verdict. Non-zero exit on any mismatch.
+//
+// Designed so an external auditor can run this without any
+// VaultScan-specific tooling beyond a single statically-linked
+// binary. No DB connection required.
+func runVerify() {
+	// Walk args manually so that -sign-key can appear before OR
+	// after the positional bundle path. Go's flag package stops
+	// parsing at the first non-flag arg, which would silently
+	// drop the key if the user wrote `verify bundle.tar.gz -sign-key X`.
+	var bundlePath, signKey string
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-sign-key" || a == "--sign-key":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "audit-bundle verify: -sign-key requires a value")
+				os.Exit(2)
+			}
+			signKey = args[i+1]
+			i++
+		case strings.HasPrefix(a, "-sign-key=") || strings.HasPrefix(a, "--sign-key="):
+			signKey = a[strings.Index(a, "=")+1:]
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "audit-bundle verify: unknown flag %q\n", a)
+			os.Exit(2)
+		default:
+			if bundlePath != "" {
+				fmt.Fprintln(os.Stderr,
+					"audit-bundle verify: only one positional <bundle.tar.gz> allowed")
+				os.Exit(2)
+			}
+			bundlePath = a
+		}
+	}
+	if bundlePath == "" {
+		fmt.Fprintln(os.Stderr, "audit-bundle verify <bundle.tar.gz> [-sign-key HEX]")
+		os.Exit(2)
+	}
+	f, err := os.Open(bundlePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "audit-bundle verify: open: %v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	gz, err := newGzipReader(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "audit-bundle verify: gunzip: %v\n", err)
+		os.Exit(1)
+	}
+	tr := tarReader(gz)
+	files := readTarFiles(tr)
+
+	manifestBody, ok := files["manifest.json"]
+	if !ok {
+		fmt.Fprintln(os.Stderr, "audit-bundle verify: bundle missing manifest.json")
+		os.Exit(1)
+	}
+	var manifest struct {
+		Artifacts []struct {
+			Name   string `json:"name"`
+			SHA256 string `json:"sha256"`
+		} `json:"artifacts"`
+		GeneratedAt string `json:"generated_at"`
+	}
+	if err := jsonUnmarshal(manifestBody, &manifest); err != nil {
+		fmt.Fprintf(os.Stderr, "audit-bundle verify: manifest not JSON: %v\n", err)
+		os.Exit(1)
+	}
+
+	mismatches := 0
+	for _, a := range manifest.Artifacts {
+		body, present := files[a.Name]
+		if !present {
+			fmt.Fprintf(os.Stderr, "MISSING artifact: %s\n", a.Name)
+			mismatches++
+			continue
+		}
+		sum := sha256.Sum256(body)
+		got := hex.EncodeToString(sum[:])
+		if got != a.SHA256 {
+			fmt.Fprintf(os.Stderr, "SHA256 MISMATCH for %s:\n  manifest=%s\n  actual  =%s\n",
+				a.Name, a.SHA256, got)
+			mismatches++
+		}
+	}
+
+	// Verify HMAC if a key was supplied and bundle.sig present.
+	sigBody, hasSig := files["bundle.sig"]
+	if signKey != "" {
+		if !hasSig {
+			fmt.Fprintln(os.Stderr, "SIGNATURE: -sign-key supplied but bundle.sig not in bundle")
+			mismatches++
+		} else {
+			key, kerr := hex.DecodeString(signKey)
+			if kerr != nil || len(key) < 16 {
+				fmt.Fprintln(os.Stderr, "SIGNATURE: -sign-key must be ≥16 bytes hex")
+				os.Exit(2)
+			}
+			mac := hmac.New(sha256.New, key)
+			_, _ = mac.Write(manifestBody)
+			expected := hex.EncodeToString(mac.Sum(nil))
+			got := strings.TrimSpace(string(sigBody))
+			if !hmac.Equal([]byte(expected), []byte(got)) {
+				fmt.Fprintf(os.Stderr, "SIGNATURE MISMATCH:\n  expected=%s\n  actual  =%s\n",
+					expected, got)
+				mismatches++
+			}
+		}
+	} else if hasSig {
+		fmt.Fprintln(os.Stderr,
+			"NOTE: bundle.sig is present but no -sign-key supplied; signature NOT verified")
+	}
+
+	if mismatches > 0 {
+		fmt.Fprintf(os.Stderr, "audit-bundle verify: FAIL (%d mismatch(es))\n", mismatches)
+		os.Exit(1)
+	}
+	fmt.Printf("audit-bundle verify: OK (%d artifacts, generated_at=%s)\n",
+		len(manifest.Artifacts), manifest.GeneratedAt)
+}
+
+// Small wrappers so the verify subcommand doesn't need to import
+// archive/tar + compress/gzip + encoding/json explicitly (they're
+// already imported by the build path above).
+func newGzipReader(r io.Reader) (io.Reader, error)          { return gzipNewReader(r) }
+func tarReader(r io.Reader) *tar.Reader                     { return tar.NewReader(r) }
+func readTarFiles(tr *tar.Reader) map[string][]byte {
+	out := map[string][]byte{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return out
+		}
+		body, _ := io.ReadAll(tr)
+		out[hdr.Name] = body
+	}
+	return out
+}
+func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
