@@ -49,11 +49,30 @@ func deriveURLSigningKey(masterKEK []byte) []byte {
 	return mac.Sum(nil)
 }
 
+// constantTimeEqualString compares a and b in constant time.
+//
+// To avoid leaking the actual length of `a` (the expected HMAC, a
+// fixed-length value) via early-return on a length mismatch, we
+// always run ConstantTimeCompare on equal-length copies — if the
+// inputs differ in length, we pad b to len(a) with zeros and still
+// XOR through all bytes. The final && of "lengths equal" ensures
+// any padding case fails. This isn't strictly necessary when `a` is
+// HMAC output (always 64 hex chars), but defense in depth: any
+// future caller passing a non-fixed expected value benefits.
 func constantTimeEqualString(a, b string) bool {
-	if len(a) != len(b) {
-		return false
+	aBytes := []byte(a)
+	bBytes := []byte(b)
+	// Pick the longer length so we always XOR over the full buffer.
+	maxLen := len(aBytes)
+	if len(bBytes) > maxLen {
+		maxLen = len(bBytes)
 	}
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+	aPad := make([]byte, maxLen)
+	bPad := make([]byte, maxLen)
+	copy(aPad, aBytes)
+	copy(bPad, bBytes)
+	eq := subtle.ConstantTimeCompare(aPad, bPad) == 1
+	return eq && len(aBytes) == len(bBytes)
 }
 
 // parseObjectURL splits "vaultscan://<tenant>/<object>" into the two

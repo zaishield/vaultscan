@@ -49,6 +49,7 @@ func main() {
 		panic(err)
 	}
 	log := logging.New(cfg.Env)
+	logging.SetDefault(log)
 	ctx := context.Background()
 
 	pool, err := db.OpenForComponent(ctx, cfg.DatabaseURL, "agent-gateway")

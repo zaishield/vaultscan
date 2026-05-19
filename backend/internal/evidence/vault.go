@@ -95,24 +95,49 @@ func WithActiveKEKID(id string) Option {
 // WithPreviousMasterKeys registers retired KEK material that the
 // vault should fall back to during unwrap when the active key
 // can't decrypt a blob. Caller supplies base64-encoded keys, same
-// shape as masterKeyB64. Returns an error if any key fails to
-// decode to 32 bytes — config-load callers (cmd/api/main.go)
-// surface that as a fatal boot error.
+// shape as masterKeyB64.
+//
+// Validation happens at Option construction time via
+// ValidatePreviousMasterKeys — boot fails loudly if any key is
+// malformed instead of silently filling the slice with nils (the
+// prior behaviour, which made unwrap quietly skip retired-key
+// branches and surface as "blob can't be decrypted" much later).
+// Callers that have already validated their keys can use the option
+// directly; everyone else should call the boot-side validator first.
 func WithPreviousMasterKeys(keysB64 []string) Option {
 	return func(v *Vault) {
 		for _, k := range keysB64 {
 			b, err := base64.StdEncoding.DecodeString(k)
 			if err != nil || len(b) < 32 {
-				// Append a sentinel zero-length entry so the caller
-				// can detect the misconfiguration via len(previous)
-				// not matching expected. We can't return error from
-				// an Option, so the boot path validates separately.
-				v.previousMasterKeys = append(v.previousMasterKeys, nil)
+				// Skip malformed entries rather than appending a nil
+				// sentinel. The boot path is expected to have called
+				// ValidatePreviousMasterKeys already and surfaced
+				// errors; if it didn't, the practical effect of
+				// skipping is: retired blobs that needed THIS key
+				// won't unwrap (loud failure on next read) — strictly
+				// better than the prior silent-nil behaviour where a
+				// later loop ranged over nils.
 				continue
 			}
 			v.previousMasterKeys = append(v.previousMasterKeys, b[:32])
 		}
 	}
+}
+
+// ValidatePreviousMasterKeys returns a non-nil error iff any of
+// keysB64 fails to decode to ≥32 bytes. Use at boot to fail loud
+// before the vault is constructed.
+func ValidatePreviousMasterKeys(keysB64 []string) error {
+	for i, k := range keysB64 {
+		b, err := base64.StdEncoding.DecodeString(k)
+		if err != nil {
+			return fmt.Errorf("evidence: previous KEK #%d: base64 decode: %w", i, err)
+		}
+		if len(b) < 32 {
+			return fmt.Errorf("evidence: previous KEK #%d: must decode to >=32 bytes (got %d)", i, len(b))
+		}
+	}
+	return nil
 }
 
 // knownDevMasterKeys are master-key values that ship in source for
@@ -332,7 +357,19 @@ func (v *Vault) Read(ctx context.Context, evidenceID uuid.UUID, actor *uuid.UUID
 			return nil, nil, err
 		}
 	}
-	_ = v.logAccess(ctx, evidenceID, actor, ip, ua, "download")
+	if err := v.logAccess(ctx, evidenceID, actor, ip, ua, "download"); err != nil {
+		// logAccess failure must not leave the download itself a no-op,
+		// but the chain-of-custody table missing a row is auditor-visible
+		// (the evidence appears to have never been read). Log loud so
+		// the on-call sees this; cron-runner integrity sweep flags
+		// finding_evidence_custody rows whose count drifts from
+		// audit_logs row counts for the same evidence.
+		evidenceLogger.Error().
+			Err(err).
+			Str("op", "logAccess").
+			Str("evidence_id", evidenceID.String()).
+			Msg("custody row write failed; chain-of-custody table will under-count this evidence's reads")
+	}
 	_ = v.audit.Record(ctx, audit.Entry{
 		PlatformID: uuid.MustParse("00000000-0000-0000-0000-0000000000a1"),
 		PartnerID:  &ev.PartnerID, TenantID: &ev.TenantID, ActorID: actor,

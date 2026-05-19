@@ -12,14 +12,13 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/rs/zerolog"
 
+	"github.com/zaishield/vaultscan/backend/internal/logging"
 	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
@@ -30,8 +29,13 @@ import (
 // scrapers tagged `component=evidence` and `op=rewrap` count the
 // drops; alerting on a non-zero rate is the recommended cron-health
 // signal.
-var evidenceLogger = zerolog.New(os.Stderr).With().
-	Timestamp().Str("component", "evidence").Logger()
+//
+// Plumbed via logging.Component so the level + env + service labels
+// flow through the central logger configured at main(). The previous
+// direct zerolog.New(os.Stderr) call bypassed level filtering — a
+// production deploy set to WARN would still see this package's INFO
+// noise.
+var evidenceLogger = logging.Component("evidence")
 
 // ---------------- Envelope encryption ---------------------------------------
 //
@@ -61,12 +65,16 @@ func (v *Vault) EnsureTenantKey(ctx context.Context, tenantID uuid.UUID) (int, [
 	if version, dek, err := v.currentTenantKey(ctx, tenantID); err == nil {
 		return version, dek, nil
 	}
-	// Generate + wrap a new DEK.
+	// Generate + wrap a new DEK with (tenant_id, version=1, kek_id)
+	// bound as AAD. Any row-swap that changes the tenant_id, version,
+	// or kek_id column without re-wrapping the blob trips the GCM
+	// tag check at unwrap.
 	dek := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
 		return 0, nil, err
 	}
-	wrapped, err := v.wrap(dek)
+	kekID := v.kekIDForWrite()
+	wrapped, err := v.wrapWithAAD(dek, dekAAD(tenantID, 1, kekID))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -75,7 +83,7 @@ func (v *Vault) EnsureTenantKey(ctx context.Context, tenantID uuid.UUID) (int, [
 		INSERT INTO tenant_data_keys(tenant_id, key_version, wrapped_key, kek_id)
 		VALUES ($1, 1, $2, $3)
 		RETURNING key_version`,
-		tenantID, wrapped, v.kekIDForWrite()).Scan(&version); err != nil {
+		tenantID, wrapped, kekID).Scan(&version); err != nil {
 		return 0, nil, err
 	}
 	return version, dek, nil
@@ -401,15 +409,18 @@ func (v *Vault) RewrapTenantDEKsToActiveKEK(ctx context.Context, maxBatch int) (
 func (v *Vault) currentTenantKey(ctx context.Context, tenantID uuid.UUID) (int, []byte, error) {
 	var version int
 	var wrapped []byte
+	var kekID string
 	err := v.pool.QueryRow(ctx, `
-		SELECT key_version, wrapped_key
+		SELECT key_version, wrapped_key, COALESCE(kek_id,'')
 		  FROM tenant_data_keys
 		 WHERE tenant_id=$1 AND retired_at IS NULL
-		 ORDER BY key_version DESC LIMIT 1`, tenantID).Scan(&version, &wrapped)
+		 ORDER BY key_version DESC LIMIT 1`, tenantID).Scan(&version, &wrapped, &kekID)
 	if err != nil {
 		return 0, nil, err
 	}
-	dek, err := v.unwrap(wrapped)
+	// unwrapWithAAD also falls back to no-AAD on auth failure to
+	// preserve compat with pre-AAD (v1) blobs already at rest.
+	dek, err := v.unwrapWithAAD(wrapped, dekAAD(tenantID, version, kekID))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -418,13 +429,14 @@ func (v *Vault) currentTenantKey(ctx context.Context, tenantID uuid.UUID) (int, 
 
 func (v *Vault) tenantKeyByVersion(ctx context.Context, tenantID uuid.UUID, version int) ([]byte, error) {
 	var wrapped []byte
+	var kekID string
 	err := v.pool.QueryRow(ctx, `
-		SELECT wrapped_key FROM tenant_data_keys
-		 WHERE tenant_id=$1 AND key_version=$2`, tenantID, version).Scan(&wrapped)
+		SELECT wrapped_key, COALESCE(kek_id,'') FROM tenant_data_keys
+		 WHERE tenant_id=$1 AND key_version=$2`, tenantID, version).Scan(&wrapped, &kekID)
 	if err != nil {
 		return nil, err
 	}
-	return v.unwrap(wrapped)
+	return v.unwrapWithAAD(wrapped, dekAAD(tenantID, version, kekID))
 }
 
 // WrapBytes is the exported helper that other packages (integrations,
@@ -448,6 +460,20 @@ func (v *Vault) UnwrapBlob(ctx context.Context, blob []byte) ([]byte, error) {
 }
 
 func (v *Vault) wrap(plain []byte) ([]byte, error) {
+	return v.wrapWithAAD(plain, nil)
+}
+
+// wrapWithAAD wraps plain under the active KEK, binding aad into the
+// AEAD tag. Any tamper that doesn't preserve `aad` at unwrap time
+// trips the GCM tag check.
+//
+// AAD is NOT stored in the blob — the caller is responsible for
+// reconstructing it deterministically from out-of-band metadata
+// (e.g. the kek_id + tenant_id + key_version columns alongside the
+// blob in tenant_data_keys). This is by-design: storing AAD in the
+// blob would make it trivially mutable; reconstructing from indexed
+// columns makes a row-swap attack detectable.
+func (v *Vault) wrapWithAAD(plain, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(v.masterKey)
 	if err != nil {
 		return nil, err
@@ -460,26 +486,58 @@ func (v *Vault) wrap(plain []byte) ([]byte, error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
-	ct := gcm.Seal(nil, nonce, plain, nil)
+	ct := gcm.Seal(nil, nonce, plain, aad)
 	return append(nonce, ct...), nil
 }
 
+// dekAAD reconstructs the AAD bytes for a tenant DEK wrap. The
+// fields (tenant_id, key_version, kek_id) are all stored alongside
+// the wrapped_key in tenant_data_keys, so wrap + unwrap can
+// independently reconstruct the same byte string. Domain-separated
+// to prevent an AAD reuse confusion against any other wrap call.
+func dekAAD(tenantID uuid.UUID, version int, kekID string) []byte {
+	return []byte(fmt.Sprintf("vaultscan/tenant-dek/v1|%s|%d|%s",
+		tenantID.String(), version, kekID))
+}
+
 func (v *Vault) unwrap(blob []byte) ([]byte, error) {
+	return v.unwrapWithAAD(blob, nil)
+}
+
+// unwrapWithAAD is the AAD-aware counterpart. For each candidate
+// KEK (active first, then retired), try with aad — and if that fails
+// AND aad is non-nil, also try without aad to preserve backward
+// compat with v1 blobs written before this commit.
+func (v *Vault) unwrapWithAAD(blob, aad []byte) ([]byte, error) {
 	// Try the active KEK first — the hot path on a non-rotating
 	// deployment. On AEAD-auth failure, fall through to each
 	// retired KEK in order. This is the rotation window:
 	// previously-wrapped DEKs decrypt under the old key, and
 	// RewrapTenantDEKsToActiveKEK re-wraps them under the new
 	// active KEK at operator pace.
-	if pt, err := unwrapWith(v.masterKey, blob); err == nil {
+	if pt, err := unwrapWith(v.masterKey, blob, aad); err == nil {
 		return pt, nil
+	}
+	if aad != nil {
+		// Legacy v1 blob (no AAD bound). Try without aad once on
+		// the active key only — if that succeeds, we know this was
+		// a pre-AAD blob and RewrapTenantDEKsToActiveKEK will
+		// re-wrap it with AAD on its next sweep.
+		if pt, err := unwrapWith(v.masterKey, blob, nil); err == nil {
+			return pt, nil
+		}
 	}
 	for i, k := range v.previousMasterKeys {
 		if len(k) == 0 {
 			continue
 		}
-		if pt, err := unwrapWith(k, blob); err == nil {
+		if pt, err := unwrapWith(k, blob, aad); err == nil {
 			return pt, nil
+		}
+		if aad != nil {
+			if pt, err := unwrapWith(k, blob, nil); err == nil {
+				return pt, nil
+			}
 		}
 		// Track which old key handled which blob — useful operator
 		// signal during rotation. We don't return early on success
@@ -489,7 +547,7 @@ func (v *Vault) unwrap(blob []byte) ([]byte, error) {
 	return nil, errors.New("evidence: unwrap failed against active + all retired KEKs")
 }
 
-func unwrapWith(key, blob []byte) ([]byte, error) {
+func unwrapWith(key, blob, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -502,7 +560,7 @@ func unwrapWith(key, blob []byte) ([]byte, error) {
 	if len(blob) < ns {
 		return nil, errors.New("evidence: wrapped key blob too short")
 	}
-	return gcm.Open(nil, blob[:ns], blob[ns:], nil)
+	return gcm.Open(nil, blob[:ns], blob[ns:], aad)
 }
 
 // encryptWithDEK and decryptWithDEK mirror the legacy master-key path but
