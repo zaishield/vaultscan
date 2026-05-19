@@ -25,13 +25,13 @@ import (
 	cryptoRand "crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"strings"
 	"time"
@@ -253,28 +253,10 @@ func (c *SAMLConfig) verifySignature(xmlBytes []byte, resp *samlResponseDoc) err
 	}
 	assertionXML = stripXMLNS(assertionXML)
 	bodyDigest := sha256.Sum256(assertionXML)
-	if subtleConstantTimeCompare(declaredDigest, bodyDigest[:]) != 1 {
+	if subtle.ConstantTimeCompare(declaredDigest, bodyDigest[:]) != 1 {
 		return errors.New("saml: Reference DigestValue does not match Assertion canonical hash (XSW detected or canonicalisation mismatch)")
 	}
-	_ = xmlBytes
 	return nil
-}
-
-// subtleConstantTimeCompare returns 1 when the two byte slices are
-// equal in length AND content. Imported as a tiny inline alias rather
-// than dragging crypto/subtle into the import block for a single call.
-func subtleConstantTimeCompare(a, b []byte) int {
-	if len(a) != len(b) {
-		return 0
-	}
-	var v byte
-	for i := range a {
-		v |= a[i] ^ b[i]
-	}
-	if v == 0 {
-		return 1
-	}
-	return 0
 }
 
 // ---- types ---------------------------------------------------------------
@@ -427,6 +409,3 @@ func stripXMLNS(b []byte) []byte {
 	}
 	return []byte(s)
 }
-
-// keep import live
-var _ = io.EOF

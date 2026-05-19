@@ -149,14 +149,24 @@ func (r *K8sJobRunner) SetAllowSynthetic(b bool) { r.cfg.AllowSynthetic = b }
 // Timing: Run blocks until the Job hits a terminal state OR ctx is
 // cancelled OR `runtime` elapses. The Job carries activeDeadlineSeconds
 // matching `runtime` so the kubelet kills the pod even if we crash.
-func (r *K8sJobRunner) Run(ctx context.Context, tool string, targets []string, runtime time.Duration) (*Result, error) {
+//
+// `imageRef` MUST be the verified-by-cosign reference (typically
+// "<registry>/<tool>@sha256:<digest>") that the caller's
+// Registry.VerifyImage step approved. Pulling :latest here would
+// defeat the entire supply-chain gate — admission ran on a SHA the
+// signer attested, but K8s would then pull whatever :latest pointed
+// to at run time. The cosign gate is meaningless if the runtime
+// reference differs from what was signed.
+func (r *K8sJobRunner) Run(ctx context.Context, imageRef, tool string, targets []string, runtime time.Duration) (*Result, error) {
 	if runtime <= 0 {
 		runtime = 30 * time.Minute
 	}
+	if imageRef == "" {
+		return nil, fmt.Errorf("k8s: imageRef required (caller must pass the cosign-verified ref)")
+	}
 	jobName := jobNameFor(tool)
-	image := r.cfg.ImageRegistry + "/" + tool + ":latest"
 	manifest := buildJobManifest(jobName, r.cfg.Namespace, r.cfg.ServiceAccount,
-		image, tool, buildArgs(tool, targets), runtime)
+		imageRef, tool, buildArgs(tool, targets), runtime)
 
 	start := time.Now()
 

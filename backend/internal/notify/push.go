@@ -34,6 +34,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zaishield/vaultscan/backend/internal/httputil"
 )
 
 // PushMessage is the abstract notification we want to deliver. The
@@ -122,7 +124,16 @@ func NewAPNSTransport(cfg APNSConfig) (*APNSTransport, error) {
 	}
 	hc := cfg.HTTPClient
 	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
+		// Pin to httputil so we get TLS 1.2 floor via the central
+		// Transport, redirect refusal, and air-gap allowlist
+		// inheritance. APNS endpoints are vendor-controlled so the
+		// hardening is mostly defense-in-depth — but the JWT
+		// bearer payload is sensitive enough to warrant the floor.
+		c := httputil.NewClient(httputil.Options{Timeout: 10 * time.Second})
+		c.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		hc = c
 	}
 	return &APNSTransport{
 		teamID: cfg.TeamID, keyID: cfg.KeyID, bundleID: cfg.BundleID,
@@ -274,7 +285,11 @@ func NewFCMTransport(cfg FCMConfig) (*FCMTransport, error) {
 	}
 	hc := cfg.HTTPClient
 	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
+		c := httputil.NewClient(httputil.Options{Timeout: 10 * time.Second})
+		c.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		hc = c
 	}
 	return &FCMTransport{
 		projectID: sa.ProjectID, clientEmail: sa.ClientEmail,

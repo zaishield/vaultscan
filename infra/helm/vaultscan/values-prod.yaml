@@ -179,7 +179,16 @@ kyverno:
   cosignVerifyPolicy:
     enabled: true
     action: enforce
-    imageRefPattern: "registry.zaishield.com/vaultscan/*"
+    # Multi-pattern form: covers the vaultscan/* core images PLUS the
+    # signed third-party sidecars (pgbouncer, postgres backup,
+    # restore-verify sandbox postgres). The legacy single-pattern
+    # imageRefPattern is intentionally absent so admission ONLY
+    # honours this list.
+    imageRefPatterns:
+      - "registry.zaishield.com/vaultscan/*"
+      - "registry.zaishield.com/pgbouncer:*"
+      - "registry.zaishield.com/postgres-backup:*"
+      - "registry.zaishield.com/postgres-sandbox:*"
     subjectRegex: "https://github.com/zaishield/vaultscan/.*"
 
 # Observability — in production, point at the cluster's OTel collector.

@@ -162,11 +162,64 @@ func canonicalURI(path string) string {
 	if path == "" {
 		return "/"
 	}
+	// RFC 3986 RemoveDotSegments — collapse "/foo/./bar" → "/foo/bar"
+	// and "/foo/../bar" → "/bar". AWS's reference signer applies
+	// this; without it, requests with dot-segments compute a
+	// different canonical URI than the AWS endpoint and signature
+	// verification fails.
+	path = removeDotSegments(path)
 	segments := strings.Split(path, "/")
 	for i, s := range segments {
 		segments[i] = uriEncode(s, false)
 	}
 	return strings.Join(segments, "/")
+}
+
+// removeDotSegments applies the algorithm from RFC 3986 §5.2.4.
+// Output preserves a leading slash and a trailing slash when present
+// in input (after collapsing).
+func removeDotSegments(in string) string {
+	out := []string{}
+	for _, seg := range strings.Split(in, "/") {
+		switch seg {
+		case "", ".":
+			// Skip empty segments from leading/trailing slashes;
+			// "." segments collapse.
+		case "..":
+			if len(out) > 0 {
+				out = out[:len(out)-1]
+			}
+		default:
+			out = append(out, seg)
+		}
+	}
+	res := "/" + strings.Join(out, "/")
+	// Preserve trailing slash semantics.
+	if strings.HasSuffix(in, "/") && !strings.HasSuffix(res, "/") && res != "/" {
+		res += "/"
+	}
+	return res
+}
+
+// collapseInternalWhitespace replaces runs of whitespace inside s
+// with a single space character. SigV4 canonical-header rule.
+func collapseInternalWhitespace(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	inWS := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == ' ' || c == '\t' {
+			if !inWS {
+				b.WriteByte(' ')
+				inWS = true
+			}
+			continue
+		}
+		b.WriteByte(c)
+		inWS = false
+	}
+	return b.String()
 }
 
 func canonicalQueryString(values url.Values) string {
@@ -195,7 +248,12 @@ func canonicalHeaders(h http.Header, host string) (string, string) {
 		if lk == "authorization" {
 			continue
 		}
-		flat[lk] = strings.TrimSpace(strings.Join(v, ","))
+		// AWS canonical header rule: trim + collapse internal
+		// whitespace runs to a single space (outside quoted values).
+		// Without the collapse pass, a header containing "  " or
+		// "\t\t" would be hashed differently than AWS's reference
+		// signer and the resulting signature would fail verification.
+		flat[lk] = collapseInternalWhitespace(strings.TrimSpace(strings.Join(v, ",")))
 	}
 	keys := make([]string, 0, len(flat))
 	for k := range flat {

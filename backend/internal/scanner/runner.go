@@ -71,7 +71,12 @@ type Result struct {
 
 // Run executes `tool` against the given targets with a runtime cap. Any
 // process that exceeds the runtime cap is killed by ctx cancellation.
-func (r Runner) Run(ctx context.Context, tool string, targets []string, runtime time.Duration) (*Result, error) {
+//
+// imageRef is ignored — LocalRunner exec's against the host's $PATH
+// rather than a container image. Present in the signature only to
+// satisfy the ExecRunner interface (the K8s runner uses it).
+func (r Runner) Run(ctx context.Context, imageRef, tool string, targets []string, runtime time.Duration) (*Result, error) {
+	_ = imageRef
 	if runtime <= 0 {
 		runtime = 30 * time.Minute
 	}

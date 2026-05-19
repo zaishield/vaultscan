@@ -35,7 +35,7 @@ func TestRunner_RefusesSyntheticInProductionMode(t *testing.T) {
 		t.Fatal("strict runner shouldn't allow synthetic")
 	}
 	// Use a tool name that definitely isn't on PATH.
-	_, err := r.Run(context.Background(), "vaultscan-nonexistent-tool", []string{"127.0.0.1"}, time.Second)
+	_, err := r.Run(context.Background(), "", "vaultscan-nonexistent-tool", []string{"127.0.0.1"}, time.Second)
 	if !errors.Is(err, ErrSyntheticForbidden) {
 		t.Fatalf("expected ErrSyntheticForbidden, got %v", err)
 	}
@@ -46,7 +46,7 @@ func TestRunner_AllowsSyntheticInTestMode(t *testing.T) {
 	if !r.AllowSynthetic {
 		t.Fatal("test runner should allow synthetic")
 	}
-	res, err := r.Run(context.Background(), "vaultscan-nonexistent-tool", []string{"127.0.0.1"}, time.Second)
+	res, err := r.Run(context.Background(), "", "vaultscan-nonexistent-tool", []string{"127.0.0.1"}, time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestRunner_StrictModeFromEnv(t *testing.T) {
 	// Using NewRunner() in production env should produce a strict runner.
 	t.Setenv("VAULTSCAN_ENV", "production")
 	r := NewRunner()
-	_, err := r.Run(context.Background(), "vaultscan-definitely-missing-binary", []string{"x"}, time.Second)
+	_, err := r.Run(context.Background(), "", "vaultscan-definitely-missing-binary", []string{"x"}, time.Second)
 	if !errors.Is(err, ErrSyntheticForbidden) {
 		t.Fatalf("prod NewRunner should refuse synthetic; got %v", err)
 	}

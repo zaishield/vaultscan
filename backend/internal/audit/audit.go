@@ -6,20 +6,20 @@
 package audit
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/rs/zerolog"
 
+	"github.com/zaishield/vaultscan/backend/internal/logging"
 	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
@@ -29,8 +29,11 @@ import (
 // operation) still produce an ops-visible signal. Without this, a
 // silently-failing audit pipeline would be detectable only by the
 // chain-verify cron — and only via row absence.
-var auditLogger = zerolog.New(os.Stderr).With().
-	Timestamp().Str("component", "audit").Logger()
+//
+// Routed through logging.Component so the level + env + service
+// labels match the rest of the process — the previous direct
+// zerolog.New(os.Stderr) call ignored VAULTSCAN_LOG_LEVEL.
+var auditLogger = logging.Component("audit")
 
 // Event types listed in Blueprint §32.1 (30+ entries) plus operational extras.
 const (
@@ -285,7 +288,6 @@ func (s *Service) Verify(ctx context.Context) (int64, error) {
 		expect := computeRowHash(hashVersion, prev, occurredAt,
 			event, actor, actorID, ipStr, userAgent,
 			platID, partID, tenID, tType, tID, payload)
-		_ = canonicalIP // see Record() — derefStr handles the same canonical empty-string form.
 		if !equal(expect, hash) {
 			return id, nil
 		}
@@ -414,14 +416,8 @@ func canonicalString(s string) string {
 	return s
 }
 
-func equal(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
+// equal is retained as a thin wrapper over bytes.Equal so callers
+// can keep their `equal(a, b)` call sites without dragging the
+// import in everywhere. bytes.Equal is the canonical comparison
+// (and matches our prior hand-rolled byte-by-byte semantics).
+func equal(a, b []byte) bool { return bytes.Equal(a, b) }

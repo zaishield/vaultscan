@@ -105,10 +105,39 @@ resource "aws_db_instance" "primary" {
   skip_final_snapshot      = var.environment != "prod"
   final_snapshot_identifier = var.environment == "prod" ? "${var.prefix}-final" : null
   performance_insights_enabled = var.environment != "dev"
-  monitoring_interval         = 60
-  apply_immediately           = var.environment != "prod"
-  publicly_accessible         = false
-  tags                        = var.tags
+  # Enhanced Monitoring requires both monitoring_interval AND a role
+  # with AmazonRDSEnhancedMonitoringRole attached. Previously
+  # monitoring_interval=60 was set without monitoring_role_arn,
+  # which AWS RDS silently ignores → no per-second metrics in
+  # CloudWatch. The role is built below.
+  monitoring_interval     = 60
+  monitoring_role_arn     = aws_iam_role.rds_enhanced_monitoring.arn
+  apply_immediately       = var.environment != "prod"
+  publicly_accessible     = false
+  tags                    = var.tags
+}
+
+# IAM role for RDS Enhanced Monitoring. Required by RDS to publish
+# per-second OS metrics to CloudWatch logs. Without this paired with
+# monitoring_interval, the option is a no-op.
+resource "aws_iam_role" "rds_enhanced_monitoring" {
+  name = "${var.prefix}-rds-enhanced-monitoring"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "sts:AssumeRole"
+      Principal = {
+        Service = "monitoring.rds.amazonaws.com"
+      }
+    }]
+  })
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "rds_enhanced_monitoring" {
+  role       = aws_iam_role.rds_enhanced_monitoring.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
 resource "aws_db_instance" "replica" {

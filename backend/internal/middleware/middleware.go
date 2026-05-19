@@ -397,18 +397,11 @@ func (rl *RateLimit) allow(key string) bool {
 		rl.buckets[key] = b
 	}
 	delta := now.Sub(b.lastRefill).Seconds()
-	b.tokens = minF(float64(rl.burst), b.tokens+delta*float64(rl.rps))
+	b.tokens = min(float64(rl.burst), b.tokens+delta*float64(rl.rps))
 	b.lastRefill = now
 	if b.tokens < 1 {
 		return false
 	}
 	b.tokens--
 	return true
-}
-
-func minF(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
 }

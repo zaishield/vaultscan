@@ -304,7 +304,15 @@ func (w *Worker) execute(ctx context.Context, j *claimedJob) {
 			continue
 		}
 
-		res, err := w.runner.Run(ctx, tool, j.Targets, 30*time.Minute)
+		// Pass the cosign-verified image ref (with digest when
+		// available) to the runner. K8sJobRunner pulls THIS ref,
+		// closing the gap where :latest was pulled at runtime even
+		// after a digest-pinned cosign verdict.
+		imgRef := img.Reference
+		if img.Digest != "" {
+			imgRef = img.Reference + "@" + img.Digest
+		}
+		res, err := w.runner.Run(ctx, imgRef, tool, j.Targets, 30*time.Minute)
 		if err != nil {
 			// Distinguish "binary missing in production" from a generic
 			// run failure. ErrSyntheticForbidden is structural — fail the

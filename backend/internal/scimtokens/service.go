@@ -23,7 +23,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/zaishield/vaultscan/backend/internal/audit"
+	"github.com/zaishield/vaultscan/backend/internal/logging"
 )
+
+// scimTokensLogger is the component-tagged child logger for scim
+// token verification side-effects. Routed through the central
+// logger so level + env labels flow through.
+var scimTokensLogger = logging.Component("scim-tokens")
 
 // Token is the metadata view of one SCIM token. The plaintext is
 // only returned by Create (in the dedicated CreateResult struct).
@@ -221,11 +227,29 @@ func (s *Service) Verify(ctx context.Context, tenantID uuid.UUID, presented stri
 	// Touch last_used_* exactly once for the winning row. Done AFTER
 	// the full bcrypt walk so the side-channel of the UPDATE doesn't
 	// reveal which row matched (the matching row's index is no longer
-	// observable from total bcrypt time either).
-	_, _ = s.pool.Exec(ctx, `
+	// observable from total bcrypt time either). Errors logged
+	// instead of swallowed — a Touch failure means an auditor
+	// asking "when was this token last used?" gets a stale answer.
+	if _, err := s.pool.Exec(ctx, `
 		UPDATE tenant_scim_tokens
 		   SET last_used_at = now(), last_used_ip = $2
-		 WHERE id = $1`, matchedID, fromIP.String())
+		 WHERE id = $1`, matchedID, fromIP.String()); err != nil {
+		scimTokensLogger.Warn().Err(err).
+			Str("token_id", matchedID.String()).
+			Str("tenant_id", tenantID.String()).
+			Msg("scimtokens: last_used touch failed")
+	}
+	// Audit the successful authentication. SCIM is a privileged
+	// surface (creates/deactivates users); every Verify should
+	// appear in the audit trail.
+	_ = s.audit.Record(ctx, audit.Entry{
+		Event:    "tenant.scim_token_authenticated",
+		TenantID: &tenantID,
+		Payload: map[string]any{
+			"token_id":   matchedID,
+			"source_ip":  fromIP.String(),
+		},
+	})
 	return &Token{ID: matchedID, TenantID: tenantID}, nil
 }
 

@@ -112,7 +112,7 @@ func newStubK8s(t *testing.T, status, log string) (*K8sJobRunner, *stubK8s) {
 func TestK8sJobRunner_HappyPath(t *testing.T) {
 	t.Parallel()
 	r, s := newStubK8s(t, "succeeded", "<nmaprun><host/></nmaprun>")
-	res, err := r.Run(context.Background(), "nmap", []string{"127.0.0.1"}, 5*time.Second)
+	res, err := r.Run(context.Background(), "registry.test/nmap@sha256:abc", "nmap", []string{"127.0.0.1"}, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestK8sJobRunner_HappyPath(t *testing.T) {
 func TestK8sJobRunner_FailedJobReturnsNonzero(t *testing.T) {
 	t.Parallel()
 	r, _ := newStubK8s(t, "failed", "scanner ran out of memory")
-	res, err := r.Run(context.Background(), "nuclei", []string{"x.example"}, 5*time.Second)
+	res, err := r.Run(context.Background(), "registry.test/nuclei@sha256:def", "nuclei", []string{"x.example"}, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestK8sJobRunner_FailedJobReturnsNonzero(t *testing.T) {
 func TestK8sJobRunner_SendsBearerAuth(t *testing.T) {
 	t.Parallel()
 	r, s := newStubK8s(t, "succeeded", "")
-	_, _ = r.Run(context.Background(), "nmap", []string{"x"}, 5*time.Second)
+	_, _ = r.Run(context.Background(), "registry.test/nmap@sha256:abc", "nmap", []string{"x"}, 5*time.Second)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.authSeen) == 0 {

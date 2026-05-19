@@ -25,8 +25,15 @@ import (
 )
 
 // ExecRunner is the contract both LocalRunner + K8sJobRunner satisfy.
+//
+// `imageRef` is the cosign-verified image reference (typically
+// "<registry>/<tool>@sha256:<digest>") the caller's Registry.VerifyImage
+// step approved. LocalRunner ignores it (exec'd against the host's
+// $PATH, no image involved). K8sJobRunner USES it verbatim to ensure
+// the supply-chain gate's verdict is what actually runs — pulling
+// :latest at runtime would defeat the entire signature check.
 type ExecRunner interface {
-	Run(ctx context.Context, tool string, targets []string, runtime time.Duration) (*Result, error)
+	Run(ctx context.Context, imageRef, tool string, targets []string, runtime time.Duration) (*Result, error)
 	SetAllowSynthetic(bool)
 	AllowsSynthetic() bool
 }

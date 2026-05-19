@@ -52,10 +52,35 @@ func NewFleetMetrics(pool *pgxpool.Pool) *FleetMetrics {
 	return &FleetMetrics{pool: pool, MaxAgents: 5000}
 }
 
+// ScrapeToken, when non-empty, gates Handler() behind a bearer-token
+// check. Set this from cmd/agent-gateway to the value of an env var
+// (VAULTSCAN_FLEET_METRICS_SCRAPE_TOKEN). When unset, the endpoint
+// is unauthenticated and relies entirely on NetworkPolicy isolation.
+// Operators who want defense-in-depth (e.g. shared ingress) set
+// the env var.
+type fleetScrapeAuth struct {
+	token string
+}
+
+var fleetScrapeAuthCfg fleetScrapeAuth
+
+// SetScrapeToken configures the optional bearer-token gate. Called
+// once at process boot. Empty string keeps the endpoint open
+// (NetworkPolicy-only); non-empty requires Authorization: Bearer <t>.
+func SetScrapeToken(t string) { fleetScrapeAuthCfg.token = t }
+
 // Handler returns the http.HandlerFunc that emits the exposition.
 // Mount at /agent-fleet-metrics from cmd/agent-gateway/main.go.
 func (f *FleetMetrics) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if t := fleetScrapeAuthCfg.token; t != "" {
+			got := r.Header.Get("Authorization")
+			const prefix = "Bearer "
+			if len(got) < len(prefix) || got[:len(prefix)] != prefix || got[len(prefix):] != t {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
 		// Cap render time so a slow query doesn't pile up scrape
 		// timeouts; Prometheus default scrape timeout is 10s.
 		ctx, cancel := context.WithTimeout(r.Context(), 9*time.Second)

@@ -599,15 +599,18 @@ func verifyPubKey(pub any, algorithm string, digest, sig []byte) bool {
 	case *ecdsa.PublicKey:
 		return ecdsa.VerifyASN1(p, digest, sig)
 	case *rsa.PublicKey:
+		// Explicit allowlist of algorithm strings. Previously a typo
+		// like "rsa-pss-sh256" silently dispatched to PKCS1v15 via the
+		// default branch. Now: unrecognised algorithm strings fail.
 		switch strings.ToLower(algorithm) {
 		case "rsa-pss-sha256":
 			return rsa.VerifyPSS(p, crypto.SHA256, digest, sig,
 				&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash}) == nil
-		default:
+		case "rsa-pkcs1v15-sha256", "rsa-sha256":
 			return rsa.VerifyPKCS1v15(p, crypto.SHA256, digest, sig) == nil
+		default:
+			return false
 		}
 	}
 	return false
 }
-
-var _ = time.Time{} // keep import used (see DecisionRejected* future fields)
