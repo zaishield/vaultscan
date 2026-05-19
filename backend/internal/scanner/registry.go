@@ -115,8 +115,13 @@ func (r *Registry) VerifyImage(ctx context.Context, img *Image, observedDigest, 
 		return "", err
 	}
 	// Audit every decision — accept or reject. This is the trail the §32
-	// auditor needs to defend the platform.
-	_ = r.cosign.LogDecision(ctx, img.Reference, res, nil)
+	// auditor needs to defend the platform. Failure to record the
+	// decision MUST fail the verification, NOT pass it: a silently-
+	// missing audit row means a §32 auditor sees an image being
+	// scanned with no record of who decided it could run.
+	if err := r.cosign.LogDecision(ctx, img.Reference, res, nil); err != nil {
+		return "", fmt.Errorf("cosign: persist verification decision: %w", err)
+	}
 	if res.Decision != cosign.DecisionAccepted {
 		return "", fmt.Errorf("%w: %s — %s", ErrCosignRejected, res.Decision, res.Reason)
 	}

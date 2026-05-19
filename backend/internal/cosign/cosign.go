@@ -337,8 +337,7 @@ func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest stri
 			env.Critical.Image.DockerManifestDigest, expectedDigest)
 		return r, nil
 	}
-	if imageRef != "" && !strings.Contains(env.Critical.Identity.DockerReference, imageRef) &&
-		!strings.Contains(imageRef, env.Critical.Identity.DockerReference) {
+	if imageRef != "" && !cosignImageRefMatches(env.Critical.Identity.DockerReference, imageRef) {
 		r.Decision, r.Reason = DecisionRejectedPayload, fmt.Sprintf(
 			"payload identity %q doesn't match requested %s",
 			env.Critical.Identity.DockerReference, imageRef)
@@ -361,10 +360,19 @@ func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest stri
 	}
 
 	// Try every active key — cosign supports multiple signatures per image.
+	//
+	// Key-hint policy: when bundle.KeyID is set, ONLY keys with the
+	// matching kid are considered. The previous implementation fell
+	// back to "try every key regardless of hint" after the hinted
+	// loop failed — that defeated key pinning entirely: an attacker
+	// who knew any one active key's signature could ship it with a
+	// non-matching kid and the fallback would still accept it.
+	//
+	// Operators rotating keys ship co-signatures explicitly (separate
+	// bundle.SignatureB64 entries or a bundle without KeyID), not by
+	// expecting the verifier to drop the kid pin.
 	digest := sha256.Sum256(payloadBytes)
 	for _, k := range keys {
-		// If the bundle hints at a key id, prefer that one but still allow
-		// any other to pass — operators commonly co-sign during rotation.
 		if bundle.KeyID != "" && k.KeyID != bundle.KeyID {
 			continue
 		}
@@ -375,22 +383,59 @@ func (s *Service) VerifyImage(ctx context.Context, imageRef, expectedDigest stri
 			return r, nil
 		}
 	}
-	// If the bundle's key hint matched nothing above, fall back to trying
-	// every active key regardless of hint.
-	if bundle.KeyID != "" {
-		for _, k := range keys {
-			if verifyPubKey(k.parsedPublic, k.Algorithm, digest[:], sig) {
-				r.Decision = DecisionAccepted
-				r.MatchedKey = k.KeyID
-				r.Reason = "matched via fallback after key_id hint mismatch"
-				s.attachRekor(ctx, r, bundle, payloadBytes)
-				return r, nil
-			}
-		}
-	}
 	r.Decision = DecisionRejectedSignature
-	r.Reason = "no active trusted key produced this signature"
+	if bundle.KeyID != "" {
+		r.Reason = fmt.Sprintf("no active trusted key with kid=%q produced this signature", bundle.KeyID)
+	} else {
+		r.Reason = "no active trusted key produced this signature"
+	}
 	return r, nil
+}
+
+// cosignImageRefMatches returns true iff actual (the docker reference
+// stamped into the signed payload) is equivalent to expected (the
+// caller-requested reference). Equivalent means:
+//   - exact byte match, OR
+//   - matched after normalisation: stripping a leading "docker.io/"
+//     and a trailing tag/digest (":sha256:abc" or ":1.2.3"). The
+//     same image can be addressed as "alpine" or "docker.io/alpine"
+//     or "docker.io/library/alpine"; cosign signs the canonical form.
+//
+// The previous strings.Contains pair-match was bidirectionally
+// substring-loose: "myorg/internal" would match "evil.com/myorg/
+// internal/malware" (expected ∈ actual) AND "myorg/in" (actual ∈
+// expected) — either direction is a forgery surface.
+func cosignImageRefMatches(actual, expected string) bool {
+	if actual == expected {
+		return true
+	}
+	return cosignNormalisedRef(actual) == cosignNormalisedRef(expected)
+}
+
+// cosignNormalisedRef strips docker.io's implicit prefix + the
+// trailing tag/digest so two references to the same repo+image
+// compare equal regardless of registry shorthand.
+func cosignNormalisedRef(ref string) string {
+	// Strip everything from the first '@' (digest separator).
+	if at := strings.Index(ref, "@"); at >= 0 {
+		ref = ref[:at]
+	}
+	// Strip a trailing ":<tag>". Tags can't contain '/' so look from
+	// the last '/' to avoid eating a port like ":5000".
+	if slash := strings.LastIndex(ref, "/"); slash >= 0 {
+		head := ref[:slash]
+		tail := ref[slash:]
+		if colon := strings.Index(tail, ":"); colon >= 0 {
+			ref = head + tail[:colon]
+		}
+	} else if colon := strings.Index(ref, ":"); colon >= 0 {
+		// No '/' at all (e.g. "alpine:3.18") → strip after first ':'.
+		ref = ref[:colon]
+	}
+	ref = strings.TrimPrefix(ref, "docker.io/")
+	ref = strings.TrimPrefix(ref, "index.docker.io/")
+	ref = strings.TrimPrefix(ref, "library/")
+	return ref
 }
 
 // attachRekor parses + (optionally) verifies the bundle's Rekor entry

@@ -34,6 +34,7 @@
 package cosign
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -177,17 +178,51 @@ func (rk *RekorPublicKey) VerifySignedEntryTimestamp(entry *RekorEntry, payload 
 
 // canonicalSETPayload reconstructs the canonical JSON that Rekor
 // signs when emitting the SET. Format is documented at
-// https://github.com/sigstore/rekor/blob/main/types/types.go.
+// https://github.com/sigstore/rekor/blob/main/types/types.go and
+// uses RFC 8785 JCS — sorted keys, no whitespace, no HTML escaping,
+// numbers encoded without exponent.
+//
+// We approximate JCS via:
+//   - map[string]any (json.Marshal sorts string keys lexicographically)
+//   - explicit json.Encoder with SetEscapeHTML(false) so '<', '>',
+//     '&' in field values aren't \u-escaped — Go's default json
+//     output diverges from JCS here, and although the body field is
+//     base64 (immune) the logID is hex, also immune; we still flip
+//     the flag as defense in depth in case future fields change.
+//   - trim the trailing newline json.Encoder appends so byte-for-byte
+//     match against Rekor's signing input.
+//
+// We additionally bounds-check the int64 fields: JavaScript /
+// JSON canonical encoders treat the IEEE 754 "safe integer" range
+// (±2^53) as the upper bound for lossless number representation.
+// Beyond that, JSON parsers might re-encode values differently.
+// 2^53 ≈ 9e15 log entries; we trip a hard failure rather than
+// silently sign a divergent payload.
 func canonicalSETPayload(entry *RekorEntry, body []byte) []byte {
+	const safeIntMax = int64(1) << 53
+	if entry.LogIndex > safeIntMax || entry.LogIndex < -safeIntMax {
+		// In practice unreachable until Rekor crosses 9 quadrillion
+		// entries; included so that if it ever happens we fail loud.
+		return nil
+	}
 	doc := map[string]any{
 		"body":           base64.StdEncoding.EncodeToString(body),
 		"integratedTime": entry.IntegratedAt.Unix(),
 		"logID":          entry.LogID,
 		"logIndex":       entry.LogIndex,
 	}
-	// json.Marshal sorts keys for map[string]any — that's the canonical form.
-	b, _ := json.Marshal(doc)
-	return b
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(doc); err != nil {
+		return nil
+	}
+	out := buf.Bytes()
+	// json.Encoder appends a trailing newline; Rekor's canon doesn't.
+	if n := len(out); n > 0 && out[n-1] == '\n' {
+		out = out[:n-1]
+	}
+	return out
 }
 
 // verifyASN1 wraps ecdsa.VerifyASN1 with a nil-key guard so a

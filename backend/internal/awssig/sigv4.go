@@ -37,6 +37,7 @@ package awssig
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -58,9 +59,26 @@ type Credentials struct {
 // HEAD / DELETE that have no payload.
 const EmptyPayloadSHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
+// MaxBodyBytes caps the SigV4 body buffer at 16 MiB. The payload
+// hash for AWS signature v4 requires the full body, so we must read
+// it in memory before signing — but a request with a multi-gigabyte
+// body would OOM the signer. AWS recommends STREAMING-AWS4-HMAC-
+// SHA256-PAYLOAD for large objects; this package targets KMS / SES /
+// other small-body APIs where 16 MiB is plenty. Callers that need
+// large-object signing should use the streaming path (out of scope
+// here).
+const MaxBodyBytes = 16 << 20
+
 // Sign mutates req to carry the Authorization + X-Amz-Date headers
 // required by AWS API endpoints. Body is read once (and reset) so the
 // payload hash is computed correctly.
+//
+// Buffer hardening (vs. the previous implementation):
+//   - Cap body read at MaxBodyBytes via io.LimitReader.
+//   - Reuse the same []byte buffer for both the hash and the body
+//     reset (bytes.NewReader), avoiding the prior `string(body)`
+//     intermediate copy. Halves the peak heap during signing of
+//     medium-sized payloads.
 func Sign(req *http.Request, region, service string, creds Credentials) error {
 	now := time.Now().UTC()
 	amzDate := now.Format("20060102T150405Z")
@@ -68,13 +86,22 @@ func Sign(req *http.Request, region, service string, creds Credentials) error {
 
 	payloadHash := EmptyPayloadSHA256
 	if req.Body != nil {
-		body, err := io.ReadAll(req.Body)
+		// LimitReader caps at MaxBodyBytes+1 so we can detect "too big"
+		// without a separate check on req.ContentLength (which is often
+		// -1 / unknown for chunked encodings).
+		body, err := io.ReadAll(io.LimitReader(req.Body, MaxBodyBytes+1))
 		if err != nil {
 			return fmt.Errorf("sigv4: read body: %w", err)
 		}
 		_ = req.Body.Close()
+		if int64(len(body)) > MaxBodyBytes {
+			return fmt.Errorf("sigv4: body exceeds %d bytes; use streaming signing for large objects", MaxBodyBytes)
+		}
 		payloadHash = SHA256Hex(body)
-		req.Body = io.NopCloser(strings.NewReader(string(body)))
+		// bytes.NewReader wraps the EXISTING slice without copying;
+		// strings.NewReader(string(body)) used to allocate a second
+		// copy of the body in immutable string form.
+		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.ContentLength = int64(len(body))
 	}
 
