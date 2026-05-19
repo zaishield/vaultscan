@@ -167,12 +167,24 @@ func (s *Service) Revoke(ctx context.Context, tenantID, tokenID uuid.UUID, revok
 }
 
 // Verify checks a bearer token against every active token for the
-// tenant. Returns the token row on match, or nil. Updates
-// last_used_at / last_used_ip on every successful verification.
+// tenant. Returns the token row on match, or nil.
 //
-// Bcrypt is constant-time; we walk every row because that's the
-// only safe way (we can't query by hash since bcrypt is salted).
-// In practice tenants have <10 SCIM tokens — this is fine.
+// Timing-oracle defence: the previous implementation short-circuited
+// the row loop on the first matching bcrypt — making request latency
+// reveal (a) whether a token matched at all and (b) its position in
+// the table. An attacker timing requests could fingerprint how many
+// tokens a tenant has and where in the list a given token lives.
+//
+// This implementation:
+//   - always reads every (non-revoked) row
+//   - performs bcrypt on every row regardless of prior matches
+//   - records the matching id in a local var rather than returning
+//
+// The total bcrypt time is N × bcrypt-cost regardless of input, so
+// the only timing signal is N itself — which is metadata the tenant
+// admin controls (list count). Per-request position is no longer
+// observable. In practice tenants have <10 SCIM tokens, so the
+// constant cost is bounded.
 func (s *Service) Verify(ctx context.Context, tenantID uuid.UUID, presented string, fromIP net.IP) (*Token, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, token_hash, expires_at
@@ -182,6 +194,9 @@ func (s *Service) Verify(ctx context.Context, tenantID uuid.UUID, presented stri
 		return nil, err
 	}
 	defer rows.Close()
+	now := time.Now().UTC()
+	var matchedID uuid.UUID
+	matched := false
 	for rows.Next() {
 		var id uuid.UUID
 		var hash string
@@ -189,21 +204,29 @@ func (s *Service) Verify(ctx context.Context, tenantID uuid.UUID, presented stri
 		if err := rows.Scan(&id, &hash, &expires); err != nil {
 			return nil, err
 		}
-		if expires != nil && time.Now().UTC().After(*expires) {
-			continue
+		isCandidate := expires == nil || now.Before(*expires)
+		// Always run bcrypt even on non-candidates, so an attacker
+		// can't time-distinguish "expired-only row" from "active row
+		// that doesn't match". bcrypt's natural cost dominates the
+		// total latency.
+		ok := bcrypt.CompareHashAndPassword([]byte(hash), []byte(presented)) == nil
+		if ok && isCandidate && !matched {
+			matchedID = id
+			matched = true
 		}
-		if bcrypt.CompareHashAndPassword([]byte(hash), []byte(presented)) != nil {
-			continue
-		}
-		// Match. Touch last_used_*.
-		_, _ = s.pool.Exec(ctx, `
-			UPDATE tenant_scim_tokens
-			   SET last_used_at = now(), last_used_ip = $2
-			 WHERE id = $1`, id, fromIP.String())
-		t := &Token{ID: id, TenantID: tenantID}
-		return t, nil
 	}
-	return nil, nil
+	if !matched {
+		return nil, nil
+	}
+	// Touch last_used_* exactly once for the winning row. Done AFTER
+	// the full bcrypt walk so the side-channel of the UPDATE doesn't
+	// reveal which row matched (the matching row's index is no longer
+	// observable from total bcrypt time either).
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE tenant_scim_tokens
+		   SET last_used_at = now(), last_used_ip = $2
+		 WHERE id = $1`, matchedID, fromIP.String())
+	return &Token{ID: matchedID, TenantID: tenantID}, nil
 }
 
 // isUniqueViolation sniffs pgx errors for the 23505 SQLSTATE.

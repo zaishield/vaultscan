@@ -72,15 +72,51 @@ var ErrCrossTenantForbidden = errors.New("cross-tenant operation forbidden")
 // must be explicit.
 var ErrTenantRequired = errors.New("tenant_id required")
 
+// PartnerTenantChecker resolves whether the requested tenant belongs
+// to the partner. Returns true if the partner-tenant linkage exists.
+// Pass via WithPartnerTenantCheck to make AuthorizeTargetTenant
+// enforce the linkage for partner-level identities.
+type PartnerTenantChecker func(partnerID, tenantID uuid.UUID) bool
+
+// AuthorizeOption tunes AuthorizeTargetTenant behaviour.
+type AuthorizeOption func(*authorizeOpts)
+
+type authorizeOpts struct {
+	checkPartnerLinkage PartnerTenantChecker
+}
+
+// WithPartnerTenantCheck registers a closure that AuthorizeTargetTenant
+// will call for partner-level identities. The closure must return true
+// only when the requested tenant is in the caller's partner. Callers
+// should pass a DB-backed implementation here (see DefaultPartnerTenantChecker).
+//
+// Without this option, partner-level identities can target any tenant —
+// previously the only safety net was the service layer's JOIN on
+// partner_id, which is easy to forget on a new handler. Setting the
+// check makes the gate explicit at the authorization boundary.
+func WithPartnerTenantCheck(fn PartnerTenantChecker) AuthorizeOption {
+	return func(o *authorizeOpts) { o.checkPartnerLinkage = fn }
+}
+
 // AuthorizeTargetTenant verifies the identity is allowed to operate on
 // requested. Returns the resolved tenant UUID (always non-nil on success).
 //
 // requested may be empty/zero — in which case:
 //   - tenant-level callers: defaults to their TenantID
 //   - partner/platform callers: error (must be explicit)
-func AuthorizeTargetTenant(id *Identity, requested string) (uuid.UUID, error) {
+//
+// Partner-level callers: when WithPartnerTenantCheck is provided, the
+// requested tenant MUST belong to the caller's partner — otherwise
+// ErrCrossTenantForbidden. Without that option, partner-tenant
+// linkage is delegated to the service layer (legacy behaviour, kept
+// for backward compat).
+func AuthorizeTargetTenant(id *Identity, requested string, opts ...AuthorizeOption) (uuid.UUID, error) {
 	if id == nil {
 		return uuid.Nil, errors.New("no identity")
+	}
+	var o authorizeOpts
+	for _, fn := range opts {
+		fn(&o)
 	}
 
 	// Parse the requested tenant (lenient: empty is ok).
@@ -106,11 +142,17 @@ func AuthorizeTargetTenant(id *Identity, requested string) (uuid.UUID, error) {
 
 	// 2. Partner-level: any tenant is allowed; the service layer's
 	// JOIN on partner_id constrains the data scope. We still require
-	// an explicit tenant.
+	// an explicit tenant. When a PartnerTenantChecker is wired, also
+	// enforce the linkage here (defense-in-depth).
 	for _, role := range id.Roles {
 		if PartnerLevelRoles[role] {
 			if requestedID == uuid.Nil {
 				return uuid.Nil, ErrTenantRequired
+			}
+			if o.checkPartnerLinkage != nil && id.PartnerID != nil {
+				if !o.checkPartnerLinkage(*id.PartnerID, requestedID) {
+					return uuid.Nil, ErrCrossTenantForbidden
+				}
 			}
 			return requestedID, nil
 		}

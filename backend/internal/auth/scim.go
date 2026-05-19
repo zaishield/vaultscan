@@ -143,16 +143,31 @@ func (s *SCIMServer) createUser(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	// RFC 7644 §3.3: a POST that conflicts with an existing resource
+	// MUST return 409 Conflict, NOT silently merge. The previous
+	// upsert lost the distinction — an IdP that POSTed a renamed user
+	// with the same email got the existing row's data with the new
+	// full_name silently overwritten. We pre-check existence; if a
+	// row exists we surface 409 with the existing resource location.
+	var existingID uuid.UUID
+	err := s.pool.QueryRow(r.Context(),
+		`SELECT id FROM users WHERE tenant_id = $1 AND email = $2`,
+		*id.TenantID, email).Scan(&existingID)
+	if err == nil {
+		s.scimError(w, http.StatusConflict,
+			fmt.Sprintf("user already exists with id=%s (RFC 7644 §3.3)", existingID))
+		return
+	}
+	if !errors.Is(err, pgxNoRows) {
+		s.scimError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	newID := uuid.New()
-	_, err := s.pool.Exec(r.Context(), `
+	if _, err := s.pool.Exec(r.Context(), `
 		INSERT INTO users(id, tenant_id, email, full_name, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, now())
-		ON CONFLICT (tenant_id, email) DO UPDATE
-		   SET full_name = EXCLUDED.full_name,
-		       status    = EXCLUDED.status`,
+		VALUES ($1, $2, $3, $4, $5, now())`,
 		newID, *id.TenantID, email, in.Name.Formatted,
-		statusFromActive(in.Active))
-	if err != nil {
+		statusFromActive(in.Active)); err != nil {
 		s.scimError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -243,22 +258,48 @@ func (s *SCIMServer) patchUser(w http.ResponseWriter, r *http.Request, userID uu
 	}
 	for _, op := range patch.Operations {
 		path := strings.ToLower(op.Path)
-		switch path {
-		case "active":
-			var active bool
-			_ = json.Unmarshal(op.Value, &active)
-			if _, err := s.pool.Exec(r.Context(),
-				`UPDATE users SET status=$1 WHERE id=$2 AND tenant_id=$3`,
-				statusFromActive(active), userID, *id.TenantID); err != nil {
-				s.scimError(w, http.StatusInternalServerError, err.Error())
-				return
+		opType := strings.ToLower(strings.TrimSpace(op.Op))
+		// RFC 7644 §3.5.2: PATCH "op" is REQUIRED, must be one of
+		// add | replace | remove. Honour it — previously every
+		// patch acted like a replace regardless of what the IdP
+		// asked for. For our paths "remove" maps to clearing the
+		// value; "add" and "replace" are functionally identical for
+		// scalar fields like active/name.formatted.
+		switch opType {
+		case "add", "replace":
+			switch path {
+			case "active":
+				var active bool
+				_ = json.Unmarshal(op.Value, &active)
+				if _, err := s.pool.Exec(r.Context(),
+					`UPDATE users SET status=$1 WHERE id=$2 AND tenant_id=$3`,
+					statusFromActive(active), userID, *id.TenantID); err != nil {
+					s.scimError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+			case "name.formatted":
+				var v string
+				_ = json.Unmarshal(op.Value, &v)
+				_, _ = s.pool.Exec(r.Context(),
+					`UPDATE users SET full_name=$1 WHERE id=$2 AND tenant_id=$3`,
+					v, userID, *id.TenantID)
 			}
-		case "name.formatted":
-			var v string
-			_ = json.Unmarshal(op.Value, &v)
-			_, _ = s.pool.Exec(r.Context(),
-				`UPDATE users SET full_name=$1 WHERE id=$2 AND tenant_id=$3`,
-				v, userID, *id.TenantID)
+		case "remove":
+			switch path {
+			case "active":
+				// Removing "active" in SCIM ≈ deactivate the user.
+				_, _ = s.pool.Exec(r.Context(),
+					`UPDATE users SET status='deactivated' WHERE id=$1 AND tenant_id=$2`,
+					userID, *id.TenantID)
+			case "name.formatted":
+				_, _ = s.pool.Exec(r.Context(),
+					`UPDATE users SET full_name=NULL WHERE id=$1 AND tenant_id=$2`,
+					userID, *id.TenantID)
+			}
+		default:
+			s.scimError(w, http.StatusBadRequest,
+				fmt.Sprintf("PATCH op %q not supported (use add|replace|remove)", op.Op))
+			return
 		}
 	}
 	s.getUser(w, r, userID)
