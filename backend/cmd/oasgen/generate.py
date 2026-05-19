@@ -182,14 +182,17 @@ def parameters_for(path: str):
 # spec on a route they've audited end-to-end.
 #
 # Honest current state:
-#   * Entries below: 23 endpoints with tight schemas (engagements,
-#     assets, scans, integrations, reports added in the second batch)
+#   * Entries below: 39 endpoints with tight schemas across auth/MFA/
+#     JWT, tenants, users, partners, engagements, scope, assets, scans,
+#     findings (incl. bulk), integrations, reports, evidence, branding,
+#     agents, dashboards, audit/verify, healthz/livez, and identity.
 #   * Total routes:  ~223 (see paths summary at end of openapi.yaml)
-#   * Coverage:      ~10%. The remaining endpoints are accurate enough
+#   * Coverage:      ~17%. The remaining endpoints are accurate enough
 #                    for client codegen at the field-list level but
 #                    surface NO type constraints (string vs int vs uuid,
-#                    nullable, enum membership). Tightening more
-#                    endpoints is a future iteration.
+#                    nullable, enum membership). Tightening the long
+#                    tail is mechanical work — read the handler's
+#                    writeJSON/decode shape and add an entry below.
 # --------------------------------------------------------------------------
 
 # Reusable component shapes — defined once, referenced from
@@ -589,6 +592,280 @@ SCHEMA_OVERRIDES = {
                 "approved_by":  {"type": "string", "format": "uuid", "nullable": True},
             },
             "required": ["id", "report_type", "status"],
+        },
+    },
+
+    # ----- Partners --------------------------------------------------------
+    "POST /api/v1/partners": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "parent_id": {"type": "string", "format": "uuid"},
+                "type":      {"type": "string", "enum": ["zaishield", "distributor", "mssp", "direct", "client"]},
+                "name":      {"type": "string", "minLength": 1},
+                "slug":      {"type": "string", "pattern": "^[a-z0-9-]+$"},
+            },
+            "required": ["type", "name", "slug"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":   {"type": "string", "format": "uuid"},
+                "slug": {"type": "string"},
+                "type": {"type": "string"},
+            },
+            "required": ["id"],
+        },
+    },
+    "GET /api/v1/partners/{partner_id}": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":         {"type": "string", "format": "uuid"},
+                "parent_id":  {"type": "string", "format": "uuid", "nullable": True},
+                "type":       {"type": "string"},
+                "name":       {"type": "string"},
+                "slug":       {"type": "string"},
+                "status":     {"type": "string", "enum": ["active", "suspended"]},
+                "created_at": {"type": "string", "format": "date-time"},
+            },
+            "required": ["id", "name", "slug", "status"],
+        },
+    },
+
+    # ----- Scope -----------------------------------------------------------
+    "POST /api/v1/scope": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "engagement_id": {"type": "string", "format": "uuid"},
+                "target_type":   {"type": "string", "enum": [
+                    "host", "url", "ip_range", "domain", "cloud_account",
+                    "api_endpoint", "container_image", "code_repository",
+                ]},
+                "target_value":  {"type": "string"},
+                "plane":         {"type": "string", "enum": ["external", "internal"]},
+                "notes":         {"type": "string"},
+            },
+            "required": ["engagement_id", "target_type", "target_value"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":     {"type": "string", "format": "uuid"},
+                "status": {"type": "string", "enum": ["pending_approval", "approved", "rejected"]},
+            },
+            "required": ["id", "status"],
+        },
+    },
+
+    # ----- Reports ---------------------------------------------------------
+    "POST /api/v1/reports": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "partner_id":    {"type": "string", "format": "uuid"},
+                "tenant_id":     {"type": "string", "format": "uuid"},
+                "engagement_id": {"type": "string", "format": "uuid"},
+                "report_type":   {"type": "string", "enum": [
+                    "executive", "technical", "pentest", "compliance",
+                    "incident", "post_engagement",
+                ]},
+                "title":         {"type": "string", "minLength": 1},
+                "formats":       {"type": "array", "items": {"type": "string", "enum": ["pdf", "docx", "xlsx", "html"]}},
+            },
+            "required": ["engagement_id", "report_type", "title"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":     {"type": "string", "format": "uuid"},
+                "status": {"type": "string"},
+            },
+            "required": ["id", "status"],
+        },
+    },
+
+    # ----- Findings (bulk + comment) ---------------------------------------
+    "POST /api/v1/findings/bulk": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "tenant_id":   {"type": "string", "format": "uuid"},
+                "ids":         {"type": "array", "items": {"type": "string", "format": "uuid"}, "minItems": 1},
+                "action":      {"type": "string", "enum": ["status", "assign", "risk_accept"]},
+                "status":      {"type": "string"},
+                "assignee_id": {"type": "string", "format": "uuid"},
+                "note":        {"type": "string"},
+            },
+            "required": ["tenant_id", "ids", "action"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "updated": {"type": "integer", "minimum": 0},
+            },
+            "required": ["updated"],
+        },
+    },
+
+    # ----- Branding (tenant) -----------------------------------------------
+    "GET /api/v1/branding": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "partner_id":   {"type": "string", "format": "uuid"},
+                "logo_url":     {"type": "string"},
+                "primary_color": {"type": "string"},
+                "support_email": {"type": "string"},
+            },
+        },
+    },
+
+    # ----- Agents ----------------------------------------------------------
+    "POST /api/v1/agents": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "partner_id": {"type": "string", "format": "uuid"},
+                "tenant_id":  {"type": "string", "format": "uuid"},
+                "label":      {"type": "string", "minLength": 1},
+                "region":     {"type": "string"},
+            },
+            "required": ["partner_id", "tenant_id", "label"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":               {"type": "string", "format": "uuid"},
+                "enrollment_token": {"type": "string"},
+                "expires_at":       {"type": "string", "format": "date-time"},
+            },
+            "required": ["id", "enrollment_token"],
+        },
+    },
+    "GET /api/v1/agents/{agent_id}": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":         {"type": "string", "format": "uuid"},
+                "label":      {"type": "string"},
+                "status":     {"type": "string", "enum": [
+                    "pending_enrollment", "active", "stale", "revoked", "rotating",
+                ]},
+                "region":     {"type": "string"},
+                "last_seen_at": {"type": "string", "format": "date-time", "nullable": True},
+            },
+            "required": ["id", "status"],
+        },
+    },
+
+    # ----- Dashboards ------------------------------------------------------
+    "GET /api/v1/dashboards/executive": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "tenant_id":        {"type": "string", "format": "uuid"},
+                "open_critical":    {"type": "integer", "minimum": 0},
+                "open_high":        {"type": "integer", "minimum": 0},
+                "remediation_sla_breach_count": {"type": "integer", "minimum": 0},
+                "scans_last_30d":   {"type": "integer", "minimum": 0},
+            },
+        },
+    },
+    "GET /api/v1/dashboards/technical": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "tenant_id":         {"type": "string", "format": "uuid"},
+                "findings_by_severity": {"type": "object", "additionalProperties": {"type": "integer"}},
+                "findings_by_status":   {"type": "object", "additionalProperties": {"type": "integer"}},
+                "top_assets_by_finding_count": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "asset_id":      {"type": "string", "format": "uuid"},
+                            "value":         {"type": "string"},
+                            "finding_count": {"type": "integer"},
+                        },
+                    },
+                },
+            },
+        },
+    },
+
+    # ----- Auth surfaces ---------------------------------------------------
+    "POST /api/v1/auth/dev-token": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string", "format": "uuid"},
+                "ttl_min": {"type": "integer", "minimum": 1, "maximum": 1440},
+            },
+            "required": ["user_id"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "access_token": {"type": "string"},
+                "expires_at":   {"type": "string", "format": "date-time"},
+            },
+            "required": ["access_token", "expires_at"],
+        },
+    },
+    "POST /api/v1/auth/mfa/verify": {
+        "request_required": True,
+        "request": {
+            "type": "object",
+            "properties": {
+                "challenge_token": {"type": "string"},
+                "totp_code":       {"type": "string", "pattern": "^[0-9]{6}$"},
+            },
+            "required": ["challenge_token", "totp_code"],
+        },
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "access_token": {"type": "string"},
+                "expires_at":   {"type": "string", "format": "date-time"},
+                "mfa_verified": {"type": "boolean"},
+            },
+            "required": ["access_token", "expires_at", "mfa_verified"],
+        },
+    },
+    "POST /api/v1/auth/jwt-keys/rotate": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "status":  {"type": "string", "enum": ["rotated"]},
+                "new_kid": {"type": "string"},
+            },
+            "required": ["status", "new_kid"],
+        },
+    },
+
+    # ----- Evidence -------------------------------------------------------
+    "GET /api/v1/evidence/{evidence_id}": {
+        "response_200": {
+            "type": "object",
+            "properties": {
+                "id":           {"type": "string", "format": "uuid"},
+                "tenant_id":    {"type": "string", "format": "uuid"},
+                "finding_id":   {"type": "string", "format": "uuid", "nullable": True},
+                "kind":         {"type": "string"},
+                "sha256":       {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "size_bytes":   {"type": "integer", "minimum": 0},
+                "content_type": {"type": "string"},
+                "uploaded_at":  {"type": "string", "format": "date-time"},
+            },
+            "required": ["id", "tenant_id", "kind", "sha256", "size_bytes"],
         },
     },
 

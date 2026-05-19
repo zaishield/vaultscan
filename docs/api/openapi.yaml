@@ -595,12 +595,27 @@ paths:
       tags:
         - agents
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                partner_id:
+                  type: string
+                  format: uuid
+                tenant_id:
+                  type: string
+                  format: uuid
+                label:
+                  type: string
+                  minLength: 1
+                region:
+                  type: string
+              required:
+                - partner_id
+                - tenant_id
+                - label
       responses:
         200:
           description: Success
@@ -608,7 +623,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  enrollment_token:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+                required:
+                  - id
+                  - enrollment_token
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -638,7 +664,29 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  label:
+                    type: string
+                  status:
+                    type: string
+                    enum:
+                      - pending_enrollment
+                      - active
+                      - stale
+                      - revoked
+                      - rotating
+                  region:
+                    type: string
+                  last_seen_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                required:
+                  - id
+                  - status
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -1296,7 +1344,16 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  partner_id:
+                    type: string
+                    format: uuid
+                  logo_url:
+                    type: string
+                  primary_color:
+                    type: string
+                  support_email:
+                    type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -1528,7 +1585,22 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  open_critical:
+                    type: integer
+                    minimum: 0
+                  open_high:
+                    type: integer
+                    minimum: 0
+                  remediation_sla_breach_count:
+                    type: integer
+                    minimum: 0
+                  scans_last_30d:
+                    type: integer
+                    minimum: 0
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -1749,7 +1821,30 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  findings_by_severity:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                  findings_by_status:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                  top_assets_by_finding_count:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        asset_id:
+                          type: string
+                          format: uuid
+                        value:
+                          type: string
+                        finding_count:
+                          type: integer
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -2026,7 +2121,36 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  finding_id:
+                    type: string
+                    format: uuid
+                    nullable: true
+                  kind:
+                    type: string
+                  sha256:
+                    type: string
+                    pattern: "^[a-f0-9]{64}$"
+                  size_bytes:
+                    type: integer
+                    minimum: 0
+                  content_type:
+                    type: string
+                  uploaded_at:
+                    type: string
+                    format: date-time
+                required:
+                  - id
+                  - tenant_id
+                  - kind
+                  - sha256
+                  - size_bytes
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -2896,12 +3020,33 @@ paths:
       tags:
         - partners
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                parent_id:
+                  type: string
+                  format: uuid
+                type:
+                  type: string
+                  enum:
+                    - zaishield
+                    - distributor
+                    - mssp
+                    - direct
+                    - client
+                name:
+                  type: string
+                  minLength: 1
+                slug:
+                  type: string
+                  pattern: "^[a-z0-9-]+$"
+              required:
+                - type
+                - name
+                - slug
       responses:
         200:
           description: Success
@@ -2909,7 +3054,16 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  slug:
+                    type: string
+                  type:
+                    type: string
+                required:
+                  - id
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -2939,7 +3093,33 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  parent_id:
+                    type: string
+                    format: uuid
+                    nullable: true
+                  type:
+                    type: string
+                  name:
+                    type: string
+                  slug:
+                    type: string
+                  status:
+                    type: string
+                    enum:
+                      - active
+                      - suspended
+                  created_at:
+                    type: string
+                    format: date-time
+                required:
+                  - id
+                  - name
+                  - slug
+                  - status
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -4948,12 +5128,21 @@ paths:
       tags:
         - auth
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                ttl_min:
+                  type: integer
+                  minimum: 1
+                  maximum: 1440
+              required:
+                - user_id
       responses:
         200:
           description: Success
@@ -4961,7 +5150,15 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  access_token:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+                required:
+                  - access_token
+                  - expires_at
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -5029,7 +5226,16 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - rotated
+                  new_kid:
+                    type: string
+                required:
+                  - status
+                  - new_kid
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -5146,12 +5352,20 @@ paths:
       tags:
         - auth
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                challenge_token:
+                  type: string
+                totp_code:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+              required:
+                - challenge_token
+                - totp_code
       responses:
         200:
           description: Success
@@ -5159,7 +5373,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  access_token:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+                  mfa_verified:
+                    type: boolean
+                required:
+                  - access_token
+                  - expires_at
+                  - mfa_verified
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -5640,12 +5865,38 @@ paths:
       tags:
         - findings
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                tenant_id:
+                  type: string
+                  format: uuid
+                ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  minItems: 1
+                action:
+                  type: string
+                  enum:
+                    - status
+                    - assign
+                    - risk_accept
+                status:
+                  type: string
+                assignee_id:
+                  type: string
+                  format: uuid
+                note:
+                  type: string
+              required:
+                - tenant_id
+                - ids
+                - action
       responses:
         200:
           description: Success
@@ -5653,7 +5904,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  updated:
+                    type: integer
+                    minimum: 0
+                required:
+                  - updated
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -6423,12 +6679,46 @@ paths:
       tags:
         - reports
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                partner_id:
+                  type: string
+                  format: uuid
+                tenant_id:
+                  type: string
+                  format: uuid
+                engagement_id:
+                  type: string
+                  format: uuid
+                report_type:
+                  type: string
+                  enum:
+                    - executive
+                    - technical
+                    - pentest
+                    - compliance
+                    - incident
+                    - post_engagement
+                title:
+                  type: string
+                  minLength: 1
+                formats:
+                  type: array
+                  items:
+                    type: string
+                    enum:
+                      - pdf
+                      - docx
+                      - xlsx
+                      - html
+              required:
+                - engagement_id
+                - report_type
+                - title
       responses:
         200:
           description: Success
@@ -6436,7 +6726,15 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                required:
+                  - id
+                  - status
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -6950,12 +7248,39 @@ paths:
       tags:
         - scope
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                engagement_id:
+                  type: string
+                  format: uuid
+                target_type:
+                  type: string
+                  enum:
+                    - host
+                    - url
+                    - ip_range
+                    - domain
+                    - cloud_account
+                    - api_endpoint
+                    - container_image
+                    - code_repository
+                target_value:
+                  type: string
+                plane:
+                  type: string
+                  enum:
+                    - external
+                    - internal
+                notes:
+                  type: string
+              required:
+                - engagement_id
+                - target_type
+                - target_value
       responses:
         200:
           description: Success
@@ -6963,7 +7288,19 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum:
+                      - pending_approval
+                      - approved
+                      - rejected
+                required:
+                  - id
+                  - status
         400:
           $ref: "#/components/responses/BadRequest"
         401:
