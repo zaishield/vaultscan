@@ -1,4 +1,10 @@
 {{- if .Values.serviceMonitor.enabled }}
+# ServiceMonitor multiplexes onto every Service in the release. The
+# previous version only declared `port: http`, which matched ONLY the
+# api Service (and the portal, which has no /metrics). Cron-runner
+# exposes /metrics on port `admin` (9091); analytics-worker on port
+# `health` (9090). Without endpoints for those ports, the metrics from
+# 2 of 3 backend components were silently invisible to Prometheus.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -9,8 +15,17 @@ spec:
     matchLabels:
       app.kubernetes.io/name: {{ .Chart.Name }}
       app.kubernetes.io/instance: {{ .Release.Name }}
+  # Scrape each named port the workloads actually expose. Prometheus
+  # ServiceMonitor matches every Service in the selector AND only
+  # creates a target for endpoints whose port name appears below.
   endpoints:
     - port: http
+      interval: {{ .Values.serviceMonitor.interval }}
+      path: /metrics
+    - port: admin
+      interval: {{ .Values.serviceMonitor.interval }}
+      path: /metrics
+    - port: health
       interval: {{ .Values.serviceMonitor.interval }}
       path: /metrics
 {{- end }}

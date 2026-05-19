@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	authpkg "github.com/zaishield/vaultscan/backend/internal/auth"
 	"github.com/zaishield/vaultscan/backend/internal/scimtokens"
 )
 
@@ -72,7 +73,30 @@ func SCIMTokenAuth(svc *scimtokens.Service) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Synthesise a service-account Identity scoped to the
+			// tenant the token belongs to. Without this, downstream
+			// SCIM handlers calling auth.FromContext() get a nil
+			// Identity and either nil-deref-panic or 403 with no
+			// useful signal. Permissions are deliberately the
+			// minimum SCIM needs (`manage_users`); SCIM does not
+			// get the full tenant_admin set even though the token
+			// was minted by a tenant admin.
+			//
+			// Roles list is empty so super_admin short-circuit in
+			// Identity.Has does NOT fire — every permission check
+			// goes through the explicit Permissions map.
+			identity := &authpkg.Identity{
+				UserID:      tok.ID,
+				Email:       "scim-token:" + tok.Label,
+				PlatformID:  uuid.Nil, // resolved by handlers via tenant lookup
+				PartnerID:   nil,
+				TenantID:    &tenantID,
+				Roles:       []string{"scim_provisioner"},
+				Permissions: map[string]bool{"manage_users": true},
+				MFAVerified: true, // SCIM doesn't surface MFA — the token IS the credential
+			}
 			ctx := context.WithValue(r.Context(), SCIMTenantCtxKey{}, tenantID)
+			ctx = authpkg.ContextWithIdentity(ctx, identity)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

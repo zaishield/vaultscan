@@ -197,10 +197,16 @@ func (s *Service) mapClaims(ctx context.Context, tenantID uuid.UUID,
 		partnerID uuid.UUID
 		platformID uuid.UUID
 	)
+	// CRITICAL: lookup MUST be tenant-strict. The previous query used
+	// `tenant_id = $2 OR tenant_id IS NULL`, which matched platform-
+	// level users with the same email — letting an attacker who
+	// controls a tenant's IdP assert `admin@victim.com` and log in
+	// as that platform admin. Tenant-scoped SSO is a tenant-scoped
+	// identity space.
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, partner_id, platform_id FROM users
-		 WHERE email = $1 AND (tenant_id = $2 OR tenant_id IS NULL)
-		 ORDER BY tenant_id NULLS LAST LIMIT 1`, email, tenantID).
+		 WHERE email = $1 AND tenant_id = $2
+		 LIMIT 1`, email, tenantID).
 		Scan(&userID, &partnerID, &platformID)
 	if err != nil {
 		// Auto-provision under the tenant's partner.

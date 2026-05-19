@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -96,7 +97,10 @@ func TestBackupRestoreDrill_PostgresOnly(t *testing.T) {
 	// 4. pg_dump the source schema, both schema + data. We dump
 	// schema-only first, rewrite to the dst, run it. Then dump
 	// data-only and pipe it into the dst.
-	containerName := "vs-test-pg"
+	containerName := detectPostgresContainer(t)
+	if containerName == "" {
+		t.Skip("no running postgres container found via docker — set VAULTSCAN_TEST_PG_CONTAINER to override")
+	}
 	dump := exec.CommandContext(ctx, "docker", "exec", containerName,
 		"pg_dump", "-U", "vaultscan", "-d", "vaultscan",
 		"--schema="+srcSchema, "--no-owner", "--no-privileges")
@@ -220,4 +224,36 @@ func lastNLines(s string, n int) string {
 		return s
 	}
 	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
+// detectPostgresContainer finds the docker container that's
+// fronting the postgres pointed at by VAULTSCAN_TEST_DATABASE_URL.
+// Tries (in order):
+//   1. VAULTSCAN_TEST_PG_CONTAINER env (operator override)
+//   2. Any running container with port 5432 published
+//   3. Common container names (vs-test-pg, vaultscan-postgres-1)
+// Returns "" if none found, so the caller can t.Skip cleanly.
+func detectPostgresContainer(t *testing.T) string {
+	t.Helper()
+	if v := os.Getenv("VAULTSCAN_TEST_PG_CONTAINER"); v != "" {
+		return v
+	}
+	// docker ps --filter "publish=5432" --format "{{.Names}}"
+	out, err := exec.Command("docker", "ps",
+		"--filter", "publish=5432",
+		"--format", "{{.Names}}").Output()
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				return line
+			}
+		}
+	}
+	for _, candidate := range []string{"vs-test-pg", "vaultscan-postgres-1"} {
+		if err := exec.Command("docker", "inspect", candidate).Run(); err == nil {
+			return candidate
+		}
+	}
+	return ""
 }

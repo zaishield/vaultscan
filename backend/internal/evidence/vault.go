@@ -419,20 +419,62 @@ type SignedURL struct {
 }
 
 func (v *Vault) SignedDownloadURL(ctx context.Context, evidenceID uuid.UUID, baseURL string) (*SignedURL, error) {
+	// Resolve the tenant id from the row so the signature can bind
+	// to it. Without this binding, a signed URL minted for tenant A
+	// can be replayed against the same evidence_id under tenant B.
+	var tenantID uuid.UUID
+	if err := v.pool.QueryRow(ctx,
+		`SELECT tenant_id FROM finding_evidence WHERE id = $1`, evidenceID).
+		Scan(&tenantID); err != nil {
+		return nil, fmt.Errorf("evidence: lookup tenant for signed URL: %w", err)
+	}
 	exp := time.Now().UTC().Add(v.urlTTL)
-	mac := signRef(v.masterKey, evidenceID.String(), exp.Unix())
+	mac := signRef(v.masterKey, tenantID.String(), evidenceID.String(), exp.Unix())
 	return &SignedURL{
 		URL:       fmt.Sprintf("%s/api/v1/evidence/%s/download?exp=%d&sig=%s", baseURL, evidenceID, exp.Unix(), mac),
 		ExpiresAt: exp,
 	}, nil
 }
 
-func (v *Vault) VerifySignature(evidenceID uuid.UUID, expUnix int64, sig string) bool {
+// VerifySignature verifies a signed URL's HMAC against the active
+// KEK AND each retired KEK. Without the retired-KEK fallback, a
+// signed URL minted before a KEK rotation would 403 immediately
+// after rotation — a UX cliff that operators kept paying for
+// in the original implementation.
+//
+// Caller MUST pass `tenantID` resolved from the row (NOT the URL),
+// since the URL's tenant is part of the signed envelope.
+func (v *Vault) VerifySignature(ctx context.Context, evidenceID uuid.UUID, expUnix int64, sig string) bool {
 	if time.Unix(expUnix, 0).Before(time.Now()) {
 		return false
 	}
-	expected := signRef(v.masterKey, evidenceID.String(), expUnix)
-	return constantTimeEqualString(expected, sig)
+	// Cap exp at +24h beyond now so a leaked key can't sign a URL
+	// that lasts forever. Matches the longest TTL we'd ever set
+	// in practice (legal-export bundles).
+	if time.Unix(expUnix, 0).After(time.Now().Add(24 * time.Hour)) {
+		return false
+	}
+	var tenantID uuid.UUID
+	if err := v.pool.QueryRow(ctx,
+		`SELECT tenant_id FROM finding_evidence WHERE id = $1`, evidenceID).
+		Scan(&tenantID); err != nil {
+		return false
+	}
+	// Try active KEK first.
+	expected := signRef(v.masterKey, tenantID.String(), evidenceID.String(), expUnix)
+	if constantTimeEqualString(expected, sig) {
+		return true
+	}
+	// Then each retired KEK (rotation window).
+	for _, kek := range v.previousMasterKeys {
+		if len(kek) == 0 {
+			continue
+		}
+		if constantTimeEqualString(signRef(kek, tenantID.String(), evidenceID.String(), expUnix), sig) {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *Vault) logAccess(ctx context.Context, evidenceID uuid.UUID, actor *uuid.UUID, ip net.IP, ua, action string) error {

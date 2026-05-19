@@ -72,16 +72,32 @@ spec:
 
 {{- if .Values.pgbouncer.enabled }}
 ---
+# pgbouncer-tx pool — front of API + workers' chatty short txns.
+# The pods are labeled component=pgbouncer-tx (NOT "pgbouncer");
+# the previous single PDB with selector component=pgbouncer
+# silently matched zero pods.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "vaultscan.fullname" . }}-pgbouncer
-  labels: {{- include "vaultscan.componentLabels" (dict "component" "pgbouncer" "Chart" .Chart "Release" .Release) | nindent 4 }}
+  name: {{ include "vaultscan.fullname" . }}-pgbouncer-tx
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "pgbouncer-tx" "Chart" .Chart "Release" .Release) | nindent 4 }}
 spec:
-  # pgbouncer in front of Postgres — losing all replicas means
-  # every API pod immediately can't reach the DB. minAvailable=N-1
-  # so a drain only takes one pod at a time.
+  # Losing all tx-pool replicas immediately = every API pod can't
+  # reach the DB. maxUnavailable=1 means a drain takes one pod at
+  # a time even when the autoscaler is moving quickly.
   maxUnavailable: 1
   selector:
-    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "pgbouncer") | nindent 6 }}
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "pgbouncer-tx") | nindent 6 }}
+---
+# pgbouncer-session pool — front of pg_dump, migrations, audit
+# export, anything that needs a sticky session. Same pattern.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-pgbouncer-session
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "pgbouncer-session" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: {{- include "vaultscan.componentSelector" (dict "root" . "component" "pgbouncer-session") | nindent 6 }}
 {{- end }}

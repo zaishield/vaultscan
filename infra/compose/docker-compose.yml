@@ -125,7 +125,7 @@ services:
       retries: 20
 
   keycloak:
-    image: quay.io/keycloak/keycloak:25.0
+    image: keycloak/keycloak:25.0
     restart: unless-stopped
     command: ["start-dev", "--import-realm"]
     environment:

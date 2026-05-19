@@ -1265,8 +1265,13 @@ func downloadEvidence(s *Services) http.HandlerFunc {
 		}
 		expStr := r.URL.Query().Get("exp")
 		sig := r.URL.Query().Get("sig")
-		expUnix, _ := strconv.ParseInt(expStr, 10, 64)
-		if !s.Vault.VerifySignature(id, expUnix, sig) {
+		expUnix, parseErr := strconv.ParseInt(expStr, 10, 64)
+		if parseErr != nil {
+			writeJSON(w, http.StatusBadRequest,
+				map[string]string{"error": "malformed exp parameter"})
+			return
+		}
+		if !s.Vault.VerifySignature(r.Context(), id, expUnix, sig) {
 			writeJSON(w, http.StatusForbidden,
 				map[string]string{"error": "invalid or expired signature"})
 			return

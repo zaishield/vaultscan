@@ -37,6 +37,11 @@ type VaultscanClaims struct {
 type Verifier struct {
 	sharedSecret []byte
 	pool         *pgxpool.Pool
+	// expectedIssuer pins the JWT `iss` claim. Empty = no check
+	// (dev default). Production wires via WithExpectedIssuer.
+	expectedIssuer string
+	// expectedAudience pins the JWT `aud` claim. Empty = no check.
+	expectedAudience string
 	// keyManager is optional. When set, tokens with alg=RS256 are
 	// verified against jwt_signing_keys (routed by header kid).
 	// Tokens with alg=HS256 keep using sharedSecret — production
@@ -64,6 +69,25 @@ func (v *Verifier) WithKeyManager(km *KeyManager) *Verifier {
 // against a production-configured API.
 func (v *Verifier) WithRefuseHMAC(yes bool) *Verifier {
 	v.refuseHMAC = yes
+	return v
+}
+
+// WithExpectedIssuer pins the JWT `iss` claim. A token with a
+// different (or missing) iss is rejected. Production deployments
+// MUST set this so a token issued by one environment cannot be
+// replayed against another that shares the HMAC secret. Empty =
+// no check (dev default).
+func (v *Verifier) WithExpectedIssuer(iss string) *Verifier {
+	v.expectedIssuer = iss
+	return v
+}
+
+// WithExpectedAudience pins the JWT `aud` claim. Empty = no check.
+// Production sets this to the API's canonical URL so a token issued
+// for the agent-gateway cannot be used against the public API
+// (different audiences).
+func (v *Verifier) WithExpectedAudience(aud string) *Verifier {
+	v.expectedAudience = aud
 	return v
 }
 
@@ -115,6 +139,30 @@ func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 	}, jwt.WithLeeway(30*time.Second))
 	if err != nil || !tok.Valid {
 		return nil, fmt.Errorf("auth: invalid token: %w", err)
+	}
+	// Issuer + audience binding. Empty expectedIssuer/Audience =
+	// no check (preserves dev behaviour). Production wires both via
+	// WithExpectedIssuer/WithExpectedAudience so a token issued for
+	// env A cannot be replayed against env B with the same secret.
+	if v.expectedIssuer != "" && claims.Issuer != v.expectedIssuer {
+		return nil, fmt.Errorf("auth: issuer mismatch: got %q, want %q",
+			claims.Issuer, v.expectedIssuer)
+	}
+	if v.expectedAudience != "" {
+		// jwt.MapClaims.GetAudience returns []string; here we use the
+		// VaultscanClaims that embeds jwt.RegisteredClaims.Audience
+		// which is also []string.
+		matched := false
+		for _, a := range claims.Audience {
+			if a == v.expectedAudience {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, fmt.Errorf("auth: audience mismatch: %v does not contain %q",
+				[]string(claims.Audience), v.expectedAudience)
+		}
 	}
 	id := &Identity{
 		Email:       claims.Email,
