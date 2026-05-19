@@ -53,3 +53,22 @@ spec:
             - { name: tmp, mountPath: /tmp }
       volumes:
         - { name: tmp, emptyDir: { sizeLimit: 256Mi } }
+---
+# ClusterIP Service for analytics-worker so the ServiceMonitor can
+# discover the pods + scrape /healthz on :9090. Without this the
+# ServiceMonitor's port=health selector resolves to no endpoints
+# and the worker's metrics are silently invisible to Prometheus.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vaultscan.fullname" . }}-analytics-worker
+  labels: {{- include "vaultscan.componentLabels" (dict "component" "analytics-worker" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector: {{- include "vaultscan.componentSelector" (dict "root" . "component" "analytics-worker") | nindent 4 }}
+  ports:
+    - name: health
+      port: 9090
+      targetPort: health
+      protocol: TCP

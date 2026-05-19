@@ -45,7 +45,13 @@ spec:
           # with the pod. Never reachable outside this pod.
           containers:
             - name: sandbox-pg
-              image: postgres:16-alpine
+              # Sandbox postgres for the restore drill. Operators
+              # SHOULD pin this to a digest pulled from a controlled
+              # mirror (see values-prod.yaml) so a compromised
+              # postgres:16-alpine upstream tag can't end up running
+              # inside the customer's namespace. The default is the
+              # moving tag for dev convenience.
+              image: {{ .Values.restoreVerify.sandboxPostgresImage | default "postgres:16-alpine" }}
               env:
                 - { name: POSTGRES_USER,     value: vaultscan }
                 - { name: POSTGRES_PASSWORD, value: drill-only-not-real }

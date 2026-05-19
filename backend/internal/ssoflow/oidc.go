@@ -92,6 +92,17 @@ func (s *Service) discoverOIDC(ctx context.Context, discoveryURL string) (*oidcD
 		return nil, errors.New("ssoflow: discovery missing required endpoints")
 	}
 	discCache.mu.Lock()
+	// Bounded cache: 1024 distinct discovery URLs. A malicious
+	// tenant that re-configures their discovery_url repeatedly
+	// can no longer grow the cache unboundedly. Eviction is
+	// best-effort (any single entry) — the 12h TTL keeps the
+	// rest fresh.
+	if len(discCache.v) >= 1024 {
+		for k := range discCache.v {
+			delete(discCache.v, k)
+			break
+		}
+	}
 	discCache.v[discoveryURL] = discoveryEntry{doc: doc, exp: time.Now().Add(12 * time.Hour)}
 	discCache.mu.Unlock()
 	return &doc, nil

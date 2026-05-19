@@ -36,8 +36,8 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -77,10 +77,19 @@ type K8sJobConfig struct {
 // K8sJobRunner implements ExecRunner via the Kubernetes batch/v1 API.
 type K8sJobRunner struct {
 	cfg        K8sJobConfig
+	tokenMu    sync.RWMutex
 	token      string
+	tokenReadAt time.Time
 	apiBase    string
 	httpClient *http.Client
 }
+
+// saTokenRefreshInterval bounds how stale the cached SA token can
+// be. Modern K8s projected SA tokens rotate every ~1h (bounded SA
+// tokens, projected tokens with expirationSeconds=3600). Without a
+// refresh path the runner starts returning 401 after the first hour
+// and scan jobs silently fail to dispatch.
+const saTokenRefreshInterval = 10 * time.Minute
 
 // NewK8sJobRunner reads the in-cluster SA token + CA on construction.
 // Fails fast if either is missing — production deployments MUST run
@@ -135,9 +144,45 @@ func NewK8sJobRunner(cfg K8sJobConfig) (*K8sJobRunner, error) {
 	return &K8sJobRunner{
 		cfg:        cfg,
 		token:      strings.TrimSpace(string(tokenBytes)),
+		tokenReadAt: time.Now(),
 		apiBase:    apiBase,
 		httpClient: hc,
 	}, nil
+}
+
+// refreshSATokenIfStale re-reads the SA token from disk when the
+// cached value is older than saTokenRefreshInterval. K8s projected
+// tokens rotate ~hourly; the kubelet refreshes the on-disk file
+// transparently. Without this poll the runner kept using its
+// boot-time token until the API rejected with 401.
+func (r *K8sJobRunner) refreshSATokenIfStale() {
+	r.tokenMu.RLock()
+	// Skip refresh entirely when the runner was constructed without
+	// going through NewK8sJobRunner (tests that inject a stub token
+	// directly leave tokenReadAt zero). The production path sets it.
+	if r.tokenReadAt.IsZero() {
+		r.tokenMu.RUnlock()
+		return
+	}
+	stale := time.Since(r.tokenReadAt) > saTokenRefreshInterval
+	r.tokenMu.RUnlock()
+	if !stale {
+		return
+	}
+	r.tokenMu.Lock()
+	defer r.tokenMu.Unlock()
+	// Re-check under the write lock to avoid a thundering-herd re-read.
+	if time.Since(r.tokenReadAt) <= saTokenRefreshInterval {
+		return
+	}
+	tokenBytes, err := os.ReadFile(saTokenPath)
+	if err != nil {
+		// Keep using the cached token; the next request will retry.
+		// (A persistent failure surfaces as 401 from the API server.)
+		return
+	}
+	r.token = strings.TrimSpace(string(tokenBytes))
+	r.tokenReadAt = time.Now()
 }
 
 func (r *K8sJobRunner) SetAllowSynthetic(b bool) { r.cfg.AllowSynthetic = b }
@@ -426,8 +471,8 @@ func (r *K8sJobRunner) doJSON(ctx context.Context, method, url string, body []by
 }
 
 func (r *K8sJobRunner) setAuth(req *http.Request) {
+	r.refreshSATokenIfStale()
+	r.tokenMu.RLock()
 	req.Header.Set("Authorization", "Bearer "+r.token)
+	r.tokenMu.RUnlock()
 }
-
-// keep import live for filepath if a future override of saTokenPath uses it
-var _ = filepath.Clean
