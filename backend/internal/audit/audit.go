@@ -182,7 +182,13 @@ func (s *Service) recordInner(ctx context.Context, e Entry) error {
 	// Fields covered: occurred_at, event, actor_type, actor_id, ip,
 	// user_agent, platform_id, partner_id, tenant_id, target_type,
 	// target_id, payload.
-	occurredAt := time.Now().UTC()
+	// Truncate to microsecond precision BEFORE hashing AND writing.
+	// Postgres `timestamptz` stores microseconds; if we hash with
+	// nanosecond precision but write microseconds, every VerifyDeep
+	// reads back a different timestamp than the one Record hashed
+	// against → every row fails the chain check. The truncation
+	// keeps the two sides byte-identical.
+	occurredAt := time.Now().UTC().Truncate(time.Microsecond)
 	const chainHashVersion = 2
 	h := sha256.New()
 	if prev != nil {
