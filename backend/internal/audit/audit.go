@@ -252,48 +252,19 @@ func computeRowHash(
 
 // Verify recomputes the hash chain and returns the row id of the first
 // inconsistency, or 0 if the chain is intact.
+//
+// Delegates to VerifyDeep so we share its keyset-paginated chunk
+// loop. The previous implementation issued a single unbounded
+// SELECT ... ORDER BY id ASC which would trip statement_timeout
+// once audit_logs grew past a few million rows. VerifyDeep paginates
+// in verifyDeepChunkSize batches and is the canonical full-history
+// path.
 func (s *Service) Verify(ctx context.Context) (int64, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, event, actor_type, actor_id, host(ip), user_agent,
-		       platform_id, partner_id, tenant_id,
-		       target_type, target_id, payload, chain_prev, chain_hash,
-		       occurred_at, COALESCE(chain_hash_version, 1)
-		  FROM audit_logs ORDER BY id ASC`)
+	res, err := s.VerifyDeep(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
-	var prev []byte
-	for rows.Next() {
-		var (
-			id              int64
-			event, actor    string
-			actorID         *uuid.UUID
-			ipStr           *string
-			userAgent       *string
-			platID          uuid.UUID
-			partID, tenID   *uuid.UUID
-			tType, tID      *string
-			payload         string
-			chainPrev, hash []byte
-			occurredAt      time.Time
-			hashVersion     int
-		)
-		if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
-			&platID, &partID, &tenID,
-			&tType, &tID, &payload, &chainPrev, &hash,
-			&occurredAt, &hashVersion); err != nil {
-			return 0, err
-		}
-		expect := computeRowHash(hashVersion, prev, occurredAt,
-			event, actor, actorID, ipStr, userAgent,
-			platID, partID, tenID, tType, tID, payload)
-		if !equal(expect, hash) {
-			return id, nil
-		}
-		prev = hash
-	}
-	return 0, rows.Err()
+	return res.FirstBadID, nil
 }
 
 func ipOrNull(ip net.IP) any {

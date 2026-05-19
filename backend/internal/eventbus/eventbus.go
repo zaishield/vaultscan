@@ -111,6 +111,12 @@ type Bus struct {
 	// can block on shutdown until they complete (or the drain deadline
 	// trips).
 	extWg sync.WaitGroup
+	// shutdownCtx is cancelled when DrainExternal starts; in-flight
+	// publishExternal goroutines derive their per-call ctx from this
+	// so SIGTERM propagates into the Forward call instead of waiting
+	// for the 5s per-call deadline to elapse.
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 
 	// Postgres NOTIFY/LISTEN bridge — see pg_notify.go.
 	notifyMu      sync.RWMutex
@@ -118,7 +124,11 @@ type Bus struct {
 }
 
 func New(pool *pgxpool.Pool) *Bus {
-	return &Bus{pool: pool, handlers: map[string][]Handler{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Bus{
+		pool: pool, handlers: map[string][]Handler{},
+		shutdownCtx: ctx, shutdownCancel: cancel,
+	}
 }
 
 func (b *Bus) Subscribe(eventType string, h Handler) {

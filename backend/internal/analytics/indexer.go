@@ -254,7 +254,28 @@ func (i *Indexer) flush(ctx context.Context) {
 	i.queue = nil
 	i.mu.Unlock()
 	if err := i.client.Bulk(ctx, batch); err != nil {
-		i.log.Warn().Err(err).Int("count", len(batch)).Msg("opensearch bulk failed; will rebuild on next event")
+		// Re-enqueue the failed batch ahead of any newly-arrived
+		// events so a transient OpenSearch outage doesn't drop
+		// documents permanently. Each FindingNormalized event
+		// fires exactly once; without re-enqueue, a single Bulk
+		// failure means those rows never make it to the index.
+		// Bounded by maxBatchRetryCap to avoid unbounded growth
+		// during sustained downstream outages.
+		const maxBatchRetryCap = 50000
+		i.mu.Lock()
+		if len(i.queue)+len(batch) <= maxBatchRetryCap {
+			// Prepend: put the failed batch back at the head so
+			// FIFO order is preserved.
+			i.queue = append(batch, i.queue...)
+			i.log.Warn().Err(err).Int("count", len(batch)).
+				Int("queue_depth", len(i.queue)).
+				Msg("opensearch bulk failed; re-enqueued for next flush")
+		} else {
+			i.log.Error().Err(err).Int("count", len(batch)).
+				Int("retry_cap", maxBatchRetryCap).
+				Msg("opensearch bulk failed AND retry queue at cap; DROPPING batch — sustained downstream outage")
+		}
+		i.mu.Unlock()
 		return
 	}
 	i.log.Debug().Int("count", len(batch)).Msg("flushed batch to opensearch")

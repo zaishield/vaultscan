@@ -152,9 +152,29 @@ func (s *Service) List(ctx context.Context, tenantID *uuid.UUID, partnerID *uuid
 		}
 		_ = json.Unmarshal(cfg, &it.Config)
 		_ = json.Unmarshal(flt, &it.EventFilter)
+		// Redact secret-like config keys so a manage_integrations
+		// LIST doesn't surface live secrets to anyone with the role.
+		// The Test() path that actually NEEDS the secret reads from
+		// the DB directly via getOutboundSecret rather than this view.
+		redactSecretConfig(it.Config)
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// redactSecretConfig replaces sensitive-looking values with a
+// fixed placeholder so callers of List() can't accidentally
+// surface them to the wire. The Test/Send paths that need the
+// real value read fresh from the DB.
+func redactSecretConfig(cfg map[string]any) {
+	for _, key := range []string{
+		"hmac_secret", "api_key", "auth_token", "password",
+		"client_secret", "bearer_token", "webhook_secret",
+	} {
+		if _, ok := cfg[key]; ok {
+			cfg[key] = "[REDACTED]"
+		}
+	}
 }
 
 type Integration struct {

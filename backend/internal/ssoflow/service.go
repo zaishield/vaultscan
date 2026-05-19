@@ -367,7 +367,12 @@ func (s *Service) mapClaims(ctx context.Context, tenantID uuid.UUID,
 	// roles (super_admin, platform_admin) but allow viewer/operator
 	// tiers via the legacy lookup. New tenants MUST configure the
 	// allowlist.
-	roles := []string{}
+	// Filter requested roles through the allowlist first, then
+	// validate the survivors against the roles table in a SINGLE
+	// `code = ANY($1)` query. The previous N+1 form (one round-
+	// trip per group) was a pool-exhaustion vector at SSO storms
+	// for IdPs that ship dozens of groups per user.
+	allowedRequests := []string{}
 	for _, g := range getMulti("roles") {
 		if !sssoRoleAllowed(cfg, g) {
 			_ = s.audit.Record(ctx, audit.Entry{
@@ -378,11 +383,20 @@ func (s *Service) mapClaims(ctx context.Context, tenantID uuid.UUID,
 			})
 			continue
 		}
-		var roleCode string
-		_ = s.pool.QueryRow(ctx,
-			`SELECT code FROM roles WHERE code = $1`, g).Scan(&roleCode)
-		if roleCode != "" {
-			roles = append(roles, roleCode)
+		allowedRequests = append(allowedRequests, g)
+	}
+	roles := []string{}
+	if len(allowedRequests) > 0 {
+		rows, qerr := s.pool.Query(ctx,
+			`SELECT code FROM roles WHERE code = ANY($1)`, allowedRequests)
+		if qerr == nil {
+			for rows.Next() {
+				var code string
+				if err := rows.Scan(&code); err == nil {
+					roles = append(roles, code)
+				}
+			}
+			rows.Close()
 		}
 	}
 	if len(roles) == 0 {

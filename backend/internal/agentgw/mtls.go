@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,6 +63,22 @@ func (e *ErrAgentCertRejected) Error() string {
 type CertVerifier struct {
 	pool   *pgxpool.Pool
 	issuer *x509.CertPool
+
+	// Fingerprint cache. A successful handshake stores
+	// (fingerprint → cachedHandshake) with a short TTL so a fleet
+	// of long-lived agents heartbeating every few seconds doesn't
+	// hammer the DB for every TLS resumption. Misses + revocations
+	// still go to the DB.
+	cacheMu  sync.RWMutex
+	cache    map[string]cachedHandshake
+	cacheTTL time.Duration
+}
+
+type cachedHandshake struct {
+	agentID    uuid.UUID
+	agentState string
+	expiresAt  time.Time
+	cachedAt   time.Time
 }
 
 // NewCertVerifier builds a verifier from the current agent_ca_certificates
@@ -90,7 +107,11 @@ func NewCertVerifier(ctx context.Context, pool *pgxpool.Pool) (*CertVerifier, er
 		// Empty pool = nobody can connect. Surface clearly.
 		return nil, errors.New("agentgw: no trusted agent CAs configured; populate agent_ca_certificates")
 	}
-	return &CertVerifier{pool: pool, issuer: issuer}, nil
+	return &CertVerifier{
+		pool: pool, issuer: issuer,
+		cache:    map[string]cachedHandshake{},
+		cacheTTL: 30 * time.Second,
+	}, nil
 }
 
 // IssuerPool returns the underlying *x509.CertPool. Used to build the
@@ -110,6 +131,20 @@ func (v *CertVerifier) VerifyPeerCertificate(rawCerts [][]byte, _ [][]*x509.Cert
 	leaf := rawCerts[0]
 	sum := sha256.Sum256(leaf)
 	fp := hex.EncodeToString(sum[:])
+
+	// Hot path: cache hit and entry still inside TTL → skip the DB.
+	// A revocation in the cache window is rare (operators usually
+	// scale of seconds–minutes); the 30s TTL bounds the window and
+	// failures (expired/revoked/quarantined) are still always
+	// caught by the DB query on miss.
+	if cv := v.cacheGet(fp); cv != nil {
+		if !time.Now().After(cv.expiresAt) &&
+			cv.agentState != "revoked" && cv.agentState != "quarantined" {
+			return nil
+		}
+		// Treat any negative state in the cached row as a forced
+		// re-check; fall through to the DB path.
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -145,7 +180,42 @@ func (v *CertVerifier) VerifyPeerCertificate(rawCerts [][]byte, _ [][]*x509.Cert
 		return &ErrAgentCertRejected{Reason: "agent " + agentState, Fingerprint: fp}
 	}
 	v.logHandshake(ctx, &agentID, fp, "accepted", "")
+	// Populate the fingerprint cache so subsequent handshakes for
+	// this agent skip the DB until the TTL elapses.
+	v.cachePut(fp, cachedHandshake{
+		agentID:    agentID,
+		agentState: agentState,
+		expiresAt:  expiresAt,
+		cachedAt:   time.Now(),
+	})
 	return nil
+}
+
+func (v *CertVerifier) cacheGet(fp string) *cachedHandshake {
+	v.cacheMu.RLock()
+	defer v.cacheMu.RUnlock()
+	if c, ok := v.cache[fp]; ok && time.Since(c.cachedAt) < v.cacheTTL {
+		cp := c
+		return &cp
+	}
+	return nil
+}
+
+func (v *CertVerifier) cachePut(fp string, c cachedHandshake) {
+	v.cacheMu.Lock()
+	defer v.cacheMu.Unlock()
+	// Cheap bound on cache size — keep at most 4096 fingerprints.
+	// In practice fleets are bounded by license; this is a safety
+	// floor against unbounded growth from a stuck handshake loop.
+	if len(v.cache) >= 4096 {
+		// Drop ANY entry; we're not optimising eviction order
+		// because the TTL keeps everything fresh.
+		for k := range v.cache {
+			delete(v.cache, k)
+			break
+		}
+	}
+	v.cache[fp] = c
 }
 
 func (v *CertVerifier) logHandshake(ctx context.Context, agentID *uuid.UUID, fp, decision, reason string) {

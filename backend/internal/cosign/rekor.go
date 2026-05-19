@@ -102,8 +102,18 @@ func ParseRekorEntry(b64 string) (*RekorEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cosign/rekor: body base64: %w", err)
 	}
-	sth, _ := base64.StdEncoding.DecodeString(doc.Verification.InclusionProof.RootHash)
-	sig, _ := base64.StdEncoding.DecodeString(doc.Verification.SignedEntryTimestamp)
+	// Propagate base64 decode errors rather than dropping them.
+	// Previously a malformed rootHash / signedEntryTimestamp made
+	// the verifier later fail with a generic "no signedEntryTimestamp"
+	// instead of pointing at the actual parse failure.
+	sth, err := base64.StdEncoding.DecodeString(doc.Verification.InclusionProof.RootHash)
+	if err != nil {
+		return nil, fmt.Errorf("cosign/rekor: rootHash base64: %w", err)
+	}
+	sig, err := base64.StdEncoding.DecodeString(doc.Verification.SignedEntryTimestamp)
+	if err != nil {
+		return nil, fmt.Errorf("cosign/rekor: signedEntryTimestamp base64: %w", err)
+	}
 	return &RekorEntry{
 		LogID:          doc.LogID,
 		LogIndex:       doc.LogIndex,

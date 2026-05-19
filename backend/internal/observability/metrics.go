@@ -123,6 +123,17 @@ var (
 		Name: "vaultscan_audit_tsa_failures_total",
 		Help: "Audit archive runs persisted without a TSA proof because the timestamp authority call failed.",
 	})
+	// NotifyQuarantine: count of notification messages routed to
+	// 'quarantined' state because no transport was registered for
+	// the message's `kind`. A non-zero rate signals a missing /
+	// misnamed transport in the chart's notify.transports config.
+	NotifyQuarantine = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "vaultscan_notify_quarantine_total",
+			Help: "Notification messages quarantined because no transport is registered for their kind.",
+		},
+		[]string{"kind"},
+	)
 	EmergencyStopSLAms = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "vaultscan_emergency_stop_sla_ms",
 		Help:    "Time from operator request to agent ack, in milliseconds.",
@@ -209,6 +220,7 @@ func init() {
 		EvidenceIntegrityFailures,
 		AESGCMSeals,
 		AuditTSAFailures,
+		NotifyQuarantine,
 		AgentsByStatus,
 		IntegrationDeliveryFailures,
 		IntegrationDeadLetterDepth,

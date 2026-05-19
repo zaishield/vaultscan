@@ -279,7 +279,7 @@ func (s *Service) oidcTokenExchange(ctx context.Context, disc *oidcDiscovery,
 	_ = lc(cfg)
 	// Inline-build via reflection-free Get on the receiver.
 	// Simpler: take ClientID + ClientSecret via the closure helper.
-	clientID, clientSecret := s.oidcClientCreds(state.TenantID)
+	clientID, clientSecret := s.oidcClientCreds(ctx, state.TenantID)
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
@@ -319,12 +319,13 @@ func (s *Service) oidcTokenExchange(ctx context.Context, disc *oidcDiscovery,
 // oidcClientCreds re-reads the tenant's stored client_id +
 // client_secret. The exchange flow needs the secret, which we
 // intentionally don't carry in the state cookie (so a leaked cookie
-// can't impersonate the SP).
-func (s *Service) oidcClientCreds(tenantID string) (clientID, clientSecret string) {
-	tid := tenantID
-	_ = s.pool.QueryRow(context.Background(), `
+// can't impersonate the SP). Threads the request ctx so the lookup
+// honors the request's deadline + cancellation (the previous
+// context.Background() call could outlive the request).
+func (s *Service) oidcClientCreds(ctx context.Context, tenantID string) (clientID, clientSecret string) {
+	_ = s.pool.QueryRow(ctx, `
 		SELECT COALESCE(client_id,''), COALESCE(client_secret,'')
-		  FROM tenant_sso_config WHERE tenant_id = $1`, tid).
+		  FROM tenant_sso_config WHERE tenant_id = $1`, tenantID).
 		Scan(&clientID, &clientSecret)
 	return
 }

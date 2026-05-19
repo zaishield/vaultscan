@@ -53,7 +53,17 @@ func (b *Bus) publishExternal(ev Event) {
 		b.extWg.Add(1)
 		go func(sink ExternalSink) {
 			defer b.extWg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// Derive from b.shutdownCtx so DrainExternal()'s cancel
+			// propagates into in-flight Forwards instead of waiting
+			// for the 5s per-call deadline to expire. Falls back to
+			// Background if the Bus was constructed in a path that
+			// somehow skipped initialisation (defensive — New()
+			// always sets it).
+			parent := b.shutdownCtx
+			if parent == nil {
+				parent = context.Background()
+			}
+			ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 			defer cancel()
 			_ = sink.Forward(ctx, ev)
 		}(s)
@@ -64,7 +74,14 @@ func (b *Bus) publishExternal(ev Event) {
 // goroutine has returned, or the deadline elapses. Caller is expected
 // to invoke this from main's shutdown sequence after http.Server
 // has stopped accepting new requests.
+//
+// Cancels b.shutdownCtx so in-flight Forwards see ctx.Err() instead
+// of waiting for their per-call 5s deadline — gets us to the actual
+// drain (or the deadline trip) faster.
 func (b *Bus) DrainExternal(deadline time.Duration) {
+	if b.shutdownCancel != nil {
+		b.shutdownCancel()
+	}
 	done := make(chan struct{})
 	go func() {
 		b.extWg.Wait()

@@ -21,6 +21,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 type Service struct {
@@ -149,6 +151,10 @@ func (s *Service) DispatchOne(ctx context.Context) (processed bool, err error) {
 			UPDATE notification_queue
 			   SET state='quarantined', last_error=$2
 			 WHERE id=$1`, msgID, "no transport registered for "+kind)
+		// Surface the quarantine to /metrics so the operator sees it
+		// without grepping the DB. Previously the only signal was
+		// the row state itself.
+		observability.NotifyQuarantine.WithLabelValues(kind).Inc()
 		return true, tx.Commit(ctx)
 	}
 	cfg := ChannelConfig{
