@@ -281,6 +281,12 @@ func OpenWithConfig(ctx context.Context, dsn string, pc PoolConfig) (*DB, error)
 			return nil
 		}
 	}
+	// Install the RLS BeforeAcquire / AfterRelease hooks. These bind
+	// the vaultscan.tenant_id GUC from request context onto every
+	// conn handed out, and clear it on return — closing the pool
+	// reuse race where a handler's pool.Exec could grab a different
+	// conn than the one TenantBinding middleware pre-set.
+	installRLSHooks(cfg)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect pg: %w", err)

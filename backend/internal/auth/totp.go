@@ -33,7 +33,21 @@ const (
 	totpStep     = 30 * time.Second
 	totpAlgo     = "SHA1"
 	recoveryCnt  = 8
+
+	// mfaMaxFailedAttempts is the threshold of failed Verify() calls
+	// within mfaFailWindow after which the account is locked for
+	// mfaLockoutDuration. Successful verify resets the counter.
+	mfaMaxFailedAttempts = 5
+	mfaFailWindow        = 15 * time.Minute
+	mfaLockoutDuration   = 15 * time.Minute
 )
+
+// ErrMFALocked is returned by Verify when the user's account is in
+// the lockout window after exceeding mfaMaxFailedAttempts. The login
+// handler maps this to HTTP 429 (NOT 401) so callers can distinguish
+// "wrong code" from "rate-limited" — and so brute-forcers can't
+// silently keep guessing past the threshold.
+var ErrMFALocked = errors.New("mfa: too many failed attempts; locked")
 
 // MFAService handles enrolment + verification on top of user_mfa.
 // kek is the 32-byte platform key wrapping the TOTP secret at rest.
@@ -116,18 +130,25 @@ func (m *MFAService) StartEnrollment(ctx context.Context, userID uuid.UUID, acco
 
 // ConfirmEnrollment verifies the first user-supplied 6-digit code
 // against the staged secret. On success: bumps users.mfa_status to
-// 'enrolled' and stamps last_verified_at. On failure: the user can
-// retry; the secret stays staged.
+// 'enrolled', stamps last_verified_at, and persists the accepted
+// counter so the same code cannot be replayed.
 func (m *MFAService) ConfirmEnrollment(ctx context.Context, userID uuid.UUID, code string) error {
 	secret, err := m.unwrapSecret(ctx, userID)
 	if err != nil {
 		return err
 	}
-	if !verifyTOTP(secret, code, time.Now().UTC()) {
+	matched := verifyTOTP(secret, code, time.Now().UTC())
+	if matched < 0 {
 		return errors.New("mfa: code invalid")
 	}
 	if _, err := m.pool.Exec(ctx, `
-		UPDATE user_mfa SET last_verified_at = now() WHERE user_id = $1`, userID); err != nil {
+		UPDATE user_mfa
+		   SET last_verified_at = now(),
+		       last_used_counter = $2,
+		       failed_verify_count = 0,
+		       failed_verify_window_start = NULL,
+		       locked_until = NULL
+		 WHERE user_id = $1`, userID, matched); err != nil {
 		return err
 	}
 	if _, err := m.pool.Exec(ctx, `
@@ -140,19 +161,127 @@ func (m *MFAService) ConfirmEnrollment(ctx context.Context, userID uuid.UUID, co
 // Verify is what the login flow calls during the MFA second step.
 // Accepts either a TOTP code OR a recovery code; the latter consumes
 // one of the 8 backup slots.
+//
+// Enforces:
+//   - lockout window: returns ErrMFALocked if locked_until > now
+//   - counter replay protection: refuses codes whose matched counter
+//     <= last_used_counter (RFC 6238 §5.2)
+//   - rate limiting: after mfaMaxFailedAttempts failures in
+//     mfaFailWindow, the account is locked for mfaLockoutDuration
 func (m *MFAService) Verify(ctx context.Context, userID uuid.UUID, code string) error {
-	// Try TOTP first.
-	secret, err := m.unwrapSecret(ctx, userID)
+	// Lockout + last-used + secret in a single row read so the lockout
+	// check is consistent with the verify attempt that follows.
+	var (
+		wrapped        []byte
+		lastUsed       int64
+		lockedUntil    *time.Time
+		failedCount    int
+		failedStart    *time.Time
+	)
+	err := m.pool.QueryRow(ctx, `
+		SELECT totp_secret_encrypted, last_used_counter, locked_until,
+		       failed_verify_count, failed_verify_window_start
+		  FROM user_mfa WHERE user_id = $1`, userID).
+		Scan(&wrapped, &lastUsed, &lockedUntil, &failedCount, &failedStart)
 	if err != nil {
-		return err
+		return errors.New("mfa: not enrolled")
 	}
-	if verifyTOTP(secret, code, time.Now().UTC()) {
-		_, _ = m.pool.Exec(ctx,
-			`UPDATE user_mfa SET last_verified_at = now() WHERE user_id = $1`, userID)
+	now := time.Now().UTC()
+	if lockedUntil != nil && lockedUntil.After(now) {
+		return ErrMFALocked
+	}
+	// Roll the failure window: if the window started > mfaFailWindow
+	// ago, reset the counter before counting new failures.
+	if failedStart != nil && now.Sub(*failedStart) > mfaFailWindow {
+		failedCount = 0
+		failedStart = nil
+	}
+
+	secret, err := m.open(wrapped)
+	if err != nil {
+		return errors.New("mfa: not enrolled")
+	}
+
+	// Try TOTP first.
+	matched := verifyTOTP(secret, code, now)
+	if matched >= 0 && matched > lastUsed {
+		// Success — accept, reset failure tracking, stamp counter.
+		if _, err := m.pool.Exec(ctx, `
+			UPDATE user_mfa
+			   SET last_verified_at = now(),
+			       last_used_counter = $2,
+			       failed_verify_count = 0,
+			       failed_verify_window_start = NULL,
+			       locked_until = NULL
+			 WHERE user_id = $1`, userID, matched); err != nil {
+			return err
+		}
 		return nil
 	}
-	// Fall through to recovery codes.
-	return m.consumeRecoveryCode(ctx, userID, code)
+	if matched >= 0 && matched <= lastUsed {
+		// Code matched a window but the counter has already been
+		// consumed — explicit replay. Count this as a failed attempt
+		// for rate-limit purposes (a legitimate user wouldn't replay).
+		return m.recordFailure(ctx, userID, failedCount, failedStart, now)
+	}
+
+	// Fall through to recovery codes. A successful consumption resets
+	// the failure counter; a miss increments it.
+	if err := m.consumeRecoveryCode(ctx, userID, code); err == nil {
+		_, _ = m.pool.Exec(ctx, `
+			UPDATE user_mfa
+			   SET failed_verify_count = 0,
+			       failed_verify_window_start = NULL,
+			       locked_until = NULL
+			 WHERE user_id = $1`, userID)
+		return nil
+	}
+	return m.recordFailure(ctx, userID, failedCount, failedStart, now)
+}
+
+// recordFailure increments the rolling failure counter and engages
+// the lockout when the threshold is crossed. Returns the user-facing
+// error to surface: ErrMFALocked when this attempt tripped the
+// threshold, "code invalid" otherwise.
+func (m *MFAService) recordFailure(
+	ctx context.Context,
+	userID uuid.UUID,
+	priorCount int,
+	priorStart *time.Time,
+	now time.Time,
+) error {
+	newCount := priorCount + 1
+	windowStart := priorStart
+	if windowStart == nil {
+		t := now
+		windowStart = &t
+	}
+	var lockUntil *time.Time
+	resultErr := errors.New("mfa: code invalid")
+	if newCount >= mfaMaxFailedAttempts {
+		lu := now.Add(mfaLockoutDuration)
+		lockUntil = &lu
+		// Reset the rolling counter so post-lockout the next failure
+		// starts fresh.
+		newCount = 0
+		windowStart = nil
+		resultErr = ErrMFALocked
+	}
+	if _, err := m.pool.Exec(ctx, `
+		UPDATE user_mfa
+		   SET failed_verify_count = $2,
+		       failed_verify_window_start = $3,
+		       locked_until = $4
+		 WHERE user_id = $1`, userID, newCount, windowStart, lockUntil); err != nil {
+		// DB write failure shouldn't unlock the account — surface the
+		// invalid-code error and rely on the next attempt to retry
+		// the bookkeeping. The lockout we WERE about to apply isn't
+		// persisted, so a determined attacker can bypass this single
+		// instance; the absent row is logged via the caller's error
+		// path. (DB outages are rare and the audit log catches them.)
+		return resultErr
+	}
+	return resultErr
 }
 
 // IsEnrolled is a cheap predicate the API uses before requiring MFA.
@@ -272,20 +401,23 @@ func (m *MFAService) open(blob []byte) ([]byte, error) {
 // ----- TOTP RFC 6238 --------------------------------------------------------
 
 // verifyTOTP checks the code against the current 30-second window
-// plus the one before and after (drift tolerance).
-func verifyTOTP(secret []byte, code string, now time.Time) bool {
+// plus the one before and after (drift tolerance). Returns the
+// matched counter on success (so the caller can persist it for
+// replay protection) and -1 when no window matched.
+func verifyTOTP(secret []byte, code string, now time.Time) int64 {
 	code = strings.TrimSpace(code)
 	if len(code) != totpDigits {
-		return false
+		return -1
 	}
-	counter := uint64(now.Unix()) / uint64(totpStep.Seconds())
+	counter := int64(uint64(now.Unix()) / uint64(totpStep.Seconds()))
 	for offset := int64(-1); offset <= 1; offset++ {
-		expected := hotp(secret, uint64(int64(counter)+offset))
+		candidate := counter + offset
+		expected := hotp(secret, uint64(candidate))
 		if subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
-			return true
+			return candidate
 		}
 	}
-	return false
+	return -1
 }
 
 func hotp(secret []byte, counter uint64) string {

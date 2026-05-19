@@ -133,32 +133,48 @@ func TenantScope(headerName string) func(http.Handler) http.Handler {
 	}
 }
 
-// TenantBinding pre-sets the vaultscan.tenant_id GUC on the pool so the
-// RLS policies on every tenant-scoped table engage for the lifetime of
-// this request. The set_config(_, _, false) form sets at session scope;
-// pool connection reuse means a second request could inherit the GUC
-// briefly before this middleware overwrites it, so this is defense-in-
-// depth on top of the application's WHERE-clause filtering, not a sole
-// safety net.
+// TenantBinding attaches the caller's tenant to the request context
+// so the pool's BeforeAcquire hook (db.installRLSHooks) SETs the
+// vaultscan.tenant_id GUC on every conn the handler subsequently
+// borrows. This replaces the old behaviour of pre-setting the GUC on
+// ONE borrowed conn (racy: handler's subsequent pool.Exec could pick
+// a different conn and run RLS-bound to whatever the prior request
+// left behind).
 //
 // Behaviour:
-//   - identity has TenantID: SET vaultscan.tenant_id = '<uuid>' → RLS
-//     binds to that tenant.
-//   - identity has no TenantID (platform / partner role): leave GUC
-//     untouched (NULL → pass-through). If the previous request set a
-//     tenant, clear it explicitly to avoid leak between unrelated
-//     callers.
+//   - identity has TenantID: ctx carries the tenant — every conn
+//     this request borrows is bound to it.
+//   - identity has no TenantID (platform / partner role / unauth):
+//     ctx carries an explicit "no binding" marker so the conn is
+//     reset to pass-through RLS on checkout.
 //
-// Errors are logged-and-ignored: the WHERE-clause discipline still
-// applies, so a failed SET doesn't open a leak.
+// The pool itself enforces the binding — this middleware's job is
+// just to publish the intent into ctx.
+//
+// The `pool` argument is retained for backward compatibility (and
+// for the legacy best-effort warmup); the new mechanism doesn't
+// require it. We still call SetTenantContext as a no-op warmup so
+// any non-pool-routed query (e.g. a raw *pgxpool.Conn already
+// acquired) sees the GUC immediately.
 func TenantBinding(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, _ := auth.FromContext(r.Context())
+			ctx := r.Context()
 			if id != nil && id.TenantID != nil {
-				_ = db.SetTenantContext(r.Context(), pool, *id.TenantID)
+				ctx = db.ContextWithTenantBinding(ctx, *id.TenantID)
 			} else {
-				_ = db.ClearTenantContext(r.Context(), pool)
+				ctx = db.ContextWithoutTenantBinding(ctx)
+			}
+			r = r.WithContext(ctx)
+			// Best-effort warmup: prime one conn's GUC. The pool's
+			// BeforeAcquire is the authoritative binder; this is
+			// purely an optimisation for hot paths that issue many
+			// short queries on a single borrowed conn.
+			if id != nil && id.TenantID != nil {
+				_ = db.SetTenantContext(ctx, pool, *id.TenantID)
+			} else {
+				_ = db.ClearTenantContext(ctx, pool)
 			}
 			next.ServeHTTP(w, r)
 		})

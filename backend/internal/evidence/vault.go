@@ -322,6 +322,7 @@ func (v *Vault) Read(ctx context.Context, evidenceID uuid.UUID, actor *uuid.UUID
 			return nil, nil, fmt.Errorf("evidence: load DEK v%d: %w", *keyVersion, derr)
 		}
 		plain, err = decryptWithDEK(dek, raw[12:], raw[:12])
+		zeroBytes(dek)
 		if err != nil {
 			return nil, nil, fmt.Errorf("evidence: decrypt with tenant DEK: %w", err)
 		}

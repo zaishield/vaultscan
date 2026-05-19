@@ -39,8 +39,24 @@ var evidenceLogger = zerolog.New(os.Stderr).With().
 // 32-byte key per tenant, wrapped with AES-256-GCM under the KEK and
 // persisted in tenant_data_keys. wrapped_key in the DB is nonce || GCM ct.
 
+// zeroBytes overwrites b in place with zeroes. Use to scrub DEKs and
+// other key material from the heap as soon as the using function is
+// done with them — Go's GC will reclaim the memory eventually, but
+// "eventually" can mean the bytes linger in a freed heap arena
+// observable to a process-memory dump or coredump for hours. defer
+// zeroBytes(dek) after every successful tenantKeyByVersion /
+// currentTenantKey / EnsureTenantKey call.
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
 // EnsureTenantKey returns the current (latest, non-retired) DEK version
 // for a tenant. Creates one on first call.
+//
+// The returned dek MUST be zeroized by the caller as soon as it's no
+// longer needed (use `defer zeroBytes(dek)` at the call-site).
 func (v *Vault) EnsureTenantKey(ctx context.Context, tenantID uuid.UUID) (int, []byte, error) {
 	if version, dek, err := v.currentTenantKey(ctx, tenantID); err == nil {
 		return version, dek, nil
@@ -86,10 +102,11 @@ func (v *Vault) ReWrapTenantObjects(ctx context.Context, tenantID uuid.UUID, max
 	if maxBatch <= 0 {
 		maxBatch = 100
 	}
-	currentVer, _, err := v.currentTenantKey(ctx, tenantID)
+	currentVer, dek, err := v.currentTenantKey(ctx, tenantID)
 	if err != nil {
 		return 0, false, fmt.Errorf("evidence.ReWrapTenantObjects: current key: %w", err)
 	}
+	zeroBytes(dek) // we only needed the version here; scrub the DEK.
 	// Pull (id, key_version, storage_url) for objects whose key
 	// version is below current. LIMIT maxBatch+1 so we can detect
 	// "more available" without a second count query.
@@ -179,16 +196,19 @@ func (v *Vault) rewrapOne(ctx context.Context, tenantID, evidenceID uuid.UUID, o
 	if err != nil {
 		return fmt.Errorf("rewrap: load old DEK v%d: %w", oldVer, err)
 	}
+	defer zeroBytes(oldDEK)
 	plain, err := decryptWithDEK(oldDEK, raw[12:], raw[:12])
 	if err != nil {
 		return fmt.Errorf("rewrap: decrypt: %w", err)
 	}
+	defer zeroBytes(plain)
 	// Encrypt under the new version (look it up freshly each call
 	// so a rotation midway through doesn't pin us to a stale key).
 	_, newDEK, err := v.currentTenantKey(ctx, tenantID)
 	if err != nil {
 		return fmt.Errorf("rewrap: load new DEK: %w", err)
 	}
+	defer zeroBytes(newDEK)
 	ct, nonce, err := encryptWithDEK(newDEK, plain)
 	if err != nil {
 		return fmt.Errorf("rewrap: encrypt: %w", err)
@@ -523,6 +543,7 @@ func (v *Vault) PutWithDEK(ctx context.Context, tenantID uuid.UUID, body []byte)
 		return "", 0, err
 	}
 	ct, nonce, err := encryptWithDEK(dek, body)
+	zeroBytes(dek)
 	if err != nil {
 		return "", 0, err
 	}
@@ -607,6 +628,7 @@ func (v *Vault) ReadWithDEK(ctx context.Context, evidenceID uuid.UUID, actor *uu
 			return nil, fmt.Errorf("evidence: load DEK v%d: %w", *keyVersion, err)
 		}
 		plain, err = decryptWithDEK(dek, raw[12:], raw[:12])
+		zeroBytes(dek)
 		if err != nil {
 			return nil, fmt.Errorf("evidence: decrypt with tenant DEK: %w", err)
 		}
@@ -658,6 +680,7 @@ func (v *Vault) VerifyIntegrity(ctx context.Context, evidenceID uuid.UUID) (bool
 			return false, err
 		}
 		plain, err = decryptWithDEK(dek, raw[12:], raw[:12])
+		zeroBytes(dek)
 		if err != nil {
 			return false, err
 		}

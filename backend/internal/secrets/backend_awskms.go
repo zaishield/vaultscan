@@ -75,17 +75,31 @@ func NewAWSKMSBackend(cfg AWSKMSConfig) (*AWSKMSBackend, error) {
 }
 
 func (b *AWSKMSBackend) Get(ctx context.Context, ref string) (string, error) {
+	plain, err := b.GetBytes(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	// string(plain) copies the bytes into an immutable string buffer.
+	// Zero the working slice so the only remaining heap copy is the
+	// string returned to the caller (which the caller owns + manages).
+	out := string(plain)
+	zeroBytes(plain)
+	return out, nil
+}
+
+// GetBytes returns the decrypted secret as a mutable []byte so the
+// caller can zeroize it as soon as it's no longer needed. Prefer this
+// over Get when the secret is short-lived (e.g. wrapping a per-
+// request DEK) — Get returns an immutable string that can only be
+// reclaimed by GC.
+func (b *AWSKMSBackend) GetBytes(ctx context.Context, ref string) ([]byte, error) {
 	var ciphertextB64 string
 	err := b.pool.QueryRow(ctx,
 		`SELECT ciphertext_b64 FROM vaultscan_secrets WHERE ref = $1`, ref).Scan(&ciphertextB64)
 	if err != nil {
-		return "", fmt.Errorf("secrets: kms ref %q not found: %w", ref, err)
+		return nil, fmt.Errorf("secrets: kms ref %q not found: %w", ref, err)
 	}
-	plain, err := b.kmsDecrypt(ctx, ciphertextB64)
-	if err != nil {
-		return "", err
-	}
-	return string(plain), nil
+	return b.kmsDecrypt(ctx, ciphertextB64)
 }
 
 func (b *AWSKMSBackend) Put(ctx context.Context, ref, value string) error {
@@ -134,13 +148,32 @@ func (b *AWSKMSBackend) kmsDecrypt(ctx context.Context, ciphertextB64 string) ([
 	if err != nil {
 		return nil, err
 	}
+	// Plaintext as []byte lets encoding/json auto-decode the
+	// base64 string into the byte slice — no intermediate
+	// immutable plaintext string on the heap.
 	var r struct {
-		Plaintext string `json:"Plaintext"`
+		Plaintext []byte `json:"Plaintext"`
 	}
 	if err := json.Unmarshal(resp, &r); err != nil {
+		zeroBytes(resp)
 		return nil, err
 	}
-	return base64.StdEncoding.DecodeString(r.Plaintext)
+	// resp still contains the base64-encoded plaintext in its bytes;
+	// clear before returning so the only heap copy is r.Plaintext
+	// (which the caller owns + can zero).
+	zeroBytes(resp)
+	return r.Plaintext, nil
+}
+
+// zeroBytes overwrites b in place with zeroes. The Go compiler does
+// NOT optimise this away because zeroBytes' visible effect is a
+// write to memory shared via slice (escape-analyzed). Use this for
+// any byte buffer that carried plaintext key material before letting
+// it fall out of scope — clears the only on-heap copy we control.
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 func (b *AWSKMSBackend) kmsCall(ctx context.Context, target string, body []byte) ([]byte, error) {

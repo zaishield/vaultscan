@@ -16,6 +16,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -187,6 +188,21 @@ func main() {
 			Msg("unknown VAULTSCAN_AGENT_GW_TLS mode (want: on|off|auto)")
 	}
 
+	// Internal proxy client for the orchestrator-public-key passthrough.
+	// http.DefaultClient is unfit for this hop:
+	//   - no timeout → a wedged API blocks the gateway thread forever
+	//   - follows redirects → if apiBase is ever mangled (env corruption,
+	//     misconfig), an attacker-controlled redirect could steer the
+	//     gateway at an internal metadata endpoint (169.254.169.254 etc).
+	// We pin the timeout, refuse redirects, and the handler additionally
+	// validates apiBase + the constructed URL path.
+	internalClient := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
@@ -203,7 +219,26 @@ func main() {
 	// API so the API stays the single source of truth for the
 	// signing key (and the gateway doesn't have to be re-signed
 	// when the key rotates).
+	//
+	// Hardening (vs. the previous http.DefaultClient call):
+	//   - Validate apiBase ONCE at startup. A malformed or non-http(s)
+	//     URL fails the gateway boot rather than producing a runtime
+	//     SSRF surface.
+	//   - Use internalClient (timeout + no-redirects) instead of
+	//     http.DefaultClient. http.DefaultClient was a shared global
+	//     with no timeout — a hanging API would pin a gateway thread
+	//     forever, and any redirect (intended or not) could steer
+	//     the proxy into private space.
+	//   - Cap response body to 64 KiB. The orchestrator public key
+	//     PEM is <2 KiB; we refuse anything bigger as defense against
+	//     an upstream that's been compromised or misconfigured.
 	apiBase := strings.TrimRight(cfg.APIPublicURL(), "/")
+	if apiBase != "" {
+		if u, err := url.Parse(apiBase); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			log.Fatal().Str("api_base", apiBase).Err(err).
+				Msg("VAULTSCAN_API_PUBLIC_URL must be a valid http(s) URL with a host")
+		}
+	}
 	r.Get("/api/v1/orchestrator/public-key", func(w http.ResponseWriter, r *http.Request) {
 		if apiBase == "" {
 			writeJSON(w, 500, map[string]string{"error": "VAULTSCAN_API_PUBLIC_URL not configured"})
@@ -211,13 +246,13 @@ func main() {
 		}
 		req, _ := http.NewRequestWithContext(r.Context(), "GET",
 			apiBase+"/api/v1/orchestrator/public-key", nil)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := internalClient.Do(req)
 		if err != nil {
 			writeJSON(w, 502, map[string]string{"error": "upstream api unreachable: " + err.Error()})
 			return
 		}
 		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		if ct := resp.Header.Get("Content-Type"); ct != "" {
 			w.Header().Set("Content-Type", ct)
 		}

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -84,7 +85,15 @@ func mfaVerify(s *Services) http.HandlerFunc {
 			return
 		}
 		if err := s.MFA.Verify(r.Context(), req.UserID, req.Code); err != nil {
-			writeJSONError(w, http.StatusUnauthorized, "mfa_invalid", err.Error())
+			// Distinguish lockout from invalid-code so brute-forcers
+			// can't keep guessing past the threshold without noticing.
+			// 429 also makes the lockout observable to monitoring.
+			if errors.Is(err, auth.ErrMFALocked) {
+				writeJSONError(w, http.StatusTooManyRequests, "mfa_locked",
+					"too many failed attempts; try again later")
+				return
+			}
+			writeJSONError(w, http.StatusUnauthorized, "mfa_invalid", "code invalid")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "verified"})

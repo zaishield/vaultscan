@@ -4,35 +4,118 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	pgxConnAliasRLS "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// SetTenantContext sets the vaultscan.tenant_id GUC at session scope on
-// a connection acquired from pool. The GUC binds the RLS policy:
+// rlsCtxKey is the context key under which middleware stashes the
+// caller's tenant binding. The pool's BeforeAcquire callback reads
+// this key on every checkout and SETs the vaultscan.tenant_id GUC
+// on the freshly-acquired connection — guaranteeing that whichever
+// conn the handler ends up using, the RLS policy
 //
 //   USING (vaultscan_current_tenant_id() IS NULL
 //          OR tenant_id = vaultscan_current_tenant_id())
 //
-// IMPORTANT — connection reuse caveat:
+// sees the right tenant. This closes the GUC race that existed when
+// SetTenantContext set the GUC on ONE pool-borrowed conn and the
+// handler's subsequent pool.Exec/Query grabbed a DIFFERENT conn.
+type rlsCtxKeyT struct{}
+
+var rlsCtxKey = rlsCtxKeyT{}
+
+// rlsBinding represents the per-request tenant binding pulled out of
+// ctx by BeforeAcquire. tenantID == uuid.Nil means "clear" (RLS
+// passes through — used by service paths that legitimately read
+// across tenants: analytics worker, cosign verifier).
+type rlsBinding struct {
+	tenantID uuid.UUID
+	// set true when the binding was placed explicitly by middleware
+	// (vs. an unauthenticated request where we want the conn cleared
+	// of any GUC inherited from a prior request).
+	bound bool
+}
+
+// ContextWithTenantBinding returns ctx with the given tenant attached.
+// The pool's BeforeAcquire callback will set vaultscan.tenant_id to
+// this tenant on every conn checked out under this ctx. Pass uuid.Nil
+// to bind "no tenant" (RLS pass-through). Use ContextWithoutTenantBinding
+// to explicitly remove any prior binding.
+func ContextWithTenantBinding(ctx context.Context, tenantID uuid.UUID) context.Context {
+	return context.WithValue(ctx, rlsCtxKey, rlsBinding{tenantID: tenantID, bound: true})
+}
+
+// ContextWithoutTenantBinding returns ctx with the tenant binding
+// removed. Useful for nested calls that must escape the request's
+// tenant binding (cross-tenant aggregation, system maintenance).
+func ContextWithoutTenantBinding(ctx context.Context) context.Context {
+	return context.WithValue(ctx, rlsCtxKey, rlsBinding{tenantID: uuid.Nil, bound: true})
+}
+
+// tenantBindingFromContext returns the binding stashed by middleware
+// (or empty + false when none — BeforeAcquire then leaves the conn
+// untouched, and AfterRelease still clears the GUC on return).
+func tenantBindingFromContext(ctx context.Context) (rlsBinding, bool) {
+	v, ok := ctx.Value(rlsCtxKey).(rlsBinding)
+	return v, ok
+}
+
+// installRLSHooks wires the BeforeAcquire + AfterRelease pool
+// callbacks that bind the GUC per-request. Called by OpenWithConfig.
+// Composes with any existing AfterRelease (so we don't blow away
+// hooks set by, say, the replica's read-only enforcement).
+func installRLSHooks(cfg *pgxpool.Config) {
+	prevBeforeAcquire := cfg.BeforeAcquire
+	cfg.BeforeAcquire = func(ctx context.Context, conn *pgxConnAliasRLS.Conn) bool {
+		if prevBeforeAcquire != nil && !prevBeforeAcquire(ctx, conn) {
+			return false
+		}
+		binding, ok := tenantBindingFromContext(ctx)
+		// No binding in ctx → leave the conn as-is. AfterRelease
+		// will have cleared the GUC when this conn was returned to
+		// the pool, so the default is "no tenant" (pass-through RLS).
+		if !ok {
+			return true
+		}
+		v := ""
+		if binding.tenantID != uuid.Nil {
+			v = binding.tenantID.String()
+		}
+		if _, err := conn.Exec(ctx,
+			`SELECT set_config('vaultscan.tenant_id', $1, false)`, v); err != nil {
+			// Failing to set the GUC must NOT silently hand back a
+			// conn that may carry a stale tenant binding from the
+			// previous user. Discard the conn — pool will spin a
+			// fresh one. The handler's subsequent Acquire will retry.
+			return false
+		}
+		return true
+	}
+	prevAfterRelease := cfg.AfterRelease
+	cfg.AfterRelease = func(conn *pgxConnAliasRLS.Conn) bool {
+		// Clear the GUC unconditionally before the conn re-enters
+		// the pool. If clear fails the conn is suspect — destroy it.
+		if _, err := conn.Exec(context.Background(),
+			`SELECT set_config('vaultscan.tenant_id', '', false)`); err != nil {
+			return false
+		}
+		if prevAfterRelease != nil {
+			return prevAfterRelease(conn)
+		}
+		return true
+	}
+}
+
+// SetTenantContext is retained for backward compatibility with code
+// paths that haven't yet been migrated to ContextWithTenantBinding.
+// It is no longer the primary RLS binding mechanism: the pool's
+// BeforeAcquire/AfterRelease hooks do the binding properly. This
+// function is now a thin shim that updates the request context and
+// pre-sets the GUC on one pooled conn (best-effort warmup).
 //
-//   pgxpool reuses connections across requests. set_config(_, _, false)
-//   sets a session-scoped GUC, so once a conn returns to the pool the
-//   GUC value persists; the next caller may inherit it. To avoid that,
-//   callers that NEED airtight per-request isolation should use
-//   WithTenantBoundConn (below), which acquires a dedicated conn,
-//   SETs, runs the function, and RESETs the GUC before release.
-//
-// For best-effort middleware use (the API HTTP path), this function
-// is still useful: it pre-sets the GUC on whatever conn the next
-// pool.Exec/Query happens to grab, and on every authenticated request
-// the value is freshly overwritten — race conditions can only leak
-// rows during a narrow window, and the application's WHERE-clause
-// discipline already filters by tenant_id. This is defense-in-depth,
-// not the primary defense.
-//
-// Pass uuid.Nil to clear the GUC (RLS falls back to pass-through —
-// the right behaviour for service paths that legitimately need
-// cross-tenant reads: analytics worker, cosign verifier).
+// New code should prefer ContextWithTenantBinding(ctx, tid) and pass
+// the returned ctx down — the pool will set the GUC on whichever
+// conn the handler ends up using, racelessly.
 func SetTenantContext(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID) error {
 	v := ""
 	if tenantID != uuid.Nil {
@@ -42,8 +125,8 @@ func SetTenantContext(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUI
 	return err
 }
 
-// ClearTenantContext is a convenience for the analytics worker and other
-// service paths that need cross-tenant reads.
+// ClearTenantContext is the legacy convenience helper. Prefer
+// ContextWithoutTenantBinding for new code.
 func ClearTenantContext(ctx context.Context, pool *pgxpool.Pool) error {
 	return SetTenantContext(ctx, pool, uuid.Nil)
 }
