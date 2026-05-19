@@ -26,6 +26,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
 
 const (
@@ -277,8 +279,9 @@ func (m *MFAService) recordFailure(
 		// invalid-code error and rely on the next attempt to retry
 		// the bookkeeping. The lockout we WERE about to apply isn't
 		// persisted, so a determined attacker can bypass this single
-		// instance; the absent row is logged via the caller's error
-		// path. (DB outages are rare and the audit log catches them.)
+		// instance; surface via a metric so on-call sees sustained
+		// patterns + the per-attempt log line catches the audit case.
+		observability.MFALockoutWriteFailed.Inc()
 		return resultErr
 	}
 	return resultErr

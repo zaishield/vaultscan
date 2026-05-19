@@ -555,7 +555,7 @@ func (v *Vault) unwrapWithAAD(blob, aad []byte) ([]byte, error) {
 			return pt, nil
 		}
 	}
-	for i, k := range v.previousMasterKeys {
+	for _, k := range v.previousMasterKeys {
 		if len(k) == 0 {
 			continue
 		}
@@ -567,10 +567,6 @@ func (v *Vault) unwrapWithAAD(blob, aad []byte) ([]byte, error) {
 				return pt, nil
 			}
 		}
-		// Track which old key handled which blob — useful operator
-		// signal during rotation. We don't return early on success
-		// per-key; the caller (Read*) doesn't need the index.
-		_ = i
 	}
 	return nil, errors.New("evidence: unwrap failed against active + all retired KEKs")
 }

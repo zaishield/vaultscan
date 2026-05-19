@@ -157,8 +157,16 @@ func (b *OpenBaoBackend) Get(ctx context.Context, ref string) (string, error) {
 			return "", fmt.Errorf("secrets: openbao decode: %w", err)
 		}
 		// Single-string secrets are stored under field "value".
-		if v, ok := r.Data.Data["value"].(string); ok {
-			return v, nil
+		// Distinguish "value present but wrong type" from "no value
+		// field" — the former is an operator misconfig (someone
+		// stored a number/bool/object as the value, masking other
+		// fields) and should fail loud rather than silently dumping
+		// the entire data map.
+		if raw, present := r.Data.Data["value"]; present {
+			if v, ok := raw.(string); ok {
+				return v, nil
+			}
+			return "", fmt.Errorf("secrets: openbao %q has a 'value' field of type %T (expected string)", ref, raw)
 		}
 		// Multi-field secrets: serialize the whole data map as JSON
 		// so the caller can unmarshal it (cloud creds resolver uses

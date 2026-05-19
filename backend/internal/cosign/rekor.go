@@ -43,7 +43,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"math/big"
 	"time"
 )
 
@@ -174,13 +173,9 @@ func (rk *RekorPublicKey) VerifySignedEntryTimestamp(entry *RekorEntry, payload 
 	// "logIndex": ..., "logID": ..., "body": "<base64>" }.
 	canonical := canonicalSETPayload(entry, payload)
 	digest := sha256.Sum256(canonical)
-	// ECDSA signatures from Rekor are DER-encoded ASN.1.
-	var sig struct {
-		R, S *big.Int
-	}
-	// Parse via x509-style DER. We use ecdsa.Verify with explicit r/s.
+	// ECDSA signatures from Rekor are DER-encoded ASN.1 — verifyASN1
+	// handles the unmarshal internally via ecdsa.VerifyASN1.
 	if !verifyASN1(rk.pub, digest[:], entry.SthSignature) {
-		_ = sig
 		return errors.New("cosign/rekor: signedEntryTimestamp does not verify against configured Rekor key")
 	}
 	return nil

@@ -184,11 +184,10 @@ func verifyMessageDigest(cmsDER []byte, si *signerInfo) error {
 	if _, err := asn1.Unmarshal(sd.EncapContentInfo.EContent.Bytes, &inner); err != nil {
 		return fmt.Errorf("eContent OCTET STRING: %w", err)
 	}
-	wantHash, hashAlgo, err := newHashForOID(si.DigestAlgorithm.Algorithm)
+	wantHash, _, err := newHashForOID(si.DigestAlgorithm.Algorithm)
 	if err != nil {
 		return err
 	}
-	_ = hashAlgo
 	wantHash.Write(inner)
 	want := wantHash.Sum(nil)
 

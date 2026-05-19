@@ -195,12 +195,6 @@ func (s *Service) DispatchOne(ctx context.Context) (processed bool, err error) {
 	return true, tx.Commit(ctx)
 }
 
-func min(a, b uint) uint {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 // ============================================================================
 // SMTP transport

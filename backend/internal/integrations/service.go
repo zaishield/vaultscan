@@ -10,7 +10,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -697,5 +696,3 @@ func (s *Service) breakerFor(integrationID uuid.UUID, name string) *circuitbreak
 	s.breakers[integrationID] = b
 	return b
 }
-
-var _ = errors.New

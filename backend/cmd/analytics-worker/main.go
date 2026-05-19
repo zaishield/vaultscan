@@ -69,14 +69,28 @@ func main() {
 		if err != nil {
 			log.Warn().Err(err).Msg("nats connect failed — running in-process-only mode")
 		} else {
-			_, _ = nc.Subscribe("vaultscan.>", func(m *nats.Msg) {
+			// Keep the subscription handle so we can Unsubscribe
+			// before nc.Drain() during shutdown — otherwise the NATS
+			// callback can keep firing past ctx cancellation and
+			// race the indexer flush. The callback also threads
+			// the worker's ctx (not context.Background) so handler
+			// work honors SIGTERM.
+			sub, err := nc.Subscribe("vaultscan.>", func(m *nats.Msg) {
 				var ev eventbus.Event
 				if err := json.Unmarshal(m.Data, &ev); err != nil {
 					return
 				}
-				indexer.Handle(context.Background(), ev)
+				indexer.Handle(ctx, ev)
 			})
-			defer nc.Drain()
+			if err != nil {
+				log.Warn().Err(err).Msg("nats subscribe failed")
+			}
+			defer func() {
+				if sub != nil {
+					_ = sub.Unsubscribe()
+				}
+				_ = nc.Drain()
+			}()
 			log.Info().Str("nats", cfg.EventBusURL).Msg("subscribed to NATS event bus")
 		}
 	}

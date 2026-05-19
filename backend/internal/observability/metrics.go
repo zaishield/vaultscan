@@ -157,6 +157,15 @@ var (
 		},
 		[]string{"reason"},
 	)
+	// MFALockoutWriteFailed: count of TOTP verification failures
+	// where the DB write that should have persisted the failure
+	// counter / lockout state itself failed. A non-zero rate means
+	// the attacker can keep guessing because the lockout never
+	// engages — alert immediately.
+	MFALockoutWriteFailed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "vaultscan_mfa_lockout_write_failed_total",
+		Help: "TOTP recordFailure DB writes that failed — lockout did not engage for this attempt.",
+	})
 	EmergencyStopSLAms = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "vaultscan_emergency_stop_sla_ms",
 		Help:    "Time from operator request to agent ack, in milliseconds.",
@@ -246,6 +255,7 @@ func init() {
 		NotifyQuarantine,
 		TenantPoolDowngrade,
 		InboundHMACFailures,
+		MFALockoutWriteFailed,
 		AgentsByStatus,
 		IntegrationDeliveryFailures,
 		IntegrationDeadLetterDepth,
