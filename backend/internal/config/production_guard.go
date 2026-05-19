@@ -41,9 +41,50 @@ var devDefaults = map[string]string{
 	"job-signing-key-id":    sha256hex("dev-key-1"),
 }
 
+// devKEKBytes catalogs the dev-default KEKs by their *decoded* bytes
+// (sha256 hash thereof). Hashing the raw base64 string can be trivially
+// bypassed by stripping or adding padding (`=`) — base64.Decode returns
+// the same bytes for "abc=", "abc==", and "abc" if the underlying byte
+// length permits, so the string-hash check would miss the smuggled
+// equivalent. We additionally hash the canonical decoded form so any
+// re-encoding of the same key material trips the check.
+var devKEKBytes = map[string]string{
+	"evidence-master-key": sha256BytesHex("ZGV2LWV2aWRlbmNlLW1hc3Rlci1rZXktY2hhbmdlLW1lLTAwMDAwMDA="),
+	"scanner-pull-key":    sha256BytesHex("ZGV2LXNjYW5uZXItcHVsbC1tYXN0ZXIta2V5LTAwMDA="),
+}
+
 func sha256hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// sha256BytesHex returns the sha256 of the BASE64-DECODED form of s,
+// or "" if s isn't decodable. Use to fingerprint key material by its
+// canonical (post-decode) representation so padding variants ("abc",
+// "abc=", "abc==") collide.
+func sha256BytesHex(b64 string) string {
+	for _, enc := range []*base64.Encoding{
+		base64.StdEncoding, base64.URLEncoding,
+		base64.RawStdEncoding, base64.RawURLEncoding,
+	} {
+		if b, err := enc.DecodeString(strings.TrimSpace(b64)); err == nil {
+			sum := sha256.Sum256(b)
+			return hex.EncodeToString(sum[:])
+		}
+	}
+	return ""
+}
+
+// isDevKEK returns true if val (a candidate base64 KEK) decodes to the
+// same bytes as the named dev default. Padding variants and alphabet
+// variants are all caught.
+func isDevKEK(name, val string) bool {
+	expected := devKEKBytes[name]
+	if expected == "" {
+		return false
+	}
+	got := sha256BytesHex(val)
+	return got != "" && got == expected
 }
 
 // ProductionConfigError is returned when Env=production but the config
@@ -78,13 +119,15 @@ func (c *Config) validateProduction() error {
 	if c.JWTSharedSecret != "" && len(c.JWTSharedSecret) < 32 {
 		v = append(v, "VAULTSCAN_JWT_SECRET must be ≥32 bytes")
 	}
-	if sha256hex(c.EvidenceMasterKey) == devDefaults["evidence-master-key"] {
+	if sha256hex(c.EvidenceMasterKey) == devDefaults["evidence-master-key"] ||
+		isDevKEK("evidence-master-key", c.EvidenceMasterKey) {
 		v = append(v, "VAULTSCAN_EVIDENCE_MASTER_KEY is still the dev default — generate a fresh 32-byte base64 KEK")
 	}
 	if err := validateBase64KEK(c.EvidenceMasterKey, 32); err != nil {
 		v = append(v, "VAULTSCAN_EVIDENCE_MASTER_KEY invalid: "+err.Error())
 	}
-	if sha256hex(c.ScannerPullKey) == devDefaults["scanner-pull-key"] {
+	if sha256hex(c.ScannerPullKey) == devDefaults["scanner-pull-key"] ||
+		isDevKEK("scanner-pull-key", c.ScannerPullKey) {
 		v = append(v, "VAULTSCAN_SCANNER_PULL_KEY is still the dev default — generate a fresh 32-byte base64 KEK")
 	}
 	if err := validateBase64KEK(c.ScannerPullKey, 32); err != nil {

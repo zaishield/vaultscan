@@ -16,8 +16,13 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// pgxNoRows is the sentinel for "no row returned" from pgx. We alias
+// it here to keep call sites readable.
+var pgxNoRows = pgx.ErrNoRows
 
 // OIDCVerifier validates JWTs issued by an external OpenID Connect provider
 // (Keycloak by default, but the same code works for Auth0, Okta, Entra,
@@ -39,22 +44,52 @@ type OIDCVerifier struct {
 	pool         *pgxpool.Pool
 	httpClient   *http.Client
 	cacheTTL     time.Duration
+	// allowedACR is the per-tenant allowlist of `acr` values that
+	// satisfy MFA. Default {"mfa"} (the prior hardcode). Operators
+	// can override via WithACRValues for IdPs that use a different
+	// authentication-context vocabulary (e.g. ISO 29115 "loa3").
+	allowedACR []string
 
 	mu           sync.RWMutex
 	keys         map[string]any // kid → *rsa.PublicKey | *ecdsa.PublicKey
 	keysFetchedAt time.Time
 }
 
-func NewOIDCVerifier(issuer, audience string, pool *pgxpool.Pool) *OIDCVerifier {
+// NewOIDCVerifier constructs a verifier for the issuer.
+//
+// jwksPath is the relative URL path to the issuer's JWKS endpoint. If
+// empty, the OIDC discovery default (/.well-known/jwks.json) is used.
+// Callers that wire Keycloak can pass "/protocol/openid-connect/certs"
+// explicitly. This replaces the previous Keycloak-only hardcode that
+// made Auth0/Okta/Entra unusable without a code change.
+func NewOIDCVerifier(issuer, audience string, pool *pgxpool.Pool, jwksPath ...string) *OIDCVerifier {
+	canonicalIssuer := strings.TrimRight(issuer, "/")
+	relPath := "/.well-known/jwks.json"
+	if len(jwksPath) > 0 && jwksPath[0] != "" {
+		relPath = jwksPath[0]
+		if !strings.HasPrefix(relPath, "/") {
+			relPath = "/" + relPath
+		}
+	}
 	return &OIDCVerifier{
-		issuer:     strings.TrimRight(issuer, "/"),
+		issuer:     canonicalIssuer,
 		audience:   audience,
-		jwksURL:    strings.TrimRight(issuer, "/") + "/protocol/openid-connect/certs",
+		jwksURL:    canonicalIssuer + relPath,
 		pool:       pool,
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 		cacheTTL:   10 * time.Minute,
 		keys:       map[string]any{},
+		allowedACR: []string{"mfa"},
 	}
+}
+
+// WithACRValues replaces the allowed `acr` MFA values. Callers should
+// pass the canonical strings their IdP emits (Keycloak: "mfa"; Entra:
+// "mfa"; Okta: "phr"; ISO 29115 ranges like "loa3"). Tokens whose
+// `acr` matches ANY listed value are considered MFA-verified.
+func (v *OIDCVerifier) WithACRValues(values ...string) *OIDCVerifier {
+	v.allowedACR = append([]string{}, values...)
+	return v
 }
 
 // Parse validates the raw bearer token and returns the platform Identity.
@@ -88,14 +123,26 @@ func (v *OIDCVerifier) Parse(ctx context.Context, raw string) (*Identity, error)
 			return nil, fmt.Errorf("oidc: unsupported alg %s", t.Method.Alg())
 		}
 		return key, nil
-	}, jwt.WithIssuer(v.issuer), jwt.WithExpirationRequired())
+	}, jwt.WithExpirationRequired())
 	if err != nil || !tok.Valid {
 		return nil, fmt.Errorf("oidc: invalid token: %w", err)
 	}
-	claims, ok := tok.Claims.(jwt.MapClaims)
+	// Manual issuer compare: jwt-go's WithIssuer does an exact string
+	// match. Some IdPs publish their issuer with a trailing slash in
+	// discovery but emit tokens WITHOUT it (and vice versa). Normalise
+	// both sides before comparison so a legitimate token isn't
+	// rejected just because the IdP's metadata vs. token emitter
+	// disagree on a slash. The audience check that follows is the
+	// rest of the binding.
+	claims0, ok := tok.Claims.(jwt.MapClaims)
 	if !ok {
 		return nil, errors.New("oidc: unexpected claims type")
 	}
+	tokIss := strings.TrimRight(stringClaim(claims0, "iss"), "/")
+	if tokIss != v.issuer {
+		return nil, fmt.Errorf("oidc: issuer %q does not match expected %q", tokIss, v.issuer)
+	}
+	claims := claims0
 	// Audience: jwt-go's standard parsing already checks if WithAudience was
 	// configured; we want a wider match so allow either string or []string.
 	if !audienceMatches(claims, v.audience) {
@@ -108,7 +155,7 @@ func (v *OIDCVerifier) Parse(ctx context.Context, raw string) (*Identity, error)
 			id.Email = stringClaim(claims, "email")
 		}
 		id.FullName = stringClaim(claims, "name")
-		id.MFAVerified = boolClaim(claims, "mfa") || claimsHasMFA(claims)
+		id.MFAVerified = boolClaim(claims, "mfa") || v.claimsHaveAllowedACR(claims)
 		_ = s
 	}
 	// Map issuer-specific claims into our identity. Keycloak puts platform /
@@ -169,7 +216,17 @@ func (v *OIDCVerifier) lookupKey(ctx context.Context, kid string) (any, error) {
 
 // refreshJWKS pulls the issuer's JWKS endpoint and parses every key it
 // returns into the cache.
+//
+// The JWKS URL must be https. http JWKS exposes us to MITM
+// substitution of the issuer's public keys (an on-path attacker
+// returns their own JWK; we now trust forged tokens). Localhost
+// http is allowed for dev/testing — that's the documented escape
+// hatch, and the production guard refuses to boot with a localhost
+// issuer.
 func (v *OIDCVerifier) refreshJWKS(ctx context.Context) error {
+	if !strings.HasPrefix(v.jwksURL, "https://") && !isLocalJWKS(v.jwksURL) {
+		return fmt.Errorf("oidc: jwks URL must be https (got %q)", v.jwksURL)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURL, nil)
 	if err != nil {
 		return err
@@ -219,17 +276,32 @@ func (v *OIDCVerifier) checkRevoked(ctx context.Context, id *Identity, claims jw
 	iat, _ := claims["iat"].(float64)
 	tokenIssuedAt := time.Unix(int64(iat), 0)
 
+	// Fail-CLOSED on every Scan path here. The previous code used
+	// `_ = pool.QueryRow(...).Scan(...)` which swallowed errors:
+	// a DB outage silently bypassed the revocation/lockout/tenant-
+	// suspension checks and let any token in. The right behavior
+	// when the gating store is unavailable is to refuse — pgx returns
+	// ErrNoRows when there's no row, which we map to "not revoked /
+	// not locked / not suspended"; any OTHER error is treated as
+	// "gating store unhealthy, refuse to let through".
+
 	var minIAT *time.Time
-	_ = v.pool.QueryRow(ctx,
+	err := v.pool.QueryRow(ctx,
 		`SELECT min_iat FROM token_revocations WHERE user_id=$1`, id.UserID).Scan(&minIAT)
+	if err != nil && !errors.Is(err, pgxNoRows) {
+		return fmt.Errorf("oidc: revocation lookup failed: %w", err)
+	}
 	if minIAT != nil && tokenIssuedAt.Before(*minIAT) {
 		return errors.New("oidc: token revoked (issued before min_iat)")
 	}
 
 	// Lockout check.
 	var locked *time.Time
-	_ = v.pool.QueryRow(ctx,
+	err = v.pool.QueryRow(ctx,
 		`SELECT locked_until FROM users WHERE id=$1`, id.UserID).Scan(&locked)
+	if err != nil && !errors.Is(err, pgxNoRows) {
+		return fmt.Errorf("oidc: lockout lookup failed: %w", err)
+	}
 	if locked != nil && time.Now().Before(*locked) {
 		return fmt.Errorf("oidc: account locked until %s", locked.Format(time.RFC3339))
 	}
@@ -237,13 +309,26 @@ func (v *OIDCVerifier) checkRevoked(ctx context.Context, id *Identity, claims jw
 	// Tenant suspension.
 	if id.TenantID != nil {
 		var status string
-		_ = v.pool.QueryRow(ctx,
+		err = v.pool.QueryRow(ctx,
 			`SELECT status FROM tenants WHERE id=$1`, *id.TenantID).Scan(&status)
+		if err != nil && !errors.Is(err, pgxNoRows) {
+			return fmt.Errorf("oidc: tenant status lookup failed: %w", err)
+		}
 		if status == "suspended" {
 			return errors.New("oidc: tenant is suspended")
 		}
 	}
 	return nil
+}
+
+// isLocalJWKS allows http://localhost / http://127.0.0.1 JWKS URLs
+// (dev fixtures, integration tests with a stub IdP). Production
+// must use https — the production guard refuses to boot if
+// VAULTSCAN_KEYCLOAK_ISSUER resolves to localhost.
+func isLocalJWKS(u string) bool {
+	return strings.HasPrefix(u, "http://localhost") ||
+		strings.HasPrefix(u, "http://127.0.0.1") ||
+		strings.HasPrefix(u, "http://[::1]")
 }
 
 func (v *OIDCVerifier) loadPermissions(ctx context.Context, id *Identity) error {
@@ -302,14 +387,22 @@ func boolClaim(claims jwt.MapClaims, key string) bool {
 	return false
 }
 
-// claimsHasMFA recognises Keycloak's `acr = mfa` or amr containing "mfa".
-func claimsHasMFA(claims jwt.MapClaims) bool {
-	if a, ok := claims["acr"].(string); ok && a == "mfa" {
-		return true
+// claimsHaveAllowedACR honours the verifier's allowedACR list (set
+// via WithACRValues, default {"mfa"}). It additionally accepts
+// `amr` containing canonical method codes — those are method-
+// presence claims, not auth-context-class claims, so they're checked
+// regardless of allowedACR.
+func (v *OIDCVerifier) claimsHaveAllowedACR(claims jwt.MapClaims) bool {
+	if a, ok := claims["acr"].(string); ok {
+		for _, want := range v.allowedACR {
+			if a == want {
+				return true
+			}
+		}
 	}
 	if a, ok := claims["amr"].([]any); ok {
-		for _, v := range a {
-			if s, ok := v.(string); ok && (s == "mfa" || s == "totp" || s == "hwk") {
+		for _, val := range a {
+			if s, ok := val.(string); ok && (s == "mfa" || s == "totp" || s == "hwk") {
 				return true
 			}
 		}

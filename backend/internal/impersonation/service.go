@@ -51,6 +51,12 @@ type Session struct {
 	ID            uuid.UUID  `json:"id"`
 	OperatorID    uuid.UUID  `json:"operator_id"`
 	OperatorEmail string     `json:"operator_email"`
+	// OperatorMFAVerified is true iff the impersonation middleware
+	// verified the operator's step-up MFA before Start() was reached.
+	// The auth layer trusts this field when minting impersonation
+	// tokens — it MUST NOT be set true by code paths that haven't
+	// actually checked the operator's MFA.
+	OperatorMFAVerified bool       `json:"operator_mfa_verified"`
 	TargetUserID  uuid.UUID  `json:"target_user_id"`
 	TargetEmail   string     `json:"target_email"`
 	TargetTenant  *uuid.UUID `json:"target_tenant,omitempty"`
@@ -172,6 +178,11 @@ func (s *Service) Start(ctx context.Context, operator uuid.UUID, in StartInput) 
 
 	return &Session{
 		ID: id, OperatorID: operator, OperatorEmail: operatorEmail,
+		// The HTTP layer that calls Start() routes through
+		// RequireImpersonationMFA middleware, so by definition the
+		// operator has completed step-up MFA. Record that fact on the
+		// session for downstream consumers (impAdapter → JWT MFA claim).
+		OperatorMFAVerified: true,
 		TargetUserID: in.TargetUserID, TargetEmail: targetEmail,
 		TargetTenant: targetTenant, TicketRef: in.TicketRef, Reason: in.Reason,
 		StartedAt: now, ExpiresAt: expires,

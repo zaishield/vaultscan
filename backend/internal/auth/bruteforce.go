@@ -76,6 +76,14 @@ func (b *BruteforceShield) RecordFailure(ctx context.Context, ip net.IP, email s
 
 // IsLocked reports whether the IP is currently locked. Reads are cheap —
 // the auth middleware calls this on every login attempt.
+//
+// Error semantics: pgx.ErrNoRows ⇒ "not locked" (the normal case for
+// IPs we've never seen). ANY OTHER DB error is propagated to the
+// caller. The previous implementation swallowed every error as
+// "not locked", which silently disabled the shield whenever the DB
+// hiccuped — including under attack, when load-induced DB errors
+// are the most likely. Callers (auth middleware) treat a non-nil
+// error as fail-closed: refuse the login attempt with a generic 503.
 func (b *BruteforceShield) IsLocked(ctx context.Context, ip net.IP) (bool, time.Time, error) {
 	if ip == nil {
 		return false, time.Time{}, nil
@@ -85,8 +93,10 @@ func (b *BruteforceShield) IsLocked(ctx context.Context, ip net.IP) (bool, time.
 		SELECT locked_until FROM auth_ip_lockouts
 		 WHERE ip=$1::inet AND locked_until > now()`, ip.String()).Scan(&until)
 	if err != nil {
-		// no row = not locked (pgx.ErrNoRows). We don't import pgx here.
-		return false, time.Time{}, nil
+		if errors.Is(err, pgxNoRows) {
+			return false, time.Time{}, nil
+		}
+		return false, time.Time{}, err
 	}
 	return true, until, nil
 }

@@ -115,6 +115,13 @@ func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 			}
 			return v.sharedSecret, nil
 		case *jwt.SigningMethodRSA:
+			// jwt.SigningMethodRSA covers RS256, RS384 and RS512.
+			// Pin RS256 explicitly — production issues RS256 only,
+			// and accepting RS384/RS512 broadens the cross-product of
+			// (alg × key) an attacker can confuse a verifier with.
+			if t.Method.Alg() != "RS256" {
+				return nil, fmt.Errorf("auth: RSA alg %q not allowed (only RS256)", t.Method.Alg())
+			}
 			if v.keyManager == nil {
 				return nil, fmt.Errorf("RS256 token but no key manager wired")
 			}
@@ -135,6 +142,9 @@ func (v *Verifier) Parse(ctx context.Context, raw string) (*Identity, error) {
 			}
 			return pub, nil
 		}
+		// PS256/PS384/PS512 (RSA-PSS) and ES256/384/512 (ECDSA) end
+		// up here — refuse them. We only issue RS256 and HS256; any
+		// other alg in an incoming token is an adversary probe.
 		return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 	}, jwt.WithLeeway(30*time.Second))
 	if err != nil || !tok.Valid {
@@ -231,8 +241,18 @@ type ImpersonationSession struct {
 // IssueImpersonationToken mints a short-lived JWT whose identity
 // claims reflect the TARGET user, with the impersonation session ID
 // + operator ID embedded so every downstream audit row attributes
-// both parties. Uses RSA when the KeyManager is configured (prod)
-// and falls back to HMAC (dev).
+// both parties.
+//
+// Production lockdown: when refuseHMAC is set (production mode), an
+// HS256 fallback is refused — impersonation tokens MUST be RS256.
+// Otherwise an operator could mint impersonation tokens from a
+// process that had no KeyManager wired, bypassing the JWKS path
+// every other token goes through.
+//
+// MFA: the session adapter exposes OperatorMFAVerifiedFlag — the
+// impersonation service stamps this to true ONLY after it has
+// verified the operator completed their step-up MFA challenge.
+// Trusting the session removes the previous hardcode.
 //
 // The TTL is the session's remaining lifetime; the impersonation
 // service caps it at 60 min absolute.
@@ -253,12 +273,15 @@ func (v *Verifier) IssueImpersonationToken(s impersonationSessionLike, ttl time.
 		PartnerID:              s.PartnerIDStr(),
 		TenantID:               s.TargetTenantStr(),
 		Roles:                  s.TargetRolesList(),
-		MFA:                    true, // impersonation requires MFA upstream
+		MFA:                    s.OperatorMFAVerifiedFlag(),
 		ImpersonationSessionID: s.IDStr(),
 		OperatorID:             s.OperatorIDStr(),
 	}
 	if v.keyManager != nil {
 		return v.IssueRSAToken(context.Background(), c)
+	}
+	if v.refuseHMAC {
+		return "", errors.New("auth: production mode requires KeyManager for impersonation tokens; refusing HS256 fallback")
 	}
 	return v.IssueDevToken(c)
 }
@@ -275,6 +298,12 @@ type impersonationSessionLike interface {
 	TargetRolesList() []string
 	PlatformIDStr() string
 	PartnerIDStr() string
+	// OperatorMFAVerifiedFlag is true iff the impersonation service
+	// has verified the operator completed step-up MFA before opening
+	// the session. The auth package trusts the session's word here;
+	// the impersonation service is responsible for not stamping this
+	// without a real check.
+	OperatorMFAVerifiedFlag() bool
 }
 
 // IssueRSAToken mints an RS256 token signed with the current active

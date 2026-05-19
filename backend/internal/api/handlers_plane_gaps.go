@@ -550,6 +550,9 @@ func (a *impAdapter) PlatformIDStr() string {
 		a.sess.TargetUserID).Scan(&pid)
 	return pid
 }
+func (a *impAdapter) OperatorMFAVerifiedFlag() bool {
+	return a.sess.OperatorMFAVerified
+}
 func (a *impAdapter) PartnerIDStr() string {
 	if a.sess.TargetTenant == nil {
 		return ""
