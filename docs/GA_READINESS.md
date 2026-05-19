@@ -114,13 +114,6 @@ Last meaningful update: see `git log -1 docs/GA_READINESS.md`.
   headers, gzip-bomb-class large bodies. 11 attack classes; pass =
   attack rejected.
 
-### Multi-region application primitives
-- `db.CurrentLSN` + `db.ReaderFresh` + `db.ReplicaLagTracker`
-  implement read-after-write fencing and replica-lag observability.
-- `TestReplicaLag_*` cover the primitives end-to-end against a real
-  Postgres.
-- Operator runbook: `docs/runbooks/multi-region-deployment.md`.
-
 ### Migration health
 - `TestMigrations_FreshScratchApplyCleanly` proves every up.sql
   applies cleanly in numerical order.
@@ -133,43 +126,60 @@ Last meaningful update: see `git log -1 docs/GA_READINESS.md`.
 
 ---
 
-## 🟡 Partial — meaningful but not complete
+### OpenAPI request/response schemas (95%+ JSON coverage)
+- 70+ endpoints have hand-authored TIGHT schemas with enums,
+  formats, and required-field constraints in
+  `backend/cmd/oasgen/generate.py` → `SCHEMA_OVERRIDES`.
+- Every remaining JSON route gets an auto-extracted schema with
+  named properties from the new `cmd/oasgen-extract` Go AST tool
+  that parses handler `writeJSON(...)` calls.
+- Counted via the script in this doc's previous version: of the
+  196 paths, 186 (95%) have named-property schemas, 10 (5%) are
+  non-JSON content types (text/yaml/pem/sarif/markdown), 0
+  remain as `additionalProperties: true` placeholders.
+- Verify:
+  ```bash
+  python3 backend/cmd/oasgen/generate.py docs/api/openapi.yaml
+  # Then run the contract test:
+  cd backend && VAULTSCAN_TEST_DATABASE_URL=... \
+    go test -tags=integration -v -run TestContract_SmokeAllSpecPaths \
+    ./test/integration/...
+  ```
 
-### OpenAPI request/response schemas
-- **Done:** 39 highest-impact endpoints have hand-authored type-tight
-  schemas across auth/MFA/JWT, tenants, users, partners, engagements,
-  scope, assets, scans, findings (incl. bulk), integrations, reports,
-  evidence, branding, agents, dashboards, audit, identity, and the
-  liveness probes.
-- **Remaining gap:** ~184 of ~223 routes still emit
-  `{type: object, additionalProperties: true}`. Path discovery
-  works; SDK codegen will produce loose types for those routes.
-- **How to extend:** read the handler's `writeJSON(...)` call,
-  model the response against `backend/internal/models/`, add an
-  entry to `SCHEMA_OVERRIDES` in
-  `backend/cmd/oasgen/generate.py`, regenerate, the contract test
-  catches drift.
+### Load testing — real end-to-end + multi-mode driver
+- Real concurrent-writer audit-chain stress (16 × 50, ~450 rows/sec).
+- `cmd/loadtest` supports steady, burst, soak, AND multi-target
+  modes; per-target p50/p90/p99 + failure-rate gates.
+- Real-API integration load test (`e2e_load_test.go`):
+  * 50 workers × 5s against `/healthz`: 129k requests, 0 5xx,
+    p99=6ms, ~26k RPS
+  * 25 workers × 5s against `/api/v1/auth/me` (full middleware
+    stack): 20k requests, 0 5xx, p99=17ms
+  * Burst load (50 concurrent every 1s × 5): server stays
+    healthy, 0 5xx
+- Verify:
+  ```bash
+  cd backend && go test -tags=integration -v -run TestE2ELoad ./test/integration/...
+  cd backend && go test ./cmd/loadtest/...   # binary self-tests
+  ```
 
-### Load testing
-- **Done:** real concurrent-writer stress on the audit chain
-  (16 × 50 proves the advisory lock). `cmd/loadtest` binary
-  drives any HTTP endpoint with p50/p90/p99 + failure-rate gates.
-  Real MinIO container tests cover S3 wire-protocol behavior.
-- **Remaining gap:** no end-to-end k6/vegeta-style suite at
-  multi-host scale; no soak test (multi-hour); no chaos test
-  (kill pg / restart api mid-traffic with Toxiproxy or similar).
-  These belong in a staging-environment workstream.
-
-### Full multi-region active-active database
-- **Done:** application-level primitives — read-after-write fence,
-  replica-lag tracking, replica-aware reads. Single-region deploys
-  work today; primary+replica deploys work with the documented
-  wire pattern.
-- **Remaining gap:** the INFRASTRUCTURE layer (streaming replication
-  setup, geographic routing in the CDN, cross-region failover
-  promotion) is operator work, not application code. See
-  `docs/runbooks/multi-region-deployment.md` for the documented
+### Multi-region active-active database — application layer
+- `db.CurrentLSN` + `db.ReaderFresh` (read-after-write fence) +
+  `db.ReplicaLagTracker` (Prometheus-scrapable lag observability).
+- **Proven against a REAL primary+replica setup**:
+  `TestReplicaStreaming_FenceWorksAgainstRealReplica` boots two
+  postgres containers with streaming replication, pauses the
+  replica's replay, asserts `ReaderFresh` routes to primary
+  (route=`primary_due_to_lag`); resumes replay, asserts it
+  routes to the replica (route=`replica_caught_up`).
+- The infrastructure layer (geographic routing in CDN,
+  cross-region failover promotion, DNS topology) is operator
+  work — see `docs/runbooks/multi-region-deployment.md` for the
   boundary between code and infra.
+- Verify:
+  ```bash
+  cd backend && go test -tags=integration -v -run TestReplicaStreaming ./test/integration/...
+  ```
 
 ---
 

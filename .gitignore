@@ -15,6 +15,7 @@
 /backend/audit-bundle
 /backend/loadtest
 /backend/oasgen
+/backend/oasgen-extract
 /backend/scanner-worker
 /backend/analytics-worker
 /backend/cron-runner

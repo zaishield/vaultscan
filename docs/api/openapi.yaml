@@ -20,6 +20,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -50,6 +53,10 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  key_id: {}
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -80,6 +87,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  state:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -116,6 +126,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  state:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -146,6 +159,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -181,6 +197,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -222,6 +241,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -252,7 +274,11 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ended
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -318,7 +344,17 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  quarantined:
+                    type: boolean
+                  quarantine_reason:
+                    type: string
+                  hard_delete_after:
+                    type: string
+                    format: date-time
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -348,6 +384,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -413,6 +452,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -448,7 +490,11 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - revoked
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -483,6 +529,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -507,7 +556,44 @@ paths:
             application/jwk-set+json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kty:
+                          type: string
+                          enum:
+                            - RSA
+                            - EC
+                            - OKP
+                            - oct
+                        kid:
+                          type: string
+                        alg:
+                          type: string
+                        use:
+                          type: string
+                          enum:
+                            - sig
+                            - enc
+                            - 
+                        n:
+                          type: string
+                        e:
+                          type: string
+                        crv:
+                          type: string
+                        x:
+                          type: string
+                        y:
+                          type: string
+                      required:
+                        - kty
+                        - kid
+                required:
+                  - keys
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -554,7 +640,35 @@ paths:
             application/jwk-set+json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kty:
+                          type: string
+                        kid:
+                          type: string
+                        alg:
+                          type: string
+                        use:
+                          type: string
+                        n:
+                          type: string
+                        e:
+                          type: string
+                        crv:
+                          type: string
+                        x:
+                          type: string
+                        y:
+                          type: string
+                      required:
+                        - kty
+                        - kid
+                required:
+                  - keys
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -578,6 +692,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -716,7 +832,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  agent_id:
+                    type: string
+                    format: uuid
+                  sla_target_secs:
+                    type: integer
+                    minimum: 0
+                  p99_secs:
+                    type: number
+                  samples:
+                    type: integer
+                    minimum: 0
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -782,6 +909,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -812,6 +942,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  buckets: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -842,7 +974,18 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  agent_id:
+                    type: string
+                    format: uuid
+                  current_version:
+                    type: string
+                  offered_version:
+                    type: string
+                  checksum_sha256:
+                    type: string
+                  url:
+                    type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -866,6 +1009,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -995,6 +1140,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  asset_id: {}
+                  risk_score: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1019,6 +1167,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1066,6 +1216,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  policies: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1090,6 +1242,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  events: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1146,7 +1300,30 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  total_rows:
+                    type: integer
+                    minimum: 0
+                  first_bad_id:
+                    type: integer
+                    minimum: 0
+                  last_good_id:
+                    type: integer
+                    minimum: 0
+                  detected_at:
+                    type: string
+                    format: date-time
+                  expected_hash:
+                    type: string
+                  stored_hash:
+                    type: string
+                  detail:
+                    type: string
+                required:
+                  - total_rows
+                  - first_bad_id
+                  - last_good_id
+                  - detected_at
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -1170,6 +1347,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  lockouts: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1260,7 +1439,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                  tenant_id:
+                    type: string
+                    format: uuid
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -1290,7 +1474,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  redirect_url:
+                    type: string
+                    format: uri
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -1320,7 +1507,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  redirect_url:
+                    type: string
+                    format: uri
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -1383,7 +1573,39 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  frameworks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        framework:
+                          type: string
+                          enum:
+                            - soc2
+                            - iso27001
+                            - pci_dss
+                            - hipaa
+                            - fedramp
+                        controls_total:
+                          type: integer
+                          minimum: 0
+                        controls_satisfied:
+                          type: integer
+                          minimum: 0
+                        controls_gap:
+                          type: integer
+                          minimum: 0
+                        coverage_pct:
+                          type: number
+                          minimum: 0
+                          maximum: 100
+                  generated_at:
+                    type: string
+                    format: date-time
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -1418,6 +1640,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  controls: {}
+                  framework: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1477,6 +1702,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1507,6 +1734,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
+                  key_id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1537,6 +1767,14 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  decision: {}
+                  digest: {}
+                  image_ref: {}
+                  last_verified: {}
+                  matched_key: {}
+                  reason: {}
+                  tool: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1561,6 +1799,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  snapshots: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1624,6 +1864,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1648,6 +1890,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1672,6 +1916,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  nodes: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1696,6 +1942,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  layouts: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1726,6 +1974,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1750,7 +2000,22 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  partner_id:
+                    type: string
+                    format: uuid
+                  tenant_count:
+                    type: integer
+                    minimum: 0
+                  scans_last_30d:
+                    type: integer
+                    minimum: 0
+                  open_critical:
+                    type: integer
+                    minimum: 0
+                  open_high:
+                    type: integer
+                    minimum: 0
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -1774,6 +2039,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1868,6 +2135,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -1990,7 +2259,48 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  platform_id:
+                    type: string
+                    format: uuid
+                  partner_id:
+                    type: string
+                    format: uuid
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  code:
+                    type: string
+                  name:
+                    type: string
+                  description:
+                    type: string
+                  status:
+                    type: string
+                    enum:
+                      - draft
+                      - active
+                      - paused
+                      - completed
+                      - cancelled
+                  starts_at:
+                    type: string
+                    format: date-time
+                  ends_at:
+                    type: string
+                    format: date-time
+                  intensity:
+                    type: string
+                  created_at:
+                    type: string
+                    format: date-time
+                required:
+                  - id
+                  - code
+                  - status
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -2025,6 +2335,10 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  note:
+                    type: string
+                  storage_url: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2091,6 +2405,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2180,6 +2497,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  events: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2240,6 +2559,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  error:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2270,7 +2592,16 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  url:
+                    type: string
+                    format: uri
+                  expires_at:
+                    type: string
+                    format: date-time
+                required:
+                  - url
+                  - expires_at
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -2294,6 +2625,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2324,6 +2657,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2458,6 +2793,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  clusters: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2506,6 +2843,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  newly_breached: {}
+                  total_breached: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2686,6 +3026,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2722,6 +3064,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2746,7 +3090,29 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+                      - degraded
+                      - unhealthy
+                  timestamp:
+                    type: string
+                    format: date-time
+                  components:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        status:
+                          type: string
+                        detail:
+                          type: string
+                required:
+                  - status
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -2770,6 +3136,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2794,6 +3162,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2824,6 +3194,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2854,6 +3226,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  dead_letters: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2878,6 +3252,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  installs: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2908,6 +3284,10 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  install_id: {}
+                  integration_id: {}
+                  state: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2932,6 +3312,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  listings: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -2956,6 +3338,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  summary: {}
+                  top_findings: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3003,6 +3388,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3149,6 +3536,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3179,6 +3568,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  plan: {}
+                  usage: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3245,7 +3637,34 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        from_plan:
+                          type: string
+                        to_plan:
+                          type: string
+                        status:
+                          type: string
+                          enum:
+                            - pending
+                            - approved
+                            - rejected
+                        reason:
+                          type: string
+                        filed_at:
+                          type: string
+                          format: date-time
+                        decided_at:
+                          type: string
+                          format: date-time
+                          nullable: true
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -3311,7 +3730,29 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  partner_id:
+                    type: string
+                    format: uuid
+                  period_start:
+                    type: string
+                    format: date-time
+                  period_end:
+                    type: string
+                    format: date-time
+                  scans_count:
+                    type: integer
+                    minimum: 0
+                  findings_count:
+                    type: integer
+                    minimum: 0
+                  evidence_bytes:
+                    type: integer
+                    minimum: 0
+                  current_plan:
+                    type: string
+                  quota_overage:
+                    type: number
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -3341,6 +3782,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3371,6 +3814,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3406,7 +3851,24 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  partner_id:
+                    type: string
+                    format: uuid
+                  parent_partner_ids:
+                    type: array
+                    items:
+                      type: string
+                      format: uuid
+                  depth:
+                    type: integer
+                    minimum: 0
+                required:
+                  - tenant_id
+                  - partner_id
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -3436,6 +3898,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  percent_complete: {}
+                  status: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3466,7 +3931,16 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  partner_id:
+                    type: string
+                    format: uuid
+                  name:
+                    type: string
+                  primary_color:
+                    type: string
+                  logo_url:
+                    type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -3496,6 +3970,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3520,7 +3996,27 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        partner_id:
+                          type: string
+                          format: uuid
+                        from_plan:
+                          type: string
+                        to_plan:
+                          type: string
+                        status:
+                          type: string
+                        filed_at:
+                          type: string
+                          format: date-time
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -3544,7 +4040,35 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        operator_id:
+                          type: string
+                          format: uuid
+                        operator_email:
+                          type: string
+                          format: email
+                        target_user_id:
+                          type: string
+                          format: uuid
+                        target_email:
+                          type: string
+                          format: email
+                        started_at:
+                          type: string
+                          format: date-time
+                        expires_at:
+                          type: string
+                          format: date-time
+                        ticket_ref:
+                          type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -3598,6 +4122,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  enabled: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3622,6 +4148,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  rules: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3713,7 +4241,29 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                  created_at:
+                    type: string
+                    format: date-time
+                  completed_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  retests:
+                    type: array
+                    items:
+                      type: object
+                required:
+                  - id
+                  - status
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -3743,6 +4293,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3767,6 +4319,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3797,7 +4351,22 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  retest_id:
+                    type: string
+                    format: uuid
+                  finding_id:
+                    type: string
+                    format: uuid
+                  before_status:
+                    type: string
+                  after_status:
+                    type: string
+                  changed:
+                    type: boolean
+                required:
+                  - retest_id
+                  - changed
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -3824,10 +4393,9 @@ paths:
         200:
           description: Success
           content:
-            application/json:
+            application/x-yaml:
               schema:
-                type: object
-                additionalProperties: true
+                type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -3857,6 +4425,12 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  at_quota: {}
+                  inflight: {}
+                  max: {}
+                  region: {}
+                  reserved_for_platform: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3893,6 +4467,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3917,6 +4494,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -3941,6 +4520,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4027,6 +4608,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4085,6 +4668,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4268,7 +4853,30 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        label:
+                          type: string
+                        prefix:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                        expires_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        revoked_at:
+                          type: string
+                          format: date-time
+                          nullable: true
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -4334,7 +4942,33 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  provider_type:
+                    type: string
+                    enum:
+                      - none
+                      - saml
+                      - oidc
+                  enabled:
+                    type: boolean
+                  metadata_xml:
+                    type: string
+                  discovery_url:
+                    type: string
+                  client_id:
+                    type: string
+                  client_secret_set:
+                    type: boolean
+                  claim_mapping:
+                    type: object
+                    additionalProperties:
+                      type: string
+                required:
+                  - provider_type
+                  - enabled
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -4394,6 +5028,12 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  identity:
+                    type: object
+                  plan: {}
+                  rate_limit: {}
+                  usage: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4418,6 +5058,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  items: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4550,6 +5192,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  roles: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4586,6 +5230,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4693,7 +5340,25 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+                      - degraded
+                      - unhealthy
+                  timestamp:
+                    type: string
+                    format: date-time
+                  components:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        status:
+                          type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -4753,6 +5418,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4795,6 +5462,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4826,6 +5496,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4863,6 +5535,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  certificate_pem: {}
+                  fingerprint: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4900,6 +5575,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  emergency_stop_id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4937,6 +5614,11 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  agent_id: {}
+                  enrollment_token: {}
+                  note:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -4974,6 +5656,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  buckets_written: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5005,6 +5689,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  affected: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5036,6 +5722,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  created: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5073,6 +5761,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  lag: {}
+                  shipped: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5110,6 +5801,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  loaded: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5195,6 +5888,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5303,6 +5999,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5334,7 +6033,17 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  secret:
+                    type: string
+                  qr_code_data_url:
+                    type: string
+                  recovery_codes:
+                    type: array
+                    items:
+                      type: string
+                required:
+                  - secret
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -5421,7 +6130,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                  tenant_id:
+                    type: string
+                    format: uuid
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -5458,6 +6172,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5495,7 +6211,19 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  snapshot_id:
+                    type: string
+                    format: uuid
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  generated_at:
+                    type: string
+                    format: date-time
+                required:
+                  - snapshot_id
+                  - tenant_id
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -5532,6 +6260,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5569,6 +6300,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5606,6 +6340,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5643,6 +6380,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  max_scans_per_hour: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5680,6 +6419,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5698,12 +6440,31 @@ paths:
       tags:
         - evidence
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                tenant_id:
+                  type: string
+                  format: uuid
+                engagement_id:
+                  type: string
+                  format: uuid
+                finding_id:
+                  type: string
+                  format: uuid
+                kind:
+                  type: string
+                content_type:
+                  type: string
+                body_base64:
+                  type: string
+                  contentEncoding: base64
+              required:
+                - tenant_id
+                - kind
       responses:
         200:
           description: Success
@@ -5711,7 +6472,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  sha256:
+                    type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -5742,6 +6508,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5779,6 +6547,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  integrity_ok: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5816,6 +6586,10 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
+                  until: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5847,6 +6621,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5940,6 +6717,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -5971,6 +6750,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6008,6 +6789,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  launched: {}
+                  retest_id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6045,6 +6829,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6082,6 +6869,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  resolution: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6113,7 +6902,17 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  ok:
+                    type: boolean
+                  status_code:
+                    type: integer
+                  duration_ms:
+                    type: integer
+                  error:
+                    type: string
+                required:
+                  - ok
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -6150,6 +6949,11 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  accepted:
+                    type: boolean
+                  error:
+                    type: object
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6181,6 +6985,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  ack_id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6212,6 +7018,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  device_id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6243,6 +7051,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  reason: {}
+                  stopped: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6285,6 +7096,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6322,6 +7135,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6364,7 +7180,12 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  sent_to:
+                    type: string
+                    format: email
+                  status:
+                    type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -6401,7 +7222,17 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  spf_ok:
+                    type: boolean
+                  dkim_ok:
+                    type: boolean
+                  dmarc_ok:
+                    type: boolean
+                  details:
+                    type: object
+                    additionalProperties:
+                      type: string
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -6425,12 +7256,21 @@ paths:
           schema:
             type: string
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                decision:
+                  type: string
+                  enum:
+                    - approved
+                    - rejected
+                note:
+                  type: string
+              required:
+                - decision
       responses:
         200:
           description: Success
@@ -6438,7 +7278,15 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                  decided_at:
+                    type: string
+                    format: date-time
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -6456,12 +7304,23 @@ paths:
       tags:
         - platform-ops
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                partner_id:
+                  type: string
+                  format: uuid
+                amount_usd:
+                  type: number
+                reason:
+                  type: string
+              required:
+                - partner_id
+                - amount_usd
+                - reason
       responses:
         200:
           description: Success
@@ -6469,7 +7328,10 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    format: uuid
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -6500,6 +7362,11 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  expires_at: {}
+                  id: {}
+                  permission: {}
+                  token: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6531,6 +7398,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  issuer_id: {}
+                  permission: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6562,6 +7432,10 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  expires_at: {}
+                  session: {}
+                  token: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6599,7 +7473,21 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  from_partner:
+                    type: string
+                    format: uuid
+                  to_partner:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum:
+                      - migrated
+                      - in_progress
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -6630,6 +7518,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6661,6 +7551,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  count: {}
+                  ran: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6771,6 +7664,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6802,6 +7697,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  batch_id: {}
+                  queued: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6833,6 +7731,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6870,6 +7770,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  retest_id: {}
+                  scan_job_id: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6907,6 +7810,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6938,6 +7844,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  count: {}
+                  degraded_nodes: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -6975,6 +7884,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7012,6 +7924,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7043,6 +7958,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  halted_jobs: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7230,7 +8147,11 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - approved
         400:
           $ref: "#/components/responses/BadRequest"
         401:
@@ -7331,6 +8252,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  added: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7368,6 +8291,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7405,6 +8331,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  new_key_version: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7442,6 +8370,13 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  isolation_mode:
+                    type: string
+                  next_steps:
+                    type: string
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7479,6 +8414,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7617,6 +8555,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7654,6 +8595,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7672,12 +8616,16 @@ paths:
       tags:
         - integrations
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                secret:
+                  type: string
+              required:
+                - secret
       responses:
         200:
           description: Success
@@ -7685,6 +8633,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7722,6 +8673,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7764,6 +8718,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7801,6 +8758,9 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"
@@ -7832,6 +8792,8 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  enabled: {}
                 additionalProperties: true
         400:
           $ref: "#/components/responses/BadRequest"

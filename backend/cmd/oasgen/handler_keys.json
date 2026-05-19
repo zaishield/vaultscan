@@ -1,0 +1,1178 @@
+{
+  "Mount": [
+    {
+      "name": "components",
+      "type": "unknown"
+    },
+    {
+      "name": "status",
+      "type": "unknown"
+    },
+    {
+      "name": "timestamp",
+      "type": "unknown"
+    },
+    {
+      "name": "uptime_seconds",
+      "type": "unknown"
+    },
+    {
+      "name": "version",
+      "type": "unknown"
+    }
+  ],
+  "ackAgentEmergencyStop": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "activateEngagement": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "addFindingComment": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "addPartnerDomain": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "addSeverityOverride": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "addSuppressionRule": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "approveReport": [
+    {
+      "name": "status",
+      "type": "unknown"
+    }
+  ],
+  "approveScope": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "assetRiskScore": [
+    {
+      "name": "asset_id",
+      "type": "unknown"
+    },
+    {
+      "name": "risk_score",
+      "type": "unknown"
+    }
+  ],
+  "assignUserRole": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "auditTimeline": [
+    {
+      "name": "events",
+      "type": "unknown"
+    }
+  ],
+  "autoLaunchRetest": [
+    {
+      "name": "launched",
+      "type": "unknown"
+    },
+    {
+      "name": "retest_id",
+      "type": "unknown"
+    }
+  ],
+  "badRequest": [
+    {
+      "name": "error",
+      "type": "object"
+    }
+  ],
+  "bulkAssets": [
+    {
+      "name": "affected",
+      "type": "unknown"
+    }
+  ],
+  "bulkPatchFindings": [
+    {
+      "name": "affected",
+      "type": "unknown"
+    }
+  ],
+  "chainOfCustody": [
+    {
+      "name": "events",
+      "type": "unknown"
+    }
+  ],
+  "clearTenantBranding": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "complianceMatrix": [
+    {
+      "name": "controls",
+      "type": "unknown"
+    },
+    {
+      "name": "framework",
+      "type": "unknown"
+    }
+  ],
+  "complianceSnapshot": [
+    {
+      "name": "snapshots",
+      "type": "unknown"
+    }
+  ],
+  "configureMarketplaceInstall": [
+    {
+      "name": "state",
+      "type": "string"
+    }
+  ],
+  "cosignVerifyTool": [
+    {
+      "name": "decision",
+      "type": "unknown"
+    },
+    {
+      "name": "digest",
+      "type": "unknown"
+    },
+    {
+      "name": "image_ref",
+      "type": "unknown"
+    },
+    {
+      "name": "last_verified",
+      "type": "unknown"
+    },
+    {
+      "name": "matched_key",
+      "type": "unknown"
+    },
+    {
+      "name": "reason",
+      "type": "unknown"
+    },
+    {
+      "name": "tool",
+      "type": "unknown"
+    }
+  ],
+  "createIntegration": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "createReportSchedule": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "createRetestBatch": [
+    {
+      "name": "batch_id",
+      "type": "unknown"
+    },
+    {
+      "name": "queued",
+      "type": "unknown"
+    }
+  ],
+  "deletePartnerReportTemplate": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "devToken": [
+    {
+      "name": "error",
+      "type": "string"
+    },
+    {
+      "name": "token",
+      "type": "unknown"
+    }
+  ],
+  "dismissNPSPrompt": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "downloadEvidence": [
+    {
+      "name": "error",
+      "type": "string"
+    }
+  ],
+  "drillCriticalFindings": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "drillRecentScans": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "drillSLABreaches": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "emergencyStop": [
+    {
+      "name": "halted_jobs",
+      "type": "unknown"
+    }
+  ],
+  "enableEvidenceWORM": [
+    {
+      "name": "status",
+      "type": "string"
+    },
+    {
+      "name": "until",
+      "type": "unknown"
+    }
+  ],
+  "enrollMobileDevice": [
+    {
+      "name": "device_id",
+      "type": "unknown"
+    }
+  ],
+  "eraseUser": [
+    {
+      "name": "note",
+      "type": "string"
+    },
+    {
+      "name": "report",
+      "type": "unknown"
+    },
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "findingSLABreaches": [
+    {
+      "name": "newly_breached",
+      "type": "unknown"
+    },
+    {
+      "name": "total_breached",
+      "type": "unknown"
+    }
+  ],
+  "forbidden": [
+    {
+      "name": "error",
+      "type": "object"
+    }
+  ],
+  "geoScanNodes": [
+    {
+      "name": "nodes",
+      "type": "unknown"
+    }
+  ],
+  "getBillingPlan": [
+    {
+      "name": "plan",
+      "type": "unknown"
+    },
+    {
+      "name": "usage",
+      "type": "unknown"
+    }
+  ],
+  "getMyUsage": [
+    {
+      "name": "identity",
+      "type": "object"
+    },
+    {
+      "name": "plan",
+      "type": "unknown"
+    },
+    {
+      "name": "rate_limit",
+      "type": "unknown"
+    },
+    {
+      "name": "usage",
+      "type": "unknown"
+    }
+  ],
+  "getPartnerOnboarding": [
+    {
+      "name": "percent_complete",
+      "type": "unknown"
+    },
+    {
+      "name": "status",
+      "type": "unknown"
+    }
+  ],
+  "getRegionQuota": [
+    {
+      "name": "at_quota",
+      "type": "unknown"
+    },
+    {
+      "name": "inflight",
+      "type": "unknown"
+    },
+    {
+      "name": "max",
+      "type": "unknown"
+    },
+    {
+      "name": "region",
+      "type": "unknown"
+    },
+    {
+      "name": "reserved_for_platform",
+      "type": "unknown"
+    }
+  ],
+  "importAssetsCSV": [
+    {
+      "name": "created",
+      "type": "unknown"
+    }
+  ],
+  "importScopeCSV": [
+    {
+      "name": "added",
+      "type": "unknown"
+    }
+  ],
+  "inboundWebhook": [
+    {
+      "name": "accepted",
+      "type": "boolean"
+    },
+    {
+      "name": "error",
+      "type": "object"
+    }
+  ],
+  "installFromMarketplace": [
+    {
+      "name": "install_id",
+      "type": "unknown"
+    },
+    {
+      "name": "integration_id",
+      "type": "unknown"
+    },
+    {
+      "name": "state",
+      "type": "unknown"
+    }
+  ],
+  "integrationHealth": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "internalErr": [
+    {
+      "name": "error",
+      "type": "object"
+    }
+  ],
+  "issueBreakGlass": [
+    {
+      "name": "expires_at",
+      "type": "unknown"
+    },
+    {
+      "name": "id",
+      "type": "unknown"
+    },
+    {
+      "name": "permission",
+      "type": "unknown"
+    },
+    {
+      "name": "token",
+      "type": "unknown"
+    }
+  ],
+  "launchRetestScan": [
+    {
+      "name": "retest_id",
+      "type": "unknown"
+    },
+    {
+      "name": "scan_job_id",
+      "type": "unknown"
+    }
+  ],
+  "listAgentTelemetry": [
+    {
+      "name": "buckets",
+      "type": "unknown"
+    }
+  ],
+  "listAgents": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listAssets": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listAudit": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listBillingBlocks": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listBrandAssets": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listCosignKeys": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listDashboardLayouts": [
+    {
+      "name": "layouts",
+      "type": "unknown"
+    }
+  ],
+  "listDeadLetters": [
+    {
+      "name": "dead_letters",
+      "type": "unknown"
+    }
+  ],
+  "listEmailTemplates": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listEngagements": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listFeedback": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listFindingClusters": [
+    {
+      "name": "clusters",
+      "type": "unknown"
+    }
+  ],
+  "listFindingComments": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listFindings": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listIPLockouts": [
+    {
+      "name": "lockouts",
+      "type": "unknown"
+    }
+  ],
+  "listIntegrations": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listMarketplaceInstalls": [
+    {
+      "name": "installs",
+      "type": "unknown"
+    }
+  ],
+  "listMarketplaceListings": [
+    {
+      "name": "listings",
+      "type": "unknown"
+    }
+  ],
+  "listPartnerReportTemplates": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listPartners": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listPolicyRules": [
+    {
+      "name": "rules",
+      "type": "unknown"
+    }
+  ],
+  "listRetestsForFinding": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listScanProfiles": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listScans": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listScope": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listTenants": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "listUserRoles": [
+    {
+      "name": "roles",
+      "type": "unknown"
+    }
+  ],
+  "listUsers": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "loadCompromisedPasswords": [
+    {
+      "name": "loaded",
+      "type": "unknown"
+    }
+  ],
+  "logoutAndRevoke": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "markRetestBatchItem": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "mfaDisable": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "mfaEnrollConfirm": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "mfaVerify": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "mobileAckAlert": [
+    {
+      "name": "ack_id",
+      "type": "unknown"
+    }
+  ],
+  "mobileDashboard": [
+    {
+      "name": "summary",
+      "type": "unknown"
+    },
+    {
+      "name": "top_findings",
+      "type": "unknown"
+    }
+  ],
+  "mobileEmergencyStop": [
+    {
+      "name": "reason",
+      "type": "unknown"
+    },
+    {
+      "name": "stopped",
+      "type": "unknown"
+    }
+  ],
+  "notFound": [
+    {
+      "name": "error",
+      "type": "object"
+    }
+  ],
+  "pauseEngagement": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "promoteTenantIsolation": [
+    {
+      "name": "isolation_mode",
+      "type": "string"
+    },
+    {
+      "name": "next_steps",
+      "type": "string"
+    },
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "provisionAgent": [
+    {
+      "name": "agent",
+      "type": "unknown"
+    },
+    {
+      "name": "enrollment_token",
+      "type": "unknown"
+    },
+    {
+      "name": "note",
+      "type": "string"
+    }
+  ],
+  "publishAgentBundle": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "putIntegrationSigningSecret": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "putPartnerSupport": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "putTenantBranding": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "quotaErrorJSON": [
+    {
+      "name": "error",
+      "type": "object"
+    }
+  ],
+  "reactivateTenant": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "recordRetestResult": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "recordScannerHeartbeat": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "redeemBreakGlass": [
+    {
+      "name": "issuer_id",
+      "type": "unknown"
+    },
+    {
+      "name": "permission",
+      "type": "unknown"
+    }
+  ],
+  "registerCosignKey": [
+    {
+      "name": "id",
+      "type": "unknown"
+    },
+    {
+      "name": "key_id",
+      "type": "unknown"
+    }
+  ],
+  "replayDeadLetter": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "requestAgentEmergencyStop": [
+    {
+      "name": "emergency_stop_id",
+      "type": "unknown"
+    }
+  ],
+  "requestRetest": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "residencyErrorJSON": [
+    {
+      "name": "error",
+      "type": "object"
+    }
+  ],
+  "resolveDeadLetter": [
+    {
+      "name": "resolution",
+      "type": "unknown"
+    }
+  ],
+  "resumeEngagement": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "retentionPolicies": [
+    {
+      "name": "policies",
+      "type": "unknown"
+    }
+  ],
+  "retestQueueForUser": [
+    {
+      "name": "items",
+      "type": "unknown"
+    }
+  ],
+  "revokeCosignKey": [
+    {
+      "name": "key_id",
+      "type": "unknown"
+    },
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "revokeMobileDevice": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "revokeUserRole": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "revokeUserTokens": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "rollupAgentTelemetry": [
+    {
+      "name": "buckets_written",
+      "type": "unknown"
+    }
+  ],
+  "rotateAgentCert": [
+    {
+      "name": "agent_id",
+      "type": "unknown"
+    },
+    {
+      "name": "enrollment_token",
+      "type": "unknown"
+    },
+    {
+      "name": "note",
+      "type": "string"
+    }
+  ],
+  "rotateJWTKey": [
+    {
+      "name": "new_kid",
+      "type": "unknown"
+    },
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "rotateTenantKey": [
+    {
+      "name": "new_key_version",
+      "type": "unknown"
+    }
+  ],
+  "runDueReports": [
+    {
+      "name": "count",
+      "type": "unknown"
+    },
+    {
+      "name": "ran",
+      "type": "unknown"
+    }
+  ],
+  "saveDashboardLayout": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "setAutoRetest": [
+    {
+      "name": "enabled",
+      "type": "unknown"
+    }
+  ],
+  "setEngagementRateLimit": [
+    {
+      "name": "max_scans_per_hour",
+      "type": "unknown"
+    }
+  ],
+  "setMaintenance": [
+    {
+      "name": "enabled",
+      "type": "unknown"
+    }
+  ],
+  "setRegionQuota": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "setTenantResidency": [
+    {
+      "name": "region",
+      "type": "unknown"
+    },
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "shipAuditBatch": [
+    {
+      "name": "lag",
+      "type": "unknown"
+    },
+    {
+      "name": "shipped",
+      "type": "unknown"
+    }
+  ],
+  "startImpersonation": [
+    {
+      "name": "expires_at",
+      "type": "unknown"
+    },
+    {
+      "name": "session",
+      "type": "unknown"
+    },
+    {
+      "name": "token",
+      "type": "unknown"
+    }
+  ],
+  "submitAgentCSR": [
+    {
+      "name": "certificate_pem",
+      "type": "unknown"
+    },
+    {
+      "name": "fingerprint",
+      "type": "unknown"
+    }
+  ],
+  "submitFeedback": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "submitScan": [
+    {
+      "name": "error",
+      "type": "object"
+    },
+    {
+      "name": "job",
+      "type": "unknown"
+    },
+    {
+      "name": "scope_guard",
+      "type": "unknown"
+    }
+  ],
+  "suspendTenant": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "sweepStalledNodes": [
+    {
+      "name": "count",
+      "type": "unknown"
+    },
+    {
+      "name": "degraded_nodes",
+      "type": "unknown"
+    }
+  ],
+  "triageFeedback": [
+    {
+      "name": "status",
+      "type": "unknown"
+    }
+  ],
+  "uninstallMarketplaceInstall": [
+    {
+      "name": "state",
+      "type": "string"
+    }
+  ],
+  "unlockIP": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "unlockUser": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "unpinnedImageErrorJSON": [
+    {
+      "name": "error",
+      "type": "object"
+    }
+  ],
+  "updateAgentPolicy": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "updateBranding": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "uploadAuthDoc": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "uploadBrandAsset": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "uploadEvidenceWithDEK": [
+    {
+      "name": "id",
+      "type": "unknown"
+    }
+  ],
+  "upsertEmailTemplate": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "upsertPartnerReportTemplate": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "upsertPullCredential": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "upsertRoE": [
+    {
+      "name": "status",
+      "type": "string"
+    }
+  ],
+  "verifyAudit": [
+    {
+      "name": "broken_at_id",
+      "type": "unknown"
+    },
+    {
+      "name": "chain_valid",
+      "type": "unknown"
+    }
+  ],
+  "verifyEvidenceIntegrity": [
+    {
+      "name": "integrity_ok",
+      "type": "unknown"
+    }
+  ],
+  "viewAuthDoc": [
+    {
+      "name": "note",
+      "type": "string"
+    },
+    {
+      "name": "storage_url",
+      "type": "unknown"
+    }
+  ],
+  "whoAmI": [
+    {
+      "name": "email",
+      "type": "unknown"
+    },
+    {
+      "name": "full_name",
+      "type": "unknown"
+    },
+    {
+      "name": "mfa_verified",
+      "type": "unknown"
+    },
+    {
+      "name": "partner_id",
+      "type": "unknown"
+    },
+    {
+      "name": "permissions",
+      "type": "unknown"
+    },
+    {
+      "name": "platform_id",
+      "type": "unknown"
+    },
+    {
+      "name": "roles",
+      "type": "unknown"
+    },
+    {
+      "name": "tenant_id",
+      "type": "unknown"
+    },
+    {
+      "name": "user_id",
+      "type": "unknown"
+    }
+  ],
+  "writeJSONError": [
+    {
+      "name": "error",
+      "type": "object"
+    }
+  ]
+}
