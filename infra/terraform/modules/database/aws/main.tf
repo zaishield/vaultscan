@@ -13,9 +13,29 @@ terraform {
   }
 }
 
+# Database master password.
+#
+# Rotation lifecycle: we want a rotate-on-trigger flow rather than
+# regenerate-on-every-plan. Adding `keepers = { rotate = var.db_password_rotation_token }`
+# makes the password resource sensitive only to that operator-
+# controlled variable: bump rotation_token in tfvars to mint a new
+# password; leave it alone to keep the existing one. This avoids the
+# previous "every random_password apply regenerates and disconnects
+# every live consumer" footgun.
+#
+# State loss recovery: a fresh state will rotate the password (no
+# keeper match), then aws_db_instance.master_password gets set to the
+# new value, and the secret in Secrets Manager is updated. Live apps
+# referencing the old password via the Secrets Manager hash will
+# rotate at their next pull. Document this in the runbook so ops
+# doesn't think they're locked out.
 resource "random_password" "db" {
   length  = 32
   special = false
+
+  keepers = {
+    rotation_token = var.db_password_rotation_token
+  }
 }
 
 resource "aws_db_subnet_group" "this" {

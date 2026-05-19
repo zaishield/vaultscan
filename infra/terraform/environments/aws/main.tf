@@ -52,20 +52,50 @@ module "kubernetes" {
 
 # Security group used by the Postgres + OpenSearch instances so they
 # accept traffic from the EKS node CIDR(s).
+#
+# Inbound is narrowed to the specific ports we actually serve — the
+# previous 0-65535 all-VPC blanket exposed every datastore port to
+# any pod in the VPC, including ports a future workload might bind
+# (e.g. an RDS proxy on 5432 + an OpenSearch dashboard on 5601 + a
+# debug pgAdmin on 5050).
+#
+# Egress is narrowed off the previous 0.0.0.0/0 default — datastores
+# don't initiate outbound traffic; we allow only the IMDSv2 path
+# (169.254.169.254/32) for instance metadata + DNS to the VPC's
+# resolver (cidr ".2") for DB-side hostname resolution. AWS RDS in
+# particular emits no other outbound, so the narrower rule is safe.
 resource "aws_security_group" "datastore" {
   name        = "${local.full_prefix}-datastore"
-  description = "Postgres + OpenSearch inbound from EKS workers."
+  description = "Postgres + OpenSearch inbound from EKS workers — port-narrowed."
   vpc_id      = module.kubernetes.vpc_id
 
   ingress {
-    from_port       = 0
-    to_port         = 0
-    protocol        = "-1"
-    cidr_blocks     = [for s in module.kubernetes.private_subnet_ids : "10.42.0.0/16"]
-    description     = "VPC-internal"
+    description = "Postgres from VPC"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["10.42.0.0/16"]
+  }
+  ingress {
+    description = "OpenSearch HTTPS from VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["10.42.0.0/16"]
+  }
+  ingress {
+    description = "OpenSearch 9200 from VPC (legacy clients)"
+    from_port   = 9200
+    to_port     = 9200
+    protocol    = "tcp"
+    cidr_blocks = ["10.42.0.0/16"]
   }
   egress {
-    from_port = 0; to_port = 0; protocol = "-1"; cidr_blocks = ["0.0.0.0/0"]
+    description = "VPC-internal IPv4 (managed-service health checks)"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["10.42.0.0/16"]
   }
   tags = local.tags
 }

@@ -50,6 +50,8 @@ agentGateway:
   replicaCount: 2
   service:
     type: LoadBalancer
+  autoscaling:
+    minReplicas: 2
   podDisruptionBudget:
     enabled: true
     minAvailable: 1

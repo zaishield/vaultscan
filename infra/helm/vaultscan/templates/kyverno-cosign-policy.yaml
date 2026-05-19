@@ -33,7 +33,23 @@ spec:
               namespaces: [{{ .Release.Namespace | quote }}]
       verifyImages:
         - imageReferences:
+            {{/*
+            imageRefPatterns is the operator-curated list of image-ref
+            globs that MUST carry a cosign signature. Defaults to the
+            VaultScan-owned ghcr namespace; operators that re-sign
+            third-party sidecars (pgbouncer, postgres, the backup +
+            restore-verify init containers) extend the list in their
+            overlay so admission rejects ANY unsigned image in those
+            patterns. The single-pattern legacy form is honoured for
+            backward compat.
+            */}}
+            {{- with .Values.kyverno.cosignVerifyPolicy.imageRefPatterns }}
+            {{- range . }}
+            - {{ . | quote }}
+            {{- end }}
+            {{- else }}
             - "{{ .Values.kyverno.cosignVerifyPolicy.imageRefPattern }}"
+            {{- end }}
           attestors:
             - entries:
                 - keyless:

@@ -19,3 +19,14 @@ variable "enable_replica"        { type = bool;   default = false }
 
 variable "kubernetes_namespace"  { type = string; default = "vaultscan" }
 variable "tags"                  { type = map(string); default = {} }
+
+# DB password rotation token: bump this string to force regeneration
+# of the random_password.db keepers (which then propagates through to
+# the RDS instance + the Secrets Manager value). Leave alone to keep
+# the existing password. Documented in the runbook so operators know
+# this is the rotation lever, not a "regenerate every apply" footgun.
+variable "db_password_rotation_token" {
+  type        = string
+  default     = "initial"
+  description = "Bump to rotate the DB master password; unchanged value keeps the current password."
+}

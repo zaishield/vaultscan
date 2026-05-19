@@ -46,6 +46,11 @@ module "eks" {
   subnet_ids                      = module.vpc.private_subnets
   cluster_endpoint_public_access  = var.cluster_endpoint_public_access
   cluster_endpoint_private_access = true
+  # When public access is enabled, narrow to the operator allowlist.
+  # If the list is empty AND public_access is true, the AWS provider
+  # rejects the apply — better to fail loud than to silently expose
+  # the control plane to 0.0.0.0/0.
+  cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access ? var.cluster_endpoint_public_access_cidrs : null
 
   # Use IRSA + IAM-bound SAs throughout.
   enable_irsa = true

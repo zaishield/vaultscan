@@ -300,7 +300,18 @@ kyverno:
   cosignVerifyPolicy:
     enabled: false
     action: enforce            # enforce | audit
+    # Legacy single-pattern form, kept for backward compat. New deploys
+    # should set imageRefPatterns below to cover ALL images on the
+    # admission path (vaultscan + signed third-party sidecars).
     imageRefPattern: "ghcr.io/zaishield/vaultscan/*"
+    # Multi-pattern form — when non-empty, takes precedence over
+    # imageRefPattern. Add patterns for any signed sidecars
+    # (pgbouncer, postgres, restore-verify init containers) so the
+    # ClusterPolicy doesn't quietly skip them.
+    imageRefPatterns: []
+      # - "ghcr.io/zaishield/vaultscan/*"
+      # - "ghcr.io/zaishield/pgbouncer:*"
+      # - "ghcr.io/zaishield/postgres-backup:*"
     subjectRegex: "https://github.com/zaishield/vaultscan/.*"
 
 # ----- pgBouncer (HS-04 follow-up) -----------------------------------------
@@ -331,7 +342,17 @@ backup:
   pgSecretName: vaultscan-postgres-credentials
   s3Bucket: vaultscan-backups
   s3Endpoint: https://s3.amazonaws.com
+  # s3SecretName: legacy long-lived access-key credentials. Production
+  # SHOULD instead use IRSA / Workload Identity via
+  # backup.serviceAccountAnnotations below (AWS:
+  # eks.amazonaws.com/role-arn; GCP: iam.gke.io/gcp-service-account).
+  # When the SA is bound to an IRSA / WI role, leave s3SecretName + the
+  # env-var refs unset and remove AWS_*_KEY from backup-cronjob.yaml
+  # via overlay. Both paths are documented in the runbook.
   s3SecretName: vaultscan-backup-s3-credentials
+  serviceAccountAnnotations: {}
+    # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/vaultscan-backup
+    # iam.gke.io/gcp-service-account: vaultscan-backup@project.iam.gserviceaccount.com
   retention:
     daily: 14
     weekly: 8

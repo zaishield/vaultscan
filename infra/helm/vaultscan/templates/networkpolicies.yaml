@@ -1,5 +1,16 @@
 {{- if .Values.networkPolicies.enabled }}
 {{/*
+Production guard: when global.env is "production" and externalEgress
+.cidrBlocks is empty, every API/worker pod will be unable to reach
+managed Postgres / OpenSearch / object storage — the deployment will
+appear healthy from the chart's POV but silently fail every external
+call. Fail the render so ops sees the misconfig at helm install /
+upgrade time rather than at first failed query.
+*/}}
+{{- if and (eq (default "" .Values.global.env) "production") (not .Values.networkPolicies.externalEgress.cidrBlocks) }}
+{{- fail (printf "\n\n!! VaultScan production chart misconfigured !!\n\nglobal.env = %q but networkPolicies.externalEgress.cidrBlocks is empty.\nProduction deploys use managed services (Postgres / OpenSearch / S3) that\nsit OUTSIDE the cluster — without a CIDR allowlist the NetworkPolicy\ndefault-deny will silently block every outbound managed-service call.\n\nFix: in your prod overlay, set networkPolicies.externalEgress.cidrBlocks\nto the operator-known CIDRs (e.g. your VPC's RFC1918 range).\n" .Values.global.env) }}
+{{- end }}
+{{/*
 NetworkPolicy baseline derived from Blueprint §27.1 segmentation.
 
 Two default-deny policies bracket the cluster:

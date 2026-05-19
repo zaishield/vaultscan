@@ -53,6 +53,12 @@ agentGateway:
   replicaCount: 2
   service:
     type: LoadBalancer
+  # Staging runs 2 replicas; the base values.yaml HPA minReplicas=3
+  # would silently override on first scale event and spin up a third.
+  # Pin minReplicas to match replicaCount so the operator's intent
+  # is respected.
+  autoscaling:
+    minReplicas: 2
   podDisruptionBudget:
     enabled: true
     minAvailable: 1

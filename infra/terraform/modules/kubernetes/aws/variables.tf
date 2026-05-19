@@ -47,9 +47,15 @@ variable "kubernetes_version" {
 }
 
 variable "cluster_endpoint_public_access" {
-  description = "Set false for fully-private clusters; require bastion / VPN."
+  description = "Whether the EKS control plane is reachable from the public internet. Default FALSE — production clusters MUST go through a bastion or VPN. Flip true ONLY when paired with cluster_endpoint_public_access_cidrs to allowlist operator IPs."
   type        = bool
-  default     = true
+  default     = false
+}
+
+variable "cluster_endpoint_public_access_cidrs" {
+  description = "When cluster_endpoint_public_access = true, the operator IP allowlist. Empty list with public_access=true is REJECTED by the AWS API; we default to a sentinel that the AWS provider rejects so a misconfigured flip fails loud."
+  type        = list(string)
+  default     = []
 }
 
 variable "node_instance_type" {

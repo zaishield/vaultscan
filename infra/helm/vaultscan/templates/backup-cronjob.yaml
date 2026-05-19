@@ -106,4 +106,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ include "vaultscan.fullname" . }}-backup
+  {{- with .Values.backup.serviceAccountAnnotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
 {{- end }}
