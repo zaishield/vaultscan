@@ -2,14 +2,15 @@ package audit
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/zaishield/vaultscan/backend/internal/observability"
 )
@@ -63,7 +64,8 @@ func (s *Service) VerifyDeep(ctx context.Context) (*VerifyResult, error) {
 		rows, err := s.pool.Query(ctx, `
 			SELECT id, event, actor_type, actor_id, host(ip), user_agent,
 			       platform_id, partner_id, tenant_id,
-			       target_type, target_id, payload, chain_prev, chain_hash
+			       target_type, target_id, payload, chain_prev, chain_hash,
+			       occurred_at, COALESCE(chain_hash_version, 1)
 			  FROM audit_logs
 			 WHERE id > $1
 			 ORDER BY id ASC
@@ -85,26 +87,21 @@ func (s *Service) VerifyDeep(ctx context.Context) (*VerifyResult, error) {
 				tType, tID      *string
 				payload         string
 				chainPrev, hash []byte
+				occurredAt      time.Time
+				hashVersion     int
 			)
 			if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
 				&platID, &partID, &tenID,
-				&tType, &tID, &payload, &chainPrev, &hash); err != nil {
+				&tType, &tID, &payload, &chainPrev, &hash,
+				&occurredAt, &hashVersion); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			total++
 			lastID = id
-			h := sha256.New()
-			if prev != nil {
-				h.Write(prev)
-			}
-			fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
-				event, actor, canonicalActorID(actorID), derefStr(ipStr),
-				canonicalString(derefStr(userAgent)),
-				platID, partID, tenID,
-				derefStr(tType), derefStr(tID))
-			h.Write([]byte(payload))
-			expect := h.Sum(nil)
+			expect := computeRowHash(hashVersion, prev, occurredAt,
+				event, actor, actorID, ipStr, userAgent,
+				platID, partID, tenID, tType, tID, payload)
 			if firstBad == 0 && !equal(expect, hash) {
 				firstBad = id
 				expectHex = hex.EncodeToString(expect)
@@ -164,16 +161,23 @@ func (s *Service) VerifyIncremental(ctx context.Context) (*VerifyResult, error) 
 		ckptID   int64
 		ckptHash []byte
 	)
-	if err := s.pool.QueryRow(ctx,
+	err := s.pool.QueryRow(ctx,
 		`SELECT last_verified_id, last_verified_hash
 		   FROM audit_chain_verification_checkpoints
 		  WHERE id = 1`).
-		Scan(&ckptID, &ckptHash); err != nil {
-		// Checkpoint table missing or empty → fall back to full
-		// VerifyDeep so the caller never silently downgrades to "no
-		// verification". The migration seeds an empty checkpoint
-		// row, so this branch only fires before 0062 has run.
-		return s.VerifyDeep(ctx)
+		Scan(&ckptID, &ckptHash)
+	if err != nil {
+		// ONLY fall back to VerifyDeep when the checkpoint row is
+		// genuinely missing (pre-0062 schema or freshly truncated
+		// table). Any OTHER error here means the gating store is
+		// unhealthy — we must NOT silently switch to a full scan that
+		// then might itself fail and leave the operator with no
+		// signal that "incremental" was never running. Propagate the
+		// error; on-call sees a clear DB-down condition.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return s.VerifyDeep(ctx)
+		}
+		return nil, fmt.Errorf("audit: checkpoint read: %w", err)
 	}
 	var (
 		prev      = ckptHash
@@ -200,7 +204,8 @@ func (s *Service) VerifyIncremental(ctx context.Context) (*VerifyResult, error) 
 		rows, err := s.pool.Query(ctx, `
 			SELECT id, event, actor_type, actor_id, host(ip), user_agent,
 			       platform_id, partner_id, tenant_id,
-			       target_type, target_id, payload, chain_prev, chain_hash
+			       target_type, target_id, payload, chain_prev, chain_hash,
+			       occurred_at, COALESCE(chain_hash_version, 1)
 			  FROM audit_logs
 			 WHERE id > $1
 			 ORDER BY id ASC
@@ -222,26 +227,21 @@ func (s *Service) VerifyIncremental(ctx context.Context) (*VerifyResult, error) 
 				tType, tID      *string
 				payload         string
 				chainPrev, hash []byte
+				occurredAt      time.Time
+				hashVersion     int
 			)
 			if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
 				&platID, &partID, &tenID,
-				&tType, &tID, &payload, &chainPrev, &hash); err != nil {
+				&tType, &tID, &payload, &chainPrev, &hash,
+				&occurredAt, &hashVersion); err != nil {
 				rows.Close()
 				return nil, err
 			}
 			total++
 			lastID = id
-			h := sha256.New()
-			if prev != nil {
-				h.Write(prev)
-			}
-			fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
-				event, actor, canonicalActorID(actorID), derefStr(ipStr),
-				canonicalString(derefStr(userAgent)),
-				platID, partID, tenID,
-				derefStr(tType), derefStr(tID))
-			h.Write([]byte(payload))
-			expect := h.Sum(nil)
+			expect := computeRowHash(hashVersion, prev, occurredAt,
+				event, actor, actorID, ipStr, userAgent,
+				platID, partID, tenID, tType, tID, payload)
 			if firstBad == 0 && !equal(expect, hash) {
 				firstBad = id
 				expectHex = hex.EncodeToString(expect)
@@ -281,6 +281,13 @@ func (s *Service) VerifyIncremental(ctx context.Context) (*VerifyResult, error) 
 	}
 	// Only advance the checkpoint if we actually verified at least
 	// one new row AND the chain stayed intact through end-of-scan.
+	//
+	// Concurrency guard: AND last_verified_id <= $4 (the snapshot
+	// taken before our scan started). If two VerifyIncremental
+	// invocations overlap, the loser's UPDATE no-ops rather than
+	// rolling back the winner's checkpoint. Without this, two
+	// hourly crons firing on overlapping windows could leave the
+	// checkpoint behind where either alone would have left it.
 	if lastGood > ckptID && prev != nil {
 		_, _ = s.pool.Exec(ctx, `
 			UPDATE audit_chain_verification_checkpoints
@@ -288,7 +295,8 @@ func (s *Service) VerifyIncremental(ctx context.Context) (*VerifyResult, error) 
 			       last_verified_hash  = $2,
 			       last_verified_at    = now(),
 			       rows_verified_total = rows_verified_total + $3
-			 WHERE id = 1`, lastGood, prev, total)
+			 WHERE id = 1
+			   AND last_verified_id <= $4`, lastGood, prev, total, ckptID)
 	}
 	return res, nil
 }

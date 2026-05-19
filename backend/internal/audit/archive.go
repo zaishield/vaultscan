@@ -308,16 +308,34 @@ func (a *Archiver) purgeOldArchives(ctx context.Context) error {
 		pending = append(pending, r)
 	}
 	for _, r := range pending {
+		// Open the purge window for this transaction only. The
+		// audit_logs immutability trigger (migrations 0029, 0068)
+		// rejects DELETE unless this session GUC is set. We set it
+		// LOCAL so it's automatically cleared at COMMIT.
+		tx, err := a.pool.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("audit purge: begin tx: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`SET LOCAL vaultscan.audit_purge_authorised = 'on'`); err != nil {
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("audit purge: open window: %w", err)
+		}
 		// Defensive: chain verifier needs an unbroken sequence, so we
 		// only delete if every row in [from,to] is still present.
-		if _, err := a.pool.Exec(ctx,
+		if _, err := tx.Exec(ctx,
 			`DELETE FROM audit_logs WHERE id BETWEEN $1 AND $2`,
 			r.from, r.to); err != nil {
-			return err
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("audit purge: delete rows [%d,%d]: %w", r.from, r.to, err)
 		}
-		if _, err := a.pool.Exec(ctx,
+		if _, err := tx.Exec(ctx,
 			`UPDATE audit_archive_runs SET purged_at = now() WHERE id = $1`, r.id); err != nil {
-			return err
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("audit purge: mark run %d purged: %w", r.id, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("audit purge: commit: %w", err)
 		}
 	}
 	return nil

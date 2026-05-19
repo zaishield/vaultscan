@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -168,17 +169,24 @@ func (s *Service) recordInner(ctx context.Context, e Entry) error {
 	// here are exactly what Verify reads back. canonicalIP / derefStr keep
 	// nil-vs-NULL handling identical on both sides of the chain.
 	//
-	// Fields covered: event, actor_type, actor_id, ip, user_agent,
-	// platform_id, partner_id, tenant_id, target_type, target_id, payload.
-	// Adding actor_id + user_agent closes the attribution-tamper gap:
-	// without them in the hash, an attacker with write access could
-	// rewrite the actor or browser-fingerprint of a row and the chain
-	// would still verify.
+	// v2 (migration 0067): includes occurred_at in the canonical
+	// metadata so an attacker who can rewrite chain_prev/chain_hash
+	// of a row can't ALSO float the timestamp without invalidating
+	// the chain. We compute occurredAt explicitly here and pass it
+	// to INSERT (instead of relying on DB DEFAULT now()) so the
+	// timestamp the hash binds matches the timestamp persisted.
+	//
+	// Fields covered: occurred_at, event, actor_type, actor_id, ip,
+	// user_agent, platform_id, partner_id, tenant_id, target_type,
+	// target_id, payload.
+	occurredAt := time.Now().UTC()
+	const chainHashVersion = 2
 	h := sha256.New()
 	if prev != nil {
 		h.Write(prev)
 	}
-	fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
+	fmt.Fprintf(h, "v2|%s|%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
+		occurredAt.Format(time.RFC3339Nano),
 		e.Event, e.ActorType, canonicalActorID(e.ActorID), canonicalIP(e.IP),
 		canonicalString(e.UserAgent),
 		e.PlatformID, e.PartnerID, e.TenantID,
@@ -189,17 +197,54 @@ func (s *Service) recordInner(ctx context.Context, e Entry) error {
 	_, err = tx.Exec(ctx, `
 		INSERT INTO audit_logs(platform_id, partner_id, tenant_id, actor_id,
 		                       actor_type, event, target_type, target_id,
-		                       payload, ip, user_agent, chain_prev, chain_hash)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		                       payload, ip, user_agent, chain_prev, chain_hash,
+		                       occurred_at, chain_hash_version)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 		e.PlatformID, e.PartnerID, e.TenantID, e.ActorID,
 		e.ActorType, e.Event, e.TargetType, e.TargetID,
 		string(payload), ipOrNull(e.IP), nullIfEmpty(e.UserAgent),
-		prev, hash,
+		prev, hash, occurredAt, chainHashVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("audit: insert: %w", err)
 	}
 	return tx.Commit(ctx)
+}
+
+// computeRowHash reconstructs the chain hash for a row, dispatching
+// on hashVersion. v1 omits occurred_at; v2 includes it. Used by
+// every Verify / VerifyDeep / VerifyIncremental code path so the
+// algorithm-version dispatch lives in exactly one place.
+func computeRowHash(
+	hashVersion int,
+	prev []byte,
+	occurredAt time.Time,
+	event, actor string,
+	actorID *uuid.UUID, ipStr *string, userAgent *string,
+	platID uuid.UUID, partID, tenID *uuid.UUID,
+	tType, tID *string, payload string,
+) []byte {
+	h := sha256.New()
+	if prev != nil {
+		h.Write(prev)
+	}
+	switch hashVersion {
+	case 2:
+		fmt.Fprintf(h, "v2|%s|%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
+			occurredAt.UTC().Format(time.RFC3339Nano),
+			event, actor, canonicalActorID(actorID), derefStr(ipStr),
+			canonicalString(derefStr(userAgent)),
+			platID, partID, tenID,
+			derefStr(tType), derefStr(tID))
+	default: // v1
+		fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
+			event, actor, canonicalActorID(actorID), derefStr(ipStr),
+			canonicalString(derefStr(userAgent)),
+			platID, partID, tenID,
+			derefStr(tType), derefStr(tID))
+	}
+	h.Write([]byte(payload))
+	return h.Sum(nil)
 }
 
 // Verify recomputes the hash chain and returns the row id of the first
@@ -208,7 +253,8 @@ func (s *Service) Verify(ctx context.Context) (int64, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, event, actor_type, actor_id, host(ip), user_agent,
 		       platform_id, partner_id, tenant_id,
-		       target_type, target_id, payload, chain_prev, chain_hash
+		       target_type, target_id, payload, chain_prev, chain_hash,
+		       occurred_at, COALESCE(chain_hash_version, 1)
 		  FROM audit_logs ORDER BY id ASC`)
 	if err != nil {
 		return 0, err
@@ -227,23 +273,18 @@ func (s *Service) Verify(ctx context.Context) (int64, error) {
 			tType, tID      *string
 			payload         string
 			chainPrev, hash []byte
+			occurredAt      time.Time
+			hashVersion     int
 		)
 		if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
 			&platID, &partID, &tenID,
-			&tType, &tID, &payload, &chainPrev, &hash); err != nil {
+			&tType, &tID, &payload, &chainPrev, &hash,
+			&occurredAt, &hashVersion); err != nil {
 			return 0, err
 		}
-		h := sha256.New()
-		if prev != nil {
-			h.Write(prev)
-		}
-		fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
-			event, actor, canonicalActorID(actorID), derefStr(ipStr),
-			canonicalString(derefStr(userAgent)),
-			platID, partID, tenID,
-			derefStr(tType), derefStr(tID))
-		h.Write([]byte(payload))
-		expect := h.Sum(nil)
+		expect := computeRowHash(hashVersion, prev, occurredAt,
+			event, actor, actorID, ipStr, userAgent,
+			platID, partID, tenID, tType, tID, payload)
 		_ = canonicalIP // see Record() — derefStr handles the same canonical empty-string form.
 		if !equal(expect, hash) {
 			return id, nil
@@ -292,7 +333,8 @@ func (s *Service) VerifyTail(ctx context.Context, tail int) (int64, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, event, actor_type, actor_id, host(ip), user_agent,
 		       platform_id, partner_id, tenant_id,
-		       target_type, target_id, payload, chain_prev, chain_hash
+		       target_type, target_id, payload, chain_prev, chain_hash,
+		       occurred_at, COALESCE(chain_hash_version, 1)
 		  FROM audit_logs WHERE id >= $1 ORDER BY id ASC`, firstID)
 	if err != nil {
 		return 0, err
@@ -311,23 +353,18 @@ func (s *Service) VerifyTail(ctx context.Context, tail int) (int64, error) {
 			tType, tID      *string
 			payload         string
 			chainPrev, hash []byte
+			occurredAt      time.Time
+			hashVersion     int
 		)
 		if err := rows.Scan(&id, &event, &actor, &actorID, &ipStr, &userAgent,
 			&platID, &partID, &tenID,
-			&tType, &tID, &payload, &chainPrev, &hash); err != nil {
+			&tType, &tID, &payload, &chainPrev, &hash,
+			&occurredAt, &hashVersion); err != nil {
 			return 0, err
 		}
-		h := sha256.New()
-		if prev != nil {
-			h.Write(prev)
-		}
-		fmt.Fprintf(h, "%s|%s|%s|%s|%s|%v|%v|%v|%s|%s",
-			event, actor, canonicalActorID(actorID), derefStr(ipStr),
-			canonicalString(derefStr(userAgent)),
-			platID, partID, tenID,
-			derefStr(tType), derefStr(tID))
-		h.Write([]byte(payload))
-		want := h.Sum(nil)
+		want := computeRowHash(hashVersion, prev, occurredAt,
+			event, actor, actorID, ipStr, userAgent,
+			platID, partID, tenID, tType, tID, payload)
 		if !equal(want, hash) {
 			return id, nil
 		}
