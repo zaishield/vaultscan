@@ -1,10 +1,11 @@
-# STUDIO OS — The Build Bible
+# RYK StudioOS — The Build Bible
+### *Powered by RYK Studio*
 
-**Status:** Canonical specification. This document is the single source of truth for building STUDIO OS. Where this document and any other artifact (chat message, verbal direction, old draft) disagree, this document wins until it is explicitly amended. Amendments are made by editing this file, not by working around it.
+**Status:** Canonical specification. This document is the single source of truth for building RYK StudioOS. Where this document and any other artifact (chat message, verbal direction, old draft) disagree, this document wins until it is explicitly amended. Amendments are made by editing this file, not by working around it.
 
-**Origin:** Derived from "The Platform Gap Report" (Yohan Wadia Studio, June 2026). That report identified 10 production-layer gaps no AI generation platform has closed. This document is the buildable answer to Gap Opportunity #1: STUDIO OS, the Agency-Grade AI Production Operating System.
+**Origin:** Derived from "The Platform Gap Report" (RYK Studio, June 2026). That report identified 10 production-layer gaps no AI generation platform has closed. This document is the buildable answer to Gap Opportunity #1: RYK StudioOS, the Agency-Grade AI Production Operating System.
 
-**What this is not:** This is not a new image/video/audio generation model. STUDIO OS never trains or hosts a foundation generation model except where Section 9 explicitly says otherwise (Arabic text rendering). It is the orchestration, memory, and accountability layer that sits above third-party generation APIs (Higgsfield, Runway, ElevenLabs, Suno, Adobe Firefly, etc.) and turns them into a system a creative director can run real client production through.
+**What this is not:** This is not a new image/video/audio generation model. RYK StudioOS never trains or hosts a foundation generation model except where Section 9 explicitly says otherwise (Arabic text rendering). It is the orchestration, memory, and accountability layer that sits above third-party generation APIs (Higgsfield, Runway, ElevenLabs, Suno, Adobe Firefly, etc.) and turns them into a system a creative director can run real client production through.
 
 ---
 
@@ -15,7 +16,7 @@ These principles override feature-level decisions anywhere in this document. If 
 1. **The Brief is the only source of truth.** Every artifact in the system — script, storyboard, generation job, asset, approval, invoice line — must trace back to a Brief record via foreign key. Nothing is allowed to exist as an orphan upload.
 2. **Every generated asset is provenance-tracked.** No asset enters the system without a Provenance Record (model, prompt, params, cost, timestamp, operator). This is not optional and not deferred to "later phases" — it ships in Phase 1.
 3. **The platform orchestrates models; it does not become one.** Don't build a competing image/video generator. The one sanctioned exception is the Arabic Visual Engine (Section 9), and only as a fine-tune of an open-weight base model, not a foundation model from scratch.
-4. **Build for one real studio first.** Every feature in Phases 1–3 must be validated against actual Yohan Wadia Studio client campaigns before being considered "done." A feature nobody used internally does not graduate to external SaaS.
+4. **Build for one real studio first.** Every feature in Phases 1–3 must be validated against actual RYK Studio client campaigns before being considered "done." A feature nobody used internally does not graduate to external SaaS.
 5. **Open source for infrastructure, proprietary for generation.** Every piece of platform infrastructure (orchestration, database, auth, storage, workflow engine) must be open-source and self-hostable. Every piece of generation capability (the actual pixels/audio/video) is bought from the best available provider, proprietary or not. Do not violate this split in either direction — don't build your own LLM inference stack, and don't outsource the brand-memory database to a SaaS vendor.
 6. **Data sovereignty is a first-class deployment property, not a feature flag bolted on later.** The system must be deployable entirely within a chosen region (including on-prem / Gulf-region cloud) from Phase 1 onward, even if Phase 1 doesn't need it yet.
 7. **No client-visible feature ships without an audit trail.** Approvals, revisions, sign-offs — anything a client touches must be logged with timestamp, actor, and immutable record. This is the legal spine of Gap #5 and #10 and is not negotiable for scope-cutting.
@@ -231,7 +232,7 @@ EmotionDirection
 
 - This module calls an LLM (via LiteLLM gateway, Section 11) to translate `raw_input` into `resolved_parameters`, but `resolved_parameters` is **always presented to a human creative director for edit/approval before being passed to the Orchestrator.** `human_reviewed=false` blocks generation job creation. This is non-negotiable per the source report's own caveat that this "can't be purely automated."
 - Approved `resolved_parameters` are saved as reusable Direction Templates, attached to BrandDNA for reuse on future campaigns.
-- Phase placement: per the source report, this ships as a feature inside STUDIO OS, not a standalone product. Do not let it grow a separate UI shell.
+- Phase placement: per the source report, this ships as a feature inside RYK StudioOS, not a standalone product. Do not let it grow a separate UI shell.
 
 ---
 
@@ -270,11 +271,11 @@ Approval
 
 ---
 
-## 9. Module: MENA Cultural Intelligence Layer (codename MARJAN, integrated as a module)
+## 9. Module: MENA Cultural Intelligence Layer (codename RYK MARJAN, integrated as a module)
 
 **Closes:** Gap #4, contributes to Gap #10
 
-**Purpose:** Per the source report, this is the most defensible, least-contested-by-incumbents capability. Build it as a module inside STUDIO OS first (per Build Phase P3), with the option to spin out as a standalone product later if validated.
+**Purpose:** Per the source report, this is the most defensible, least-contested-by-incumbents capability. Build it as a module inside RYK StudioOS first (per Build Phase P3), with the option to spin out as a standalone product later if validated.
 
 ### Sub-components
 
@@ -288,7 +289,7 @@ Approval
 
 ---
 
-## 10. Module: IP Documentation (codename CLEARANCE, integrated as a module)
+## 10. Module: IP Documentation (codename RYK CLEARANCE, integrated as a module)
 
 **Closes:** Gap #5, contributes to Gap #10
 
@@ -426,7 +427,7 @@ Record every deviation from this document here, with date, reasoning, and who ap
 - **GenerationJob**: one Temporal workflow execution that calls exactly one external provider for one task (script, image, video, VO, music, SFX).
 - **ProvenanceRecord**: the immutable record of how an asset was made, created automatically, never hand-edited after creation.
 - **Master campaign**: the Brief + BrandDNA + VersioningMatrix axes definition. The "16+ versions" are derived, not separately briefed.
-- **Studio (internal use)**: Yohan Wadia Studio, Phase 1–3 sole user.
+- **Studio (internal use)**: RYK Studio, Phase 1–3 sole user.
 - **Tenant (external use)**: any agency/studio using the platform from Phase 4 onward, isolated from other tenants' data.
 
 ---
